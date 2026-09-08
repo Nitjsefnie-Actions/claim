@@ -6,11 +6,11 @@ RUN="$(mktemp -d "$ROOT/tests/.run.XXXXXX")"
 mkdir "$RUN/bin"
 ln -s "$ROOT/tests/gh.sh" "$RUN/bin/gh"
 export PATH="$RUN/bin:$PATH"
-export GH_TOKEN REPO ISSUE ACTOR ACTOR_TYPE GH_CASE
+export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE
 
 reset_case() {
   GH_TOKEN=test-token
-  REPO=owner/project
+  REPOSITORY=owner/project
   ISSUE=7
   ACTOR=octo-claimant
   ACTOR_TYPE=User
@@ -39,8 +39,7 @@ expect_gh_failure() {
 run_claim() {
   local expected_status=$1 expected_output=${2-} status=0 failed=0
   BODY="$body" python3 "$ROOT/claim.py" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
-  if [[ $expected_status == nonzero && $status == 0 ]] ||
-     [[ $expected_status != nonzero && $status != "$expected_status" ]]; then
+  if [[ $status != "$expected_status" ]]; then
     printf '  exit status: expected %s, got %s\n' "$expected_status" "$status"
     failed=1
   fi
@@ -48,13 +47,13 @@ run_claim() {
   if ! diff -u "$GH_CASE/expected.stdout" "$GH_CASE/stdout"; then failed=1; fi
   if ! diff -u "$GH_CASE/expected.jsonl" "$GH_CASE/calls.jsonl"; then failed=1; fi
   if [[ -n $expected_error ]]; then
-    if ! grep -Eq -- "$expected_error" "$GH_CASE/stderr"; then
-      printf '  expected stderr matching: %s\n' "$expected_error"
-      cat "$GH_CASE/stderr"
-      failed=1
-    fi
-  elif [[ -s $GH_CASE/stderr ]]; then
-    cat "$GH_CASE/stderr"
+    printf '%s\n' "$expected_error" > "$GH_CASE/expected.stderr"
+  else
+    : > "$GH_CASE/expected.stderr"
+  fi
+  if ! diff -u "$GH_CASE/expected.stderr" "$GH_CASE/stderr"; then failed=1; fi
+  if grep -Fq 'Traceback' "$GH_CASE/stderr"; then
+    printf '  unexpected traceback\n'
     failed=1
   fi
   return "$failed"
@@ -144,7 +143,7 @@ claim_accepted() {
 claim_accepted_elsewhere() {
   body=/claim
   ACTOR=river-helper
-  REPO=other-team/widget.tools
+  REPOSITORY=other-team/widget.tools
   ISSUE=42
   expect_gh '{"state":"open","assignees":[]}' api repos/other-team/widget.tools/issues/42
   expect_gh '' api -X POST repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
@@ -164,29 +163,29 @@ claim_rejected() {
 
 assignment_post_forbidden() {
   body=/claim
-  expected_error='HTTP 403'
+  expected_error='gh: Resource not accessible by integration (HTTP 403)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
     api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  run_claim nonzero
+  run_claim 1
 }
 
 unclaim_delete_forbidden() {
   body=/unclaim
-  expected_error='HTTP 403'
+  expected_error='gh: Resource not accessible by integration (HTTP 403)'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
     api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  run_claim nonzero
+  run_claim 1
 }
 
 comment_forbidden() {
   body=/claim
-  expected_error='HTTP 403'
+  expected_error='gh: Resource not accessible by integration (HTTP 403)'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
     api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
-  run_claim nonzero
+  run_claim 1
 }
 
 unclaim_not_assigned() {
@@ -207,7 +206,7 @@ unclaim_one_of_two() {
 release_one_of_two() {
   body=/release
   ACTOR=river-helper
-  REPO=other-team/widget.tools
+  REPOSITORY=other-team/widget.tools
   ISSUE=42
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
   expect_gh '' api -X DELETE repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
@@ -223,16 +222,16 @@ closed_issue() {
 
 malformed_snapshot() {
   body=/claim
-  expected_error='parse error'
+  expected_error='parse error: Expecting property name enclosed in double quotes: line 1 column 17 (char 16)'
   expect_gh '{"state":"open",' api repos/owner/project/issues/7
-  run_claim nonzero
+  run_claim 1
 }
 
 missing_assignees() {
   body=/claim
-  expected_error='assignees array'
+  expected_error='issue snapshot must contain an assignees array'
   expect_gh '{"state":"open"}' api repos/owner/project/issues/7
-  run_claim nonzero
+  run_claim 1
 }
 
 pull_request() {
@@ -263,7 +262,7 @@ empty_actor_type() {
   body=/claim
   ACTOR_TYPE=
   expected_error='invalid actor-type: expected a nonempty account type'
-  run_claim nonzero
+  run_claim 1
 }
 
 multiline_actor_type() {
@@ -274,23 +273,23 @@ multiline_actor_type() {
 
 missing_state() {
   body=/claim
-  expected_error='state string'
+  expected_error='issue snapshot must contain a state string'
   expect_gh '{"assignees":[]}' api repos/owner/project/issues/7
-  run_claim nonzero
+  run_claim 1
 }
 
 null_state() {
   body=/claim
-  expected_error='state string'
+  expected_error='issue snapshot must contain a state string'
   expect_gh '{"state":null,"assignees":[]}' api repos/owner/project/issues/7
-  run_claim nonzero
+  run_claim 1
 }
 
 nonstring_state() {
   body=/claim
-  expected_error='state string'
+  expected_error='issue snapshot must contain a state string'
   expect_gh '{"state":42,"assignees":[]}' api repos/owner/project/issues/7
-  run_claim nonzero
+  run_claim 1
 }
 
 unknown_state() {
@@ -301,33 +300,78 @@ unknown_state() {
 
 malformed_confirm() {
   body=/claim
-  expected_error='parse error'
+  expected_error='parse error: Expecting property name enclosed in double quotes: line 1 column 17 (char 16)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
   expect_gh '{"state":"open",' api repos/owner/project/issues/7
-  run_claim nonzero
+  run_claim 1
 }
 
 invalid_issue() {
   body=/claim
   ISSUE='7/comments?x=1'
   expected_error='invalid issue: expected digits'
-  run_claim nonzero
+  run_claim 1
 }
 
 invalid_repository() {
   body=/claim
-  REPO='owner/project/issues'
+  REPOSITORY='owner/project/issues'
   expected_error='invalid repository: expected owner/name'
-  run_claim nonzero
+  run_claim 1
 }
 
 repository_query() {
   body=/claim
-  REPO='owner/project?x=1'
+  REPOSITORY='owner/project?x=1'
   expected_error='invalid repository: expected owner/name'
-  run_claim nonzero
+  run_claim 1
 }
+
+nbsp_noncommand() {
+  body=$'\302\240/claim\302\240'
+  run_claim 0 $'not a command: \302\240/claim\302\240\n'
+}
+
+em_space_noncommand() {
+  body=$'\342\200\203/claim\342\200\203'
+  run_claim 0 $'not a command: \342\200\203/claim\342\200\203\n'
+}
+
+ascii_control_trim() {
+  body=$'\v\f/claim\v\f'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+  run_claim 0
+}
+
+read_transport_status() {
+  body=/claim
+  expected_error='gh: transport unavailable'
+  expect_gh_failure 42 'gh: transport unavailable' api repos/owner/project/issues/7
+  run_claim 42
+}
+
+invalid_assignee_snapshot() {
+  local assignees=$1 read=$2
+  expected_error='issue snapshot assignees must be objects with string logins'
+  if [[ $read == initial ]]; then
+    body=/unclaim
+  else
+    body=/claim
+    expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+    expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  fi
+  expect_gh "{\"state\":\"open\",\"assignees\":$assignees}" api repos/owner/project/issues/7
+  run_claim 1
+}
+
+null_login_initial() { invalid_assignee_snapshot '[{"login":null}]' initial; }
+null_login_confirm() { invalid_assignee_snapshot '[{"login":null}]' confirm; }
+null_assignee_initial() { invalid_assignee_snapshot '[null]' initial; }
+null_assignee_confirm() { invalid_assignee_snapshot '[null]' confirm; }
+missing_login_initial() { invalid_assignee_snapshot '[{}]' initial; }
+missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 
 action_contract() {
   python3 - "$ROOT" <<'PY'
@@ -373,9 +417,7 @@ expected_inputs = set()
 for name, value in env.items():
     binding = re.fullmatch(r"\$\{\{\s*inputs\.([a-z-]+)\s*\}\}", value)
     assert binding, f"{name} must bind an action input"
-    # REPO predates this naming convention; preserve the public repository input.
-    expected = {"GH_TOKEN": "token", "REPO": "repository"}.get(
-        name, name.lower().replace("_", "-"))
+    expected = "token" if name == "GH_TOKEN" else name.lower().replace("_", "-")
     assert binding[1] == expected, f"{name} must bind inputs.{expected}"
     expected_inputs.add(expected)
     default = re.findall(r"^    default: (.+)$", specs[expected], re.M)
@@ -392,7 +434,10 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract
   empty_actor_type multiline_actor_type missing_state null_state nonstring_state
-  unknown_state malformed_confirm)
+  unknown_state malformed_confirm
+  nbsp_noncommand em_space_noncommand ascii_control_trim read_transport_status
+  null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
+  missing_login_initial missing_login_confirm)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
