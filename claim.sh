@@ -48,8 +48,7 @@ if [[ $state != open || $is_pull_request == true ]]; then
   exit 0
 fi
 
-# The reference implementation calls it /release; accept the word people arrive
-# expecting as an alias for /unclaim. Both give up only the commenter's claim.
+# /release is an alias for /unclaim. Both give up only the commenter's claim.
 if [[ $command == /unclaim || $command == /release ]]; then
   if [[ $actor_assigned != true ]]; then
     say "@$ACTOR you are not assigned to this issue, so there is nothing to give up."
