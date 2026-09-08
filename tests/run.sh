@@ -345,6 +345,15 @@ ascii_control_trim() {
   run_claim 0
 }
 
+# The C0 separators are NOT whitespace to the shell's [[:space:]], so a body
+# delimited by them was never a command. Python's argument-less str.strip()
+# does treat them as whitespace, which is exactly the widening this pins shut:
+# restoring it makes a body the specification rejects into a valid command.
+unit_separator_noncommand() {
+  body=$'\037/claim\037'
+  run_claim 0 $'not a command: \037/claim\037\n'
+}
+
 read_transport_status() {
   body=/claim
   expected_error='gh: transport unavailable'
@@ -435,7 +444,8 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract
   empty_actor_type multiline_actor_type missing_state null_state nonstring_state
   unknown_state malformed_confirm
-  nbsp_noncommand em_space_noncommand ascii_control_trim read_transport_status
+  nbsp_noncommand em_space_noncommand ascii_control_trim
+  unit_separator_noncommand read_transport_status
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
   missing_login_initial missing_login_confirm)
 failures=0
