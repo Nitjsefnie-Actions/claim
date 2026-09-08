@@ -12,6 +12,20 @@ case "$command" in
   *) printf 'not a command: %s\n' "${command%%$'\n'*}"; exit 0 ;;
 esac
 
+if [[ $ACTOR_TYPE != User ]]; then
+  exit 0
+fi
+
+if [[ ! $ISSUE =~ ^[0-9]+$ ]]; then
+  printf 'invalid issue: expected digits\n' >&2
+  exit 1
+fi
+if [[ ! $REPO =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ ||
+      ${REPO#*/} == . || ${REPO#*/} == .. ]]; then
+  printf 'invalid repository: expected owner/name\n' >&2
+  exit 1
+fi
+
 say() {
   gh api "repos/$REPO/issues/$ISSUE/comments" -f body="$1" --silent
 }
@@ -30,7 +44,7 @@ IFS=$'\t' read -r state is_pull_request assignee_count actor_assigned current <<
 # A pull request is an issue to this event, but its assignees mean something
 # else. A closed issue cannot be worked; a bot's comment is never a claim. The
 # caller's prefilter only saves starting a runner: these checks stand on their own.
-if [[ $ACTOR_TYPE == Bot || $state != open || $is_pull_request == true ]]; then
+if [[ $state != open || $is_pull_request == true ]]; then
   exit 0
 fi
 

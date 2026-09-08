@@ -195,14 +195,47 @@ pull_request() {
 bot_actor() {
   body=/release
   ACTOR_TYPE=Bot
-  expect_gh '{"state":"open","assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
   run_claim 0
+}
+
+organization_actor() {
+  body=/claim
+  ACTOR_TYPE=Organization
+  run_claim 0
+}
+
+mannequin_actor() {
+  body=/claim
+  ACTOR_TYPE=Mannequin
+  run_claim 0
+}
+
+invalid_issue() {
+  body=/claim
+  ISSUE='7/comments?x=1'
+  expected_error='invalid issue: expected digits'
+  run_claim nonzero
+}
+
+invalid_repository() {
+  body=/claim
+  REPO='owner/project/issues'
+  expected_error='invalid repository: expected owner/name'
+  run_claim nonzero
+}
+
+repository_query() {
+  body=/claim
+  REPO='owner/project?x=1'
+  expected_error='invalid repository: expected owner/name'
+  run_claim nonzero
 }
 
 cases=(sentence multiline metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
-  closed_issue malformed_snapshot missing_assignees pull_request bot_actor)
+  closed_issue malformed_snapshot missing_assignees pull_request bot_actor
+  organization_actor mannequin_actor invalid_issue invalid_repository repository_query)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
