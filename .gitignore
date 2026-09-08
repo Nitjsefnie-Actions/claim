@@ -1,0 +1,11 @@
+*
+!.gitignore
+!action.yml
+!claim.sh
+!LICENSE
+!CODE_OF_CONDUCT.md
+!CONTRIBUTING.md
+!tests/
+tests/*
+!tests/run.sh
+!tests/gh.sh

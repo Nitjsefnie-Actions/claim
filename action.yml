@@ -1,0 +1,51 @@
+name: Claim
+description: Let contributors claim an issue or give up their own assignment using issue comments.
+
+# GitHub has no built-in assignment slash command; this lets contributors take
+# an issue without repository write access or a maintainer using the assignee UI.
+# Callers own the event trigger and issues: write permission. This action only
+# talks to the API: no checkout or contents: read permission is needed.
+# Serialize per issue with cancel-in-progress: false so competing claimants both
+# receive an answer instead of one run being cancelled in the middle of a claim.
+inputs:
+  token:
+    description: GitHub token with issues write permission.
+    required: false
+    default: ${{ github.token }}
+  repository:
+    description: Repository in owner/name format.
+    required: false
+    default: ${{ github.repository }}
+  issue:
+    description: Issue number.
+    required: false
+    default: ${{ github.event.issue.number }}
+  actor:
+    description: Commenter's login.
+    required: false
+    default: ${{ github.event.comment.user.login }}
+  actor-type:
+    description: Commenter's GitHub account type.
+    required: false
+    default: ${{ github.event.comment.user.type }}
+  body:
+    description: Comment body containing the command.
+    required: false
+    default: ${{ github.event.comment.body }}
+
+runs:
+  using: composite
+  steps:
+    - name: Claim or unclaim
+      shell: bash
+      # Public comment text is attacker-controlled: pass it as environment data,
+      # never interpolate it into a shell program. Expressions have no trim();
+      # the caller's contains() prefilter cannot replace the script's exact match.
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repository }}
+        ISSUE: ${{ inputs.issue }}
+        ACTOR: ${{ inputs.actor }}
+        ACTOR_TYPE: ${{ inputs.actor-type }}
+        BODY: ${{ inputs.body }}
+      run: '"$GITHUB_ACTION_PATH/claim.sh"'
