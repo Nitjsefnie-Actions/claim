@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Record argv without losing argument boundaries, quoting, or embedded newlines.
-jq -cn --args '$ARGS.positional' -- "$@" >> "$GH_CASE/calls.jsonl"
-response="$GH_CASE/response.$(wc -l < "$GH_CASE/calls.jsonl" | tr -d '[:space:]')"
+python3 -c 'import json, sys; print(json.dumps(sys.argv[1:], separators=(",", ":")))' "$@" >> "$GH_CASE/calls.jsonl"
+ordinal=$(wc -l < "$GH_CASE/calls.jsonl")
+response="$GH_CASE/response.$((ordinal))"
 if [[ ! -f $response ]]; then
   printf 'unexpected gh invocation: %s\n' "$(cat "$GH_CASE/calls.jsonl")" >&2
   exit 91

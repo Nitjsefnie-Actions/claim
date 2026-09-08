@@ -19,24 +19,26 @@ reset_case() {
 }
 
 expect_gh() {
-  local response=$1
+  local response=$1 ordinal
   shift
-  jq -cn --args '$ARGS.positional' -- "$@" >> "$GH_CASE/expected.jsonl"
-  printf '%s' "$response" > "$GH_CASE/response.$(wc -l < "$GH_CASE/expected.jsonl" | tr -d '[:space:]')"
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1:], separators=(",", ":")))' "$@" >> "$GH_CASE/expected.jsonl"
+  ordinal=$(wc -l < "$GH_CASE/expected.jsonl")
+  printf '%s' "$response" > "$GH_CASE/response.$((ordinal))"
 }
 
 expect_gh_failure() {
   local status=$1 error=$2 ordinal
   shift 2
   expect_gh '' "$@"
-  ordinal=$(wc -l < "$GH_CASE/expected.jsonl" | tr -d '[:space:]')
+  ordinal=$(wc -l < "$GH_CASE/expected.jsonl")
+  ordinal=$((ordinal))
   printf '%s' "$status" > "$GH_CASE/response.$ordinal.status"
   printf '%s\n' "$error" > "$GH_CASE/response.$ordinal.stderr"
 }
 
 run_claim() {
   local expected_status=$1 expected_output=${2-} status=0 failed=0
-  BODY="$body" "$ROOT/claim.sh" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
+  BODY="$body" python3 "$ROOT/claim.py" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
   if [[ $expected_status == nonzero && $status == 0 ]] ||
      [[ $expected_status != nonzero && $status != "$expected_status" ]]; then
     printf '  exit status: expected %s, got %s\n' "$expected_status" "$status"
@@ -242,19 +244,68 @@ pull_request() {
 bot_actor() {
   body=/release
   ACTOR_TYPE=Bot
-  run_claim 0
+  run_claim 0 $'not a user: Bot\n'
 }
 
 organization_actor() {
   body=/claim
   ACTOR_TYPE=Organization
-  run_claim 0
+  run_claim 0 $'not a user: Organization\n'
 }
 
 mannequin_actor() {
   body=/claim
   ACTOR_TYPE=Mannequin
+  run_claim 0 $'not a user: Mannequin\n'
+}
+
+empty_actor_type() {
+  body=/claim
+  ACTOR_TYPE=
+  expected_error='invalid actor-type: expected a nonempty account type'
+  run_claim nonzero
+}
+
+multiline_actor_type() {
+  body=/claim
+  ACTOR_TYPE=$'Bot\nUser'
+  run_claim 0 $'not a user: Bot\n'
+}
+
+missing_state() {
+  body=/claim
+  expected_error='state string'
+  expect_gh '{"assignees":[]}' api repos/owner/project/issues/7
+  run_claim nonzero
+}
+
+null_state() {
+  body=/claim
+  expected_error='state string'
+  expect_gh '{"state":null,"assignees":[]}' api repos/owner/project/issues/7
+  run_claim nonzero
+}
+
+nonstring_state() {
+  body=/claim
+  expected_error='state string'
+  expect_gh '{"state":42,"assignees":[]}' api repos/owner/project/issues/7
+  run_claim nonzero
+}
+
+unknown_state() {
+  body=/claim
+  expect_gh '{"state":"unknown","assignees":[]}' api repos/owner/project/issues/7
   run_claim 0
+}
+
+malformed_confirm() {
+  body=/claim
+  expected_error='parse error'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open",' api repos/owner/project/issues/7
+  run_claim nonzero
 }
 
 invalid_issue() {
@@ -281,29 +332,56 @@ repository_query() {
 action_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
+import ast
 import re
 import sys
-import yaml
 
 root = Path(sys.argv[1])
-action = yaml.safe_load((root / "action.yml").read_text())
-steps = action["runs"]["steps"]
-for step in steps:
-    if "run" in step:
-        assert "${{" not in step["run"], "expressions must not appear in run values"
-
-claim_steps = [step for step in steps if "claim.sh" in step.get("run", "")]
-assert len(claim_steps) == 1, "expected one claim step"
-env = claim_steps[0]["env"]
-script = (root / "claim.sh").read_text()
-script_variables = set(re.findall(r"\$(?:\{)?([A-Z][A-Z0-9_]*)", script))
+action = (root / "action.yml").read_text()
+# Pin this small manifest's explicit layout rather than adding a YAML dependency.
+# Full YAML/schema validation belongs to the actionlint workflow.
+lines = "\n".join(line for line in action.splitlines()
+                  if line.strip() and not line.lstrip().startswith("#"))
+inputs, runs = lines.split("\nruns:\n")
+inputs = inputs.split("\ninputs:\n")[1]
+step = re.fullmatch(
+    r"  using: composite\n  steps:\n    - name: [^\n]+\n"
+    r"      shell: bash\n      env:\n(?P<env>(?:        [^\n]+\n)+)"
+    r"      run: (?P<run>[^\n]+)", runs)
+assert step, "expected one claim step with shell: bash and explicit env/run"
+assert "${{" not in step["run"], "expressions must not appear in run values"
+assert step["run"] == "'python3 \"$GITHUB_ACTION_PATH/claim.py\"'", \
+    "claim run must stay quoted and invoke Python with the quoted action path"
+env = {}
+for line in step["env"].splitlines():
+    name, value = line.strip().split(": ", 1)
+    assert name not in env, f"duplicate environment name: {name}"
+    env[name] = value
+script = ast.parse((root / "claim.py").read_text())
+script_variables = {
+    node.slice.value for node in ast.walk(script)
+    if isinstance(node, ast.Subscript)
+    and ast.unparse(node.value) == "os.environ"
+    and isinstance(node.slice, ast.Constant)
+}
 # GH_TOKEN is consumed by gh, the script's API client, through its environment.
 assert set(env) == script_variables | {"GH_TOKEN"}, "claim step env must match script dependencies"
+specs = re.findall(r"^  ([a-z-]+):\n((?:    [^\n]+(?:\n|$))+)", inputs, re.M)
+assert len(specs) == 6 and len(dict(specs)) == 6, "expected six distinct inputs"
+specs = dict(specs)
+expected_inputs = set()
 for name, value in env.items():
     binding = re.fullmatch(r"\$\{\{\s*inputs\.([a-z-]+)\s*\}\}", value)
     assert binding, f"{name} must bind an action input"
-    spec = action["inputs"][binding[1]]
-    assert "default" in spec and spec["default"] is not None, f"{binding[1]} needs a default"
+    # REPO predates this naming convention; preserve the public repository input.
+    expected = {"GH_TOKEN": "token", "REPO": "repository"}.get(
+        name, name.lower().replace("_", "-"))
+    assert binding[1] == expected, f"{name} must bind inputs.{expected}"
+    expected_inputs.add(expected)
+    default = re.findall(r"^    default: (.+)$", specs[expected], re.M)
+    assert len(default) == 1 and default[0].strip() not in ("", "null", "~"), \
+        f"{expected} needs a default"
+assert set(specs) == expected_inputs, "inputs must match the environment bindings"
 PY
 }
 
@@ -312,7 +390,9 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   claim_accepted_elsewhere claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
-  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract)
+  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract
+  empty_actor_type multiline_actor_type missing_state null_state nonstring_state
+  unknown_state malformed_confirm)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"

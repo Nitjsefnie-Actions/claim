@@ -36,7 +36,7 @@ Fixes #
      at most one sentence per box. If nothing was run, say so and why. -->
 
 - [ ] Bash suite (`tests/run.sh`)
-- [ ] ShellCheck (`claim.sh` and every shell file under `tests/`)
+- [ ] ShellCheck (every shell file under `tests/`) and Python compilation (`claim.py`)
 - [ ] Workflow and action lint (actionlint and zizmor)
 - [ ] CI
 
