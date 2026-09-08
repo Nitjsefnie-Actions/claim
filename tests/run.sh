@@ -436,12 +436,101 @@ assert set(specs) == expected_inputs, "inputs must match the environment binding
 PY
 }
 
+pr_gate_contract() {
+  python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import ast
+import re
+import sys
+
+path = Path(sys.argv[1]) / ".github/workflows/pr-gate.yml"
+assert path.is_file(), "pr-gate workflow must exist"
+# Like action_contract, accept this manifest's explicit block layout without
+# a YAML dependency. actionlint owns full YAML/schema validation.
+nodes = {}
+parents = [(-1, ())]
+sequences = {}
+for raw in path.read_text().splitlines():
+    line = re.split(r"\s+#", raw, maxsplit=1)[0].rstrip()
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    indent = len(line) - len(line.lstrip(" "))
+    while parents[-1][0] >= indent:
+        parents.pop()
+    parent = parents[-1][1]
+    entry = line.strip()
+    if entry.startswith("- "):
+        index = sequences.get(parent, 0)
+        sequences[parent] = index + 1
+        parent += (str(index),)
+        nodes[parent] = None
+        parents.append((indent, parent))
+        indent += 2
+        entry = entry[2:]
+    pair = re.fullmatch(r"([^:]+):(?:\s+(.*))?", entry)
+    assert pair, f"expected explicit workflow mapping: {raw}"
+    key, value = pair[1].strip(), pair[2]
+    if key.startswith(("'", '"')):
+        key = ast.literal_eval(key)
+    if value is not None:
+        value = value.strip()
+        if value.startswith(("'", '"')):
+            value = ast.literal_eval(value)
+        elif value in ("true", "false"):
+            value = value == "true"
+        elif value.isdecimal():
+            value = int(value)
+        if isinstance(value, str) and value.startswith("${{") and value.endswith("}}"):
+            value = "${{ " + value[3:-2].strip() + " }}"
+    node = parent + (key,)
+    assert node not in nodes, f"duplicate workflow key: {'.'.join(node)}"
+    nodes[node] = value
+    if value is None:
+        parents.append((indent, node))
+
+expected = {
+    "name": "pr-gate",
+    "on/pull_request_target/types": "[opened, edited, reopened]",
+    "permissions/contents": "read",
+    "permissions/issues": "read",
+    "permissions/pull-requests": "write",
+    "concurrency/group": "pr-gate-${{ github.event.pull_request.number }}",
+    "concurrency/cancel-in-progress": False,
+    "jobs/pr-gate/if": "github.event.pull_request.user.type != 'Bot'",
+    "jobs/pr-gate/runs-on": "ubuntu-latest",
+    "jobs/pr-gate/timeout-minutes": 5,
+    "jobs/pr-gate/steps/0/uses":
+        "Nitjsefnie-Actions/pr-gate@44437212f1b931f53433b16455bb05aff67ad21e",
+    "jobs/pr-gate/steps/0/with/github-token": "${{ github.token }}",
+    "jobs/pr-gate/steps/0/with/repository": "${{ github.repository }}",
+    "jobs/pr-gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
+    "jobs/pr-gate/steps/0/with/pull-request-author": "${{ github.event.pull_request.user.login }}",
+}
+expected = {tuple(key.split("/")): value for key, value in expected.items()}
+for node in list(expected):
+    for length in range(1, len(node)):
+        expected.setdefault(node[:length], None)
+assert set(nodes) == set(expected), \
+    f"unexpected workflow structure: extra={set(nodes) - set(expected)}, missing={set(expected) - set(nodes)}"
+for node, value in expected.items():
+    actual = nodes[node]
+    if node == ("on", "pull_request_target", "types"):
+        assert actual.startswith("[") and actual.endswith("]"), "expected explicit activity list"
+        actual = "[" + ", ".join(part.strip().strip("'\"") for part in actual[1:-1].split(",")) + "]"
+    if node == ("jobs", "pr-gate", "if"):
+        if actual.startswith("${{") and actual.endswith("}}"):
+            actual = actual[3:-2].strip()
+        actual = re.sub(r"\s*!=\s*", " != ", actual)
+    assert actual == value, f"wrong workflow value at {'/'.join(node)}: {actual!r} != {value!r}"
+PY
+}
+
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_accepted_elsewhere claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
-  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract
+  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract
   empty_actor_type multiline_actor_type missing_state null_state nonstring_state
   unknown_state malformed_confirm
   nbsp_noncommand em_space_noncommand ascii_control_trim
