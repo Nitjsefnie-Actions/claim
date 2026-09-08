@@ -1,0 +1,68 @@
+name: tests
+
+# A matrix, because sed, tr, paste and grep have GNU and BSD dialects.
+# Linux-only checks cannot tell us whether the script means the same thing
+# on macOS. Both platforms run the same real-subprocess behavioral suite.
+#
+# No package install for the suite: bash and jq are on both hosted images,
+# and tests/gh.sh supplies the API stub.
+
+on:
+  push:
+    # Default branch only: a pull-request head already gets one run from
+    # the `pull_request` event below, and an unfiltered `push` schedules
+    # the same commit a second time under a different ref, which the
+    # `concurrency` group cannot collapse.
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: this job only reads the tree. Without an explicit
+# block it inherits the repository default, which can be read/write
+# for the whole token.
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing pushes; later steps must not inherit a stored token.
+          persist-credentials: false
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+
+      - name: Check every shell file
+        # Recurse so adding a nested test helper cannot silently escape lint.
+        run: |
+          shellcheck claim.sh
+          find tests -type f -name '*.sh' -exec shellcheck {} +
+
+  suites:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this job pushes. Leaving the token in
+          # .git/config lets any later step reuse it.
+          persist-credentials: false
+
+      - name: Run the behavioral suite
+        shell: bash
+        run: tests/run.sh

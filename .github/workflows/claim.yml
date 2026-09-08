@@ -1,0 +1,22 @@
+name: claim
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  issues: write
+concurrency:
+  group: claim-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  claim:
+    if: >-
+      github.event.issue.pull_request == null
+      && github.event.issue.state == 'open'
+      && github.event.comment.user.type != 'Bot'
+      && (contains(github.event.comment.body, '/claim')
+          || contains(github.event.comment.body, '/unclaim')
+          || contains(github.event.comment.body, '/release'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: Nitjsefnie-Actions/claim@d44bccf0ebb09abae90836ed4a359b7695491b81  # v1.0.0 # zizmor: ignore[ref-version-mismatch] Supplied release label; tag not yet published.
