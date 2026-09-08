@@ -127,7 +127,6 @@ when the summary genuinely says everything.
 | `docs` | documentation only |
 | `test` | the suite and its stub only |
 | `ci` | workflows, Dependabot, repository automation |
-| `build` | packaging and metadata that is not CI |
 | `refactor` | no observable change in behaviour |
 | `perf` | faster, with the measurement in the body |
 | `chore` | housekeeping that fits nothing above |
@@ -141,13 +140,28 @@ runs the cases, and a directory-named scope could not tell those apart.
 | Scope | Subject |
 |---|---|
 | `action` | the action's interface — the inputs and the step in `action.yml` |
-| `claim` | the decision itself, in `claim.sh` |
-| `tests` | the harness — the runner and the `gh` stub, as machinery |
-| `ci` | workflows and repository automation |
+| `claim` | the decision itself, in `claim.sh`; with type `ci`, the `claim` workflow |
+| `tests` | the harness — the runner and the `gh` stub, as machinery; with type `ci`, the `tests` workflow |
+| workflow name | the workflow with that name, such as `claim`, `codeql`, `actionlint`, `tests`, or `scorecard` |
 | `deps` | a dependency bump; what Dependabot is configured to emit |
-| `readme`, `contributing`, `security`, `coc` | those documents |
+| `readme` | the installation and usage guide in `README.md` |
+| `contributing` | the contribution guide in `CONTRIBUTING.md` |
+| `security` | the vulnerability reporting policy in `SECURITY.md`, not script hardening |
+| `coc` | the community conduct policy in `CODE_OF_CONDUCT.md` |
 | `templates` | the issue and pull-request forms |
 | `repo` | repository furniture — `LICENSE`, `.gitignore`, repository settings |
+
+For a workflow change, use type `ci` and that workflow's **name** as the scope
+(the top-level `name:` in its YAML), not `ci`. The type disambiguates shared
+names: `ci(claim)` changes the workflow, while `fix(claim)` fixes the script;
+likewise, `ci(tests)` changes the workflow and `refactor(tests)` changes the
+test harness. Dependency bumps are the exception: use `ci(deps)`, including
+bumps inside workflows, to match Dependabot. Repository automation that is not
+a workflow uses its subject, such as `ci(templates)` or `ci(repo)`.
+
+Scopes identify commit subjects more precisely than the broader `area:` issue
+labels (`action`, `ci`, `claim`, `docs`, `repo`, `tests`); they need not match
+one-to-one, so the four document scopes all fall under `area: docs`.
 
 A change that genuinely spans two scopes is usually two commits. Where it is
 not, name the scope the change is *about*, not the largest directory it
