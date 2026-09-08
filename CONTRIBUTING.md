@@ -134,14 +134,14 @@ when the summary genuinely says everything.
 
 **Scopes** — the SUBJECT of the change, not the directory it landed in. That
 distinction is what stops every scope collapsing into its type: `test(claim)`
-adds a case for the script, while `refactor(tests)` changes the harness that
+adds a case for the script, while `test(harness)` changes the machinery that
 runs the cases, and a directory-named scope could not tell those apart.
 
 | Scope | Subject |
 |---|---|
 | `action` | the action's interface — the inputs and the step in `action.yml` |
 | `claim` | the decision itself, in `claim.sh`; with type `ci`, the `claim` workflow |
-| `tests` | the harness — the runner and the `gh` stub, as machinery; with type `ci`, the `tests` workflow |
+| `harness` | the test machinery — the runner and the `gh` stub |
 | workflow name | the workflow with that name, such as `claim`, `codeql`, `actionlint`, `tests`, or `scorecard` |
 | `deps` | a dependency bump; what Dependabot is configured to emit |
 | `readme` | the installation and usage guide in `README.md` |
@@ -153,9 +153,10 @@ runs the cases, and a directory-named scope could not tell those apart.
 
 For a workflow change, use type `ci` and that workflow's **name** as the scope
 (the top-level `name:` in its YAML), not `ci`. The type disambiguates shared
-names: `ci(claim)` changes the workflow, while `fix(claim)` fixes the script;
-likewise, `ci(tests)` changes the workflow and `refactor(tests)` changes the
-test harness. Dependency bumps are the exception: use `ci(deps)`, including
+names: `ci(claim)` changes the workflow, while `fix(claim)` fixes the script.
+The harness has its own scope rather than sharing the `tests` workflow's
+name, so `ci(tests)` and `test(harness)` can never be confused for one
+another. Dependency bumps are the exception: use `ci(deps)`, including
 bumps inside workflows, to match Dependabot. Repository automation that is not
 a workflow uses its subject, such as `ci(templates)` or `ci(repo)`.
 
@@ -188,7 +189,7 @@ Examples of ordinary ones:
 ```
 fix(claim): confirm the assignment instead of assuming it
 test(claim): pin that a DELETE names exactly one login
-refactor(tests): let the gh stub answer by request, not by sequence
+test(harness): let the gh stub answer by request, not by sequence
 ci(codeql): analyse the actions language as well
 docs(readme): say why the caller keeps its own prefilter
 ci(deps): bump github/codeql-action/init from 4.37.7 to 4.37.9
