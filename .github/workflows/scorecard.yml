@@ -28,7 +28,10 @@ jobs:
     timeout-minutes: 15
 
     permissions:
+      # Uploading the SARIF is what puts findings in the Security tab.
       security-events: write
+      # Scorecard signs its result over OIDC so a consumer can verify the
+      # published score came from this repository's own run.
       id-token: write
       contents: read
 
