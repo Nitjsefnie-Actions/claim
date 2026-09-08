@@ -20,7 +20,7 @@ for Windows clients. A command inside a sentence is a sentence:
 
 Save this complete workflow as `.github/workflows/claim.yml` on your
 repository's default branch. The action is consumed by its permanent commit
-SHA; the trailing version comment is a readable label.
+SHA.
 
 ```yaml
 name: claim
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: Nitjsefnie-Actions/claim@d44bccf0ebb09abae90836ed4a359b7695491b81  # v1.0.0 # zizmor: ignore[ref-version-mismatch] Supplied release label; tag not yet published.
+      - uses: Nitjsefnie-Actions/claim@10f882ee4dc5cd39b7d3cbcbf151902d6427b53f
 ```
 
 `issue_comment` with `types: [created]` handles newly posted comments; editing
