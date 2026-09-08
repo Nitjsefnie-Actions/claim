@@ -24,4 +24,5 @@ tests/*
 !.github/workflows/tests.yml
 !.github/workflows/codeql.yml
 !.github/workflows/claim.yml
+!.github/workflows/pr-gate.yml
 !.github/workflows/scorecard.yml
