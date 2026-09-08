@@ -439,9 +439,17 @@ PY
 pr_gate_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
-import ast
 import re
 import sys
+
+def quoted_scalar(text):
+    if text.startswith("'"):
+        assert re.fullmatch(r"'(?:[^']|'')*'", text), "unsupported single-quoted YAML scalar"
+        return text[1:-1].replace("''", "'")
+    if text.startswith('"'):
+        assert re.fullmatch(r'"[^"\\]*"', text), "unsupported double-quoted YAML escape"
+        return text[1:-1]
+    return text
 
 path = Path(sys.argv[1]) / ".github/workflows/pr-gate.yml"
 assert path.is_file(), "pr-gate workflow must exist"
@@ -469,13 +477,11 @@ for raw in path.read_text().splitlines():
         entry = entry[2:]
     pair = re.fullmatch(r"([^:]+):(?:\s+(.*))?", entry)
     assert pair, f"expected explicit workflow mapping: {raw}"
-    key, value = pair[1].strip(), pair[2]
-    if key.startswith(("'", '"')):
-        key = ast.literal_eval(key)
+    key, value = quoted_scalar(pair[1].strip()), pair[2]
     if value is not None:
         value = value.strip()
         if value.startswith(("'", '"')):
-            value = ast.literal_eval(value)
+            value = quoted_scalar(value)
         elif value in ("true", "false"):
             value = value == "true"
         elif value.isdecimal():
@@ -516,7 +522,7 @@ for node, value in expected.items():
     actual = nodes[node]
     if node == ("on", "pull_request_target", "types"):
         assert actual.startswith("[") and actual.endswith("]"), "expected explicit activity list"
-        actual = "[" + ", ".join(part.strip().strip("'\"") for part in actual[1:-1].split(",")) + "]"
+        actual = "[" + ", ".join(quoted_scalar(part.strip()) for part in actual[1:-1].split(",")) + "]"
     if node == ("jobs", "pr-gate", "if"):
         if actual.startswith("${{") and actual.endswith("}}"):
             actual = actual[3:-2].strip()
