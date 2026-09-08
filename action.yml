@@ -39,8 +39,8 @@ runs:
     - name: Claim or unclaim
       shell: bash
       # Public comment text is attacker-controlled: pass it as environment data,
-      # never interpolate it into a shell program. Expressions have no trim();
-      # the caller's contains() prefilter cannot replace the script's exact match.
+      # never interpolate it into a shell program. The script accepts only an exact
+      # command after stripping carriage returns and trimming whitespace.
       env:
         GH_TOKEN: ${{ inputs.token }}
         REPO: ${{ inputs.repository }}
