@@ -6,27 +6,55 @@ RUN="$(mktemp -d "$ROOT/tests/.run.XXXXXX")"
 mkdir "$RUN/bin"
 ln -s "$ROOT/tests/gh.sh" "$RUN/bin/gh"
 export PATH="$RUN/bin:$PATH"
-export GH_TOKEN=test-token REPO=owner/project ISSUE=7 ACTOR=actor ACTOR_TYPE=User
-export GH_CASE
+export GH_TOKEN REPO ISSUE ACTOR ACTOR_TYPE GH_CASE
+
+reset_case() {
+  GH_TOKEN=test-token
+  REPO=owner/project
+  ISSUE=7
+  ACTOR=actor
+  ACTOR_TYPE=User
+  body=
+  expected_error=
+}
 
 expect_gh() {
   local response=$1
   shift
   jq -cn --args '$ARGS.positional' -- "$@" >> "$GH_CASE/expected.jsonl"
-  printf '%s' "$response" > "$GH_CASE/response.$(wc -l < "$GH_CASE/expected.jsonl")"
+  printf '%s' "$response" > "$GH_CASE/response.$(wc -l < "$GH_CASE/expected.jsonl" | tr -d '[:space:]')"
+}
+
+expect_gh_failure() {
+  local status=$1 error=$2 ordinal
+  shift 2
+  expect_gh '' "$@"
+  ordinal=$(wc -l < "$GH_CASE/expected.jsonl" | tr -d '[:space:]')
+  printf '%s' "$status" > "$GH_CASE/response.$ordinal.status"
+  printf '%s\n' "$error" > "$GH_CASE/response.$ordinal.stderr"
 }
 
 run_claim() {
   local expected_status=$1 expected_output=${2-} status=0 failed=0
   BODY="$body" "$ROOT/claim.sh" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
-  if [[ $status != "$expected_status" ]]; then
+  if [[ $expected_status == nonzero && $status == 0 ]] ||
+     [[ $expected_status != nonzero && $status != "$expected_status" ]]; then
     printf '  exit status: expected %s, got %s\n' "$expected_status" "$status"
     failed=1
   fi
   printf '%s' "$expected_output" > "$GH_CASE/expected.stdout"
   if ! diff -u "$GH_CASE/expected.stdout" "$GH_CASE/stdout"; then failed=1; fi
   if ! diff -u "$GH_CASE/expected.jsonl" "$GH_CASE/calls.jsonl"; then failed=1; fi
-  if [[ -s $GH_CASE/stderr ]]; then cat "$GH_CASE/stderr"; failed=1; fi
+  if [[ -n $expected_error ]]; then
+    if ! grep -Eq -- "$expected_error" "$GH_CASE/stderr"; then
+      printf '  expected stderr matching: %s\n' "$expected_error"
+      cat "$GH_CASE/stderr"
+      failed=1
+    fi
+  elif [[ -s $GH_CASE/stderr ]]; then
+    cat "$GH_CASE/stderr"
+    failed=1
+  fi
   return "$failed"
 }
 
@@ -167,7 +195,7 @@ for case_name in "${cases[@]}"; do
   mkdir "$GH_CASE"
   : > "$GH_CASE/expected.jsonl"
   : > "$GH_CASE/calls.jsonl"
-  ACTOR_TYPE=User
+  reset_case
   if "$case_name"; then
     printf 'PASS %s\n' "$case_name"
   else
@@ -180,3 +208,4 @@ if (( failures )); then
   printf 'Artifacts: %s\n' "$RUN"
   exit 1
 fi
+rm -r -- "$RUN"
