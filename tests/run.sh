@@ -12,7 +12,7 @@ reset_case() {
   GH_TOKEN=test-token
   REPO=owner/project
   ISSUE=7
-  ACTOR=actor
+  ACTOR=octo-claimant
   ACTOR_TYPE=User
   body=
   expected_error=
@@ -68,6 +68,11 @@ multiline() {
   run_claim 0 $'not a command: /claim\n'
 }
 
+interior_cr() {
+  body=$'hello there\r\nsecond line'
+  run_claim 0 $'not a command: hello there\n'
+}
+
 metacharacters() {
   local result=0
   # The literal shell syntax must reach the child unchanged, including both quotes.
@@ -84,22 +89,22 @@ metacharacters() {
 
 already_assigned() {
   body=/claim
-  expect_gh '{"state":"open","assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@actor you already have this one.' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
 trimmed_command() {
   body=$' \t/claim \t\r'
-  expect_gh '{"state":"open","assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@actor you already have this one.' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
 blank_lines_around_command() {
   body=$'\n \t\r\n/claim\n \t\r\n'
-  expect_gh '{"state":"open","assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@actor you already have this one.' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
@@ -128,41 +133,83 @@ claimed_by_three() {
 claim_accepted() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=actor' --silent
-  expect_gh '{"state":"open","assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @actor.' --silent
+  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+claim_accepted_elsewhere() {
+  body=/claim
+  ACTOR=river-helper
+  REPO=other-team/widget.tools
+  ISSUE=42
+  expect_gh '{"state":"open","assignees":[]}' api repos/other-team/widget.tools/issues/42
+  expect_gh '' api -X POST repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
+  expect_gh '' api repos/other-team/widget.tools/issues/42/comments -f 'body=Assigned to @river-helper.' --silent
   run_claim 0
 }
 
 claim_rejected() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=actor' --silent
+  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
   expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=GitHub would not accept @actor as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
   run_claim 1
+}
+
+assignment_post_forbidden() {
+  body=/claim
+  expected_error='HTTP 403'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
+    api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  run_claim nonzero
+}
+
+unclaim_delete_forbidden() {
+  body=/unclaim
+  expected_error='HTTP 403'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
+    api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  run_claim nonzero
+}
+
+comment_forbidden() {
+  body=/claim
+  expected_error='HTTP 403'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
+    api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+  run_claim nonzero
 }
 
 unclaim_not_assigned() {
   body=/unclaim
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@actor you are not assigned to this issue, so there is nothing to give up.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you are not assigned to this issue, so there is nothing to give up.' --silent
   run_claim 0
 }
 
 unclaim_one_of_two() {
   body=/unclaim
-  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"actor"}]}' api repos/owner/project/issues/7
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=actor' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Unassigned @actor.' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Unassigned @octo-claimant.' --silent
   run_claim 0
 }
 
 release_one_of_two() {
   body=/release
-  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"actor"}]}' api repos/owner/project/issues/7
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=actor' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Unassigned @actor.' --silent
+  ACTOR=river-helper
+  REPO=other-team/widget.tools
+  ISSUE=42
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
+  expect_gh '' api -X DELETE repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
+  expect_gh '' api repos/other-team/widget.tools/issues/42/comments -f 'body=Unassigned @river-helper.' --silent
   run_claim 0
 }
 
@@ -188,7 +235,7 @@ missing_assignees() {
 
 pull_request() {
   body=/unclaim
-  expect_gh '{"state":"open","pull_request":{"url":"https://api.github.com/repos/owner/project/pulls/7"},"assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","pull_request":{"url":"https://api.github.com/repos/owner/project/pulls/7"},"assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   run_claim 0
 }
 
@@ -231,11 +278,12 @@ repository_query() {
   run_claim nonzero
 }
 
-cases=(sentence multiline metacharacters already_assigned trimmed_command
+cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
-  claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
+  claim_accepted_elsewhere claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
-  organization_actor mannequin_actor invalid_issue invalid_repository repository_query)
+  organization_actor mannequin_actor invalid_issue invalid_repository repository_query
+  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
