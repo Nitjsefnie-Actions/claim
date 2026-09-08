@@ -21,12 +21,15 @@ def snapshot(endpoint):
         raise ValueError("issue snapshot must contain a state string")
     if not isinstance(data.get("assignees"), list):
         raise ValueError("issue snapshot must contain an assignees array")
+    for assignee in data["assignees"]:
+        if not isinstance(assignee, dict) or not isinstance(assignee.get("login"), str):
+            raise ValueError("issue snapshot assignees must be objects with string logins")
     return data
 
 
 def main():
-    # Remove CR before trimming the whole body, preserving interior text.
-    command = os.environ["BODY"].replace("\r", "").strip()
+    # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
+    command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
     if command not in ("/claim", "/unclaim", "/release"):
         print("not a command: " + command.split("\n", 1)[0])
         return 0
@@ -39,7 +42,7 @@ def main():
         return 0
 
     issue = os.environ["ISSUE"]
-    repo = os.environ["REPO"]
+    repo = os.environ["REPOSITORY"]
     actor = os.environ["ACTOR"]
     if not re.fullmatch(r"[0-9]+", issue):
         raise ValueError("invalid issue: expected digits")
