@@ -85,7 +85,15 @@ claimed_by_others() {
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is already claimed by @alice,@bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+claimed_by_three() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"},{"login":"carol"}]}' api repos/owner/project/issues/7
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is already claimed by @alice, @bob, @carol. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
   run_claim 0
 }
 
@@ -150,7 +158,7 @@ bot_actor() {
 }
 
 cases=(sentence multiline metacharacters already_assigned trimmed_command
-  blank_lines_around_command whitespace_only claimed_by_others claim_accepted
+  blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue pull_request bot_actor)
 failures=0

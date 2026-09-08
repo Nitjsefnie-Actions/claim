@@ -42,7 +42,7 @@ if jq -e '.assignees | length > 0' <<< "$snapshot" > /dev/null; then
   if jq -e --arg actor "$ACTOR" 'any(.assignees[]; .login == $actor)' <<< "$snapshot" > /dev/null; then
     say "@$ACTOR you already have this one."
   else
-    current="$(jq -r '.assignees[].login' <<< "$snapshot" | sed 's/^/@/' | paste -sd', ' -)"
+    current="$(jq -r '.assignees | map("@" + .login) | join(", ")' <<< "$snapshot")"
     say "This issue is already claimed by $current. Comment \`/unclaim\` (or \`/release\`) if you are giving it up."
   fi
   exit 0
