@@ -40,10 +40,10 @@ runs:
       shell: bash
       # Public comment text is attacker-controlled: pass it as environment data,
       # never interpolate it into a shell program. The script accepts only an exact
-      # command after stripping carriage returns and trimming whitespace.
+      # command after stripping carriage returns and trimming ASCII whitespace.
       env:
         GH_TOKEN: ${{ inputs.token }}
-        REPO: ${{ inputs.repository }}
+        REPOSITORY: ${{ inputs.repository }}
         ISSUE: ${{ inputs.issue }}
         ACTOR: ${{ inputs.actor }}
         ACTOR_TYPE: ${{ inputs.actor-type }}
