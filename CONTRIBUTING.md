@@ -38,11 +38,8 @@ Two conditions, and they are about honesty rather than provenance:
    `gpt-6-astra` and `GPT-6-Astra` are not equivalent.
 
 2. **Do not submit claims you have not verified.** Paste the command and its
-   real output. "Tests pass" without the run is not evidence, and a shell
-   script is unusually easy to be confidently wrong about: quoting, word
-   splitting and `sed` dialects all part company with the obvious reading
-   quietly, and a stub that answers every call the same way passes a suite that
-   proves nothing.
+   real output. "Tests pass" without the run is not evidence. A stub that
+   answers every call the same way passes a suite that proves nothing.
 
 If a maintainer's reply reads like it was drafted by an agent, it probably was.
 That is fine in both directions.
@@ -68,15 +65,17 @@ you changed, check `git check-ignore -v` refuses that file, and check
 
 ## Getting it running
 
-Nothing to install but `shellcheck`. `bash`, `gh` and `jq` are what the action
-itself needs, and every GitHub-hosted runner has all three.
+Nothing to install but `shellcheck`. `bash`, `gh` and `python3` are what the
+action itself needs, and every GitHub-hosted runner has all three. Python uses
+only the standard library; the suite needs no package installation.
 
 ```bash
 tests/run.sh          # the whole suite; its exit status is the verdict
-shellcheck claim.sh tests/*.sh
+shellcheck tests/*.sh
+python3 -m py_compile claim.py
 ```
 
-The suite runs `claim.sh` as a real subprocess with a stub `gh` earliest on
+The suite runs `claim.py` as a real subprocess with a stub `gh` earliest on
 `PATH`, so a case can assert both the API calls that were made and the ones
 that were not. There is no framework and no dependency to install; if a case
 needs a new fixture, add it beside the others.
@@ -87,8 +86,8 @@ in. Point a scratch repository's workflow at your branch —
 
 ## House style
 
-- **Comments explain why, not what.** Nearly every line of `claim.sh` is
-  defending against something invisible from the code — GitHub silently
+- **Comments explain why, not what.** The checks in `claim.py` defend against
+  something invisible from the code — GitHub silently
   ignoring an assignee it will not accept, a comment body carrying carriage
   returns from a Windows client, a `DELETE` that must name exactly one login so
   a second assignee survives. If you change such a line, change the comment
@@ -140,7 +139,7 @@ runs the cases, and a directory-named scope could not tell those apart.
 | Scope | Subject |
 |---|---|
 | `action` | the action's interface — the inputs and the step in `action.yml` |
-| `claim` | the decision itself, in `claim.sh`; with type `ci`, the `claim` workflow |
+| `claim` | the decision itself, in `claim.py`; with type `ci`, the `claim` workflow |
 | `harness` | the test machinery — the runner and the `gh` stub |
 | workflow name | the workflow with that name, such as `claim`, `codeql`, `actionlint`, `tests`, or `scorecard` |
 | `deps` | a dependency bump; what Dependabot is configured to emit |

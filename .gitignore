@@ -1,7 +1,7 @@
 *
 !.gitignore
 !action.yml
-!claim.sh
+!claim.py
 !LICENSE
 !CODE_OF_CONDUCT.md
 !CONTRIBUTING.md

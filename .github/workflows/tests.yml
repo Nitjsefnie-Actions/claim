@@ -1,10 +1,9 @@
 name: tests
 
-# A matrix, because sed, tr, paste and grep have GNU and BSD dialects.
-# Linux-only checks cannot tell us whether the script means the same thing
-# on macOS. Both platforms run the same real-subprocess behavioral suite.
+# Linux-only checks cannot establish macOS portability. Both platforms run
+# the same real-subprocess behavioral suite, including the bash API stub.
 #
-# No package install for the suite: bash and jq are on both hosted images,
+# No package install for the suite: bash and python3 are on both hosted images,
 # and tests/gh.sh supplies the API stub.
 
 on:
@@ -45,7 +44,6 @@ jobs:
       - name: Check every shell file
         # Recurse so adding a nested test helper cannot silently escape lint.
         run: |
-          shellcheck claim.sh
           find tests -type f -name '*.sh' -exec shellcheck {} +
 
   suites:
@@ -62,6 +60,9 @@ jobs:
           # Nothing in this job pushes. Leaving the token in
           # .git/config lets any later step reuse it.
           persist-credentials: false
+
+      - name: Compile the claim script
+        run: python3 -m py_compile claim.py
 
       - name: Run the behavioral suite
         shell: bash

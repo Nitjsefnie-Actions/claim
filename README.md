@@ -82,6 +82,11 @@ commenter's identity and the issue and body from that comment event.
 | `actor-type` | `${{ github.event.comment.user.type }}` | Commenter's GitHub account type. |
 | `body` | `${{ github.event.comment.body }}` | Comment body containing the command. |
 
+For a recognized command, a non-`User` account type is refused with a log
+diagnostic. An empty `actor-type` fails the run as a configuration error; its
+default comes from the comment event, so other event types need an explicit
+value for this input.
+
 ## What it will not do
 
 - Act on a closed issue, including releasing an assignment after closure.

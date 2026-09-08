@@ -48,4 +48,4 @@ runs:
         ACTOR: ${{ inputs.actor }}
         ACTOR_TYPE: ${{ inputs.actor-type }}
         BODY: ${{ inputs.body }}
-      run: '"$GITHUB_ACTION_PATH/claim.sh"'
+      run: 'python3 "$GITHUB_ACTION_PATH/claim.py"'
