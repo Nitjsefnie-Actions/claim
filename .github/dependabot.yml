@@ -7,3 +7,9 @@ updates:
       day: wednesday
       time: "04:23"
       timezone: Etc/UTC
+    # Dependabot writes its own commit messages, so the convention in
+    # CONTRIBUTING.md only holds for them if it is configured here. `include:
+    # scope` is what appends the `(deps)`, giving `ci(deps): bump ...`.
+    commit-message:
+      prefix: ci
+      include: scope
