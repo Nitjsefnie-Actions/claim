@@ -15,8 +15,13 @@ name: codeql
 # would never be applied to a file last touched last year.
 
 on:
+  # Every branch, not just main. Scorecard's SAST check asks whether the
+  # commits that reached main were analysed BEFORE they got there, and a
+  # main-only filter means the answer is never. Deliberately not a
+  # pull_request trigger: `analyze` uploads its SARIF against the ref and sha
+  # of the triggering event while the checkout takes the pull request head, so
+  # on a review event the alerts would describe a tree that was never scanned.
   push:
-    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'LICENSE'
