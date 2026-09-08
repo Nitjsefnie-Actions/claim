@@ -102,6 +102,88 @@ in. Point a scratch repository's workflow at your branch —
   protecting, watch the case fail, restore it — and say in the pull request
   which case failed and what it printed.
 
+## Commit messages
+
+Conventional Commits, and the scope is **required** rather than optional:
+
+```
+<type>(<scope>): <summary>
+
+<body — why the previous behaviour was wrong>
+
+Co-Authored-By: <Model Name> <noreply@example.com>
+```
+
+The summary is imperative, lower case, no trailing full stop, and fits in 72
+characters. The body is where the reasoning goes; a one-line commit is fine
+when the summary genuinely says everything.
+
+**Types**
+
+| Type | For |
+|---|---|
+| `feat` | new behaviour a caller can observe |
+| `fix` | a defect in behaviour a caller can observe |
+| `docs` | documentation only |
+| `test` | the suite and its stub only |
+| `ci` | workflows, Dependabot, repository automation |
+| `build` | packaging and metadata that is not CI |
+| `refactor` | no observable change in behaviour |
+| `perf` | faster, with the measurement in the body |
+| `chore` | housekeeping that fits nothing above |
+| `revert` | undoing an earlier commit, which it names |
+
+**Scopes** — the SUBJECT of the change, not the directory it landed in. That
+distinction is what stops every scope collapsing into its type: `test(claim)`
+adds a case for the script, while `refactor(tests)` changes the harness that
+runs the cases, and a directory-named scope could not tell those apart.
+
+| Scope | Subject |
+|---|---|
+| `action` | the action's interface — the inputs and the step in `action.yml` |
+| `claim` | the decision itself, in `claim.sh` |
+| `tests` | the harness — the runner and the `gh` stub, as machinery |
+| `ci` | workflows and repository automation |
+| `deps` | a dependency bump; what Dependabot is configured to emit |
+| `readme`, `contributing`, `security`, `coc` | those documents |
+| `templates` | the issue and pull-request forms |
+| `repo` | repository furniture — `LICENSE`, `.gitignore`, repository settings |
+
+A change that genuinely spans two scopes is usually two commits. Where it is
+not, name the scope the change is *about*, not the largest directory it
+touched.
+
+**Breaking changes carry a footer.** This action is consumed by commit SHA, so
+a caller upgrades deliberately and reads what changed on the way. Anything that
+removes or renames an input, changes an input's default, or changes what the
+action does to an issue is breaking, and says so:
+
+```
+feat(action)!: take the commenter's type as an input
+
+BREAKING CHANGE: a caller that pinned an earlier SHA and passes inputs
+positionally must now pass actor-type, or the bot check is inert.
+```
+
+The `!` and the `BREAKING CHANGE:` footer are both required — the marker is
+what a reader skimming `git log --oneline` sees, and the footer is what tells
+them whether it affects them.
+
+Examples of ordinary ones:
+
+```
+fix(claim): confirm the assignment instead of assuming it
+test(claim): pin that a DELETE names exactly one login
+refactor(tests): let the gh stub answer by request, not by sequence
+ci(codeql): analyse the actions language as well
+docs(readme): say why the caller keeps its own prefilter
+ci(deps): bump github/codeql-action/init from 4.37.7 to 4.37.9
+```
+
+That last one is not hand-written: `.github/dependabot.yml` configures the
+prefix, so Dependabot's own pull requests arrive in this form and nobody has to
+rewrite them.
+
 ## Issues
 
 Use the [issue form](.github/ISSUE_TEMPLATE/issue.md). Its section order is
@@ -138,8 +220,7 @@ be removed.
 ## Pull requests
 
 Small and single-purpose beats large and comprehensive. One logical change per
-commit, with a message that says what changed and why the previous behaviour
-was wrong.
+commit, in the form the [Commit messages](#commit-messages) section sets out.
 
 Claim the issue before you start, then name it in the pull request's
 **Related Issues and Pull Requests** section.
