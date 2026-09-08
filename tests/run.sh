@@ -278,12 +278,41 @@ repository_query() {
   run_claim nonzero
 }
 
+action_contract() {
+  python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+import yaml
+
+root = Path(sys.argv[1])
+action = yaml.safe_load((root / "action.yml").read_text())
+steps = action["runs"]["steps"]
+for step in steps:
+    if "run" in step:
+        assert "${{" not in step["run"], "expressions must not appear in run values"
+
+claim_steps = [step for step in steps if "claim.sh" in step.get("run", "")]
+assert len(claim_steps) == 1, "expected one claim step"
+env = claim_steps[0]["env"]
+script = (root / "claim.sh").read_text()
+script_variables = set(re.findall(r"\$(?:\{)?([A-Z][A-Z0-9_]*)", script))
+# GH_TOKEN is consumed by gh, the script's API client, through its environment.
+assert set(env) == script_variables | {"GH_TOKEN"}, "claim step env must match script dependencies"
+for name, value in env.items():
+    binding = re.fullmatch(r"\$\{\{\s*inputs\.([a-z-]+)\s*\}\}", value)
+    assert binding, f"{name} must bind an action input"
+    spec = action["inputs"][binding[1]]
+    assert "default" in spec and spec["default"] is not None, f"{binding[1]} needs a default"
+PY
+}
+
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_accepted_elsewhere claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
-  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden)
+  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
