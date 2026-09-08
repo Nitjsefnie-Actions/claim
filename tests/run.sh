@@ -172,6 +172,20 @@ closed_issue() {
   run_claim 0
 }
 
+malformed_snapshot() {
+  body=/claim
+  expected_error='parse error'
+  expect_gh '{"state":"open",' api repos/owner/project/issues/7
+  run_claim nonzero
+}
+
+missing_assignees() {
+  body=/claim
+  expected_error='assignees array'
+  expect_gh '{"state":"open"}' api repos/owner/project/issues/7
+  run_claim nonzero
+}
+
 pull_request() {
   body=/unclaim
   expect_gh '{"state":"open","pull_request":{"url":"https://api.github.com/repos/owner/project/pulls/7"},"assignees":[{"login":"actor"}]}' api repos/owner/project/issues/7
@@ -188,7 +202,7 @@ bot_actor() {
 cases=(sentence multiline metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
-  closed_issue pull_request bot_actor)
+  closed_issue malformed_snapshot missing_assignees pull_request bot_actor)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"

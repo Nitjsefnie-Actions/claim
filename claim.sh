@@ -17,17 +17,27 @@ say() {
 }
 
 snapshot="$(gh api "repos/$REPO/issues/$ISSUE")"
+fields="$(jq -rs --arg actor "$ACTOR" '
+  if length != 1 then error("expected one issue snapshot") else .[0] end
+  | if (.assignees | type) != "array"
+    then error("issue snapshot must contain an assignees array") else . end
+  | [.state, (.pull_request != null), (.assignees | length),
+     any(.assignees[]; .login == $actor),
+     (.assignees | map("@" + .login) | join(", "))]
+  | @tsv
+' <<< "$snapshot")"
+IFS=$'\t' read -r state is_pull_request assignee_count actor_assigned current <<< "$fields"
 # A pull request is an issue to this event, but its assignees mean something
 # else. A closed issue cannot be worked; a bot's comment is never a claim. The
 # caller's prefilter only saves starting a runner: these checks stand on their own.
-if [[ $ACTOR_TYPE == Bot ]] || jq -e '.state != "open" or .pull_request != null' <<< "$snapshot" > /dev/null; then
+if [[ $ACTOR_TYPE == Bot || $state != open || $is_pull_request == true ]]; then
   exit 0
 fi
 
 # The reference implementation calls it /release; accept the word people arrive
 # expecting as an alias for /unclaim. Both give up only the commenter's claim.
 if [[ $command == /unclaim || $command == /release ]]; then
-  if ! jq -e --arg actor "$ACTOR" 'any(.assignees[]; .login == $actor)' <<< "$snapshot" > /dev/null; then
+  if [[ $actor_assigned != true ]]; then
     say "@$ACTOR you are not assigned to this issue, so there is nothing to give up."
     exit 0
   fi
@@ -38,11 +48,10 @@ if [[ $command == /unclaim || $command == /release ]]; then
   exit 0
 fi
 
-if jq -e '.assignees | length > 0' <<< "$snapshot" > /dev/null; then
-  if jq -e --arg actor "$ACTOR" 'any(.assignees[]; .login == $actor)' <<< "$snapshot" > /dev/null; then
+if (( assignee_count > 0 )); then
+  if [[ $actor_assigned == true ]]; then
     say "@$ACTOR you already have this one."
   else
-    current="$(jq -r '.assignees | map("@" + .login) | join(", ")' <<< "$snapshot")"
     say "This issue is already claimed by $current. Comment \`/unclaim\` (or \`/release\`) if you are giving it up."
   fi
   exit 0
