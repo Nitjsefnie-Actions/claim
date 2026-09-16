@@ -19,4 +19,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: Nitjsefnie-Actions/claim@10f882ee4dc5cd39b7d3cbcbf151902d6427b53f
+      - uses: Nitjsefnie-Actions/claim@ec5a512e5157551cfecc7a644d616bc0fe34e344
