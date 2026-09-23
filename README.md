@@ -12,9 +12,18 @@ someone with write access has to use the assignee control for them.
 - `/release` is another name for `/unclaim`, with exactly the same behavior.
 
 The entire comment body must be **exactly** one command after trimming
-surrounding whitespace, including blank lines. Carriage returns are removed
-for Windows clients. A command inside a sentence is a sentence:
-`please /claim this` does nothing. Commands are case-sensitive.
+surrounding whitespace, including blank lines, optionally followed by the
+issue's number with or without `#`: on issue 7, `/claim`, `/claim 7` and
+`/claim #7` are the same command. A carried number must name the issue the
+comment is on. Carriage returns are removed for Windows clients. A command
+inside a sentence is a sentence: `please /claim this` does nothing.
+Commands are case-sensitive.
+
+Anything else is declined loudly: the action posts a reply on the issue
+naming the offending line and the accepted forms, and the run fails, so a
+refused command is visible to the commenter and on the issue instead of a
+silent green run. A command carrying a different issue's number, and a
+command on a closed issue or a pull request, is declined the same way.
 
 ## Install
 
@@ -93,13 +102,16 @@ value for this input.
 - Act on a pull request.
 - Act on a bot's comment.
 - Treat an inexact body as a command.
+- Stay silent about a refusal: every decline a human can act on is answered
+  on the issue, and the run fails.
 - Claim an issue somebody already holds or replace its assignees. If the
   commenter already holds it, the action says so without changing assignments.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
-posts its answer as a comment on the issue. A declined assignment also fails
-the run. Check that your login actually appears in the issue's assignees.
+posts its answer as a comment on the issue. Like every decline, a declined
+assignment also fails the run. Check that your login actually appears in the
+issue's assignees.
 
 ## Contributing and security
 
