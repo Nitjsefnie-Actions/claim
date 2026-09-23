@@ -89,7 +89,7 @@ metacharacters() {
   body+=$'\nsecond line'
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments \
-    -f 'body=Not a command: `$(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' \
+    -f 'body=Not a command: `$(touch /tmp/pwned) $(touch pwned) \`touch backtick-pwned\` '\''single'\'' "double"`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' \
     --silent
   (cd "$GH_CASE" && run_claim 1 $'not a command: $(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'$'\n') || result=$?
   if [[ -e $GH_CASE/pwned || -e $GH_CASE/backtick-pwned || -e /tmp/pwned ]]; then
