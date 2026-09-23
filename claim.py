@@ -61,7 +61,10 @@ def main():
     if match is None:
         first = command.split("\n", 1)[0]
         print("not a command: " + first)
-        say(f"Not a command: `{first}`. Comment one of `/claim`, `/unclaim` "
+        # The line's own backticks are escaped so they cannot end the code
+        # span the reply quotes it in.
+        quoted = first.replace("`", "\\`")
+        say(f"Not a command: `{quoted}`. Comment one of `/claim`, `/unclaim` "
             "or `/release` on its own, optionally followed by the issue "
             f"number, for example `/claim {issue}` or `/claim #{issue}`.")
         return 1
