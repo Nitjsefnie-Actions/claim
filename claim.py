@@ -30,7 +30,10 @@ def snapshot(endpoint):
 def main():
     # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
     command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
-    if command not in ("/claim", "/unclaim", "/release"):
+    # The number must share the command's line: a body with a newline is
+    # prose, not a command followed by a number on the next line.
+    match = re.fullmatch(r"(/claim|/unclaim|/release)(?:[ \t\v\f]+#?([0-9]+))?", command)
+    if match is None:
         print("not a command: " + command.split("\n", 1)[0])
         return 0
 
@@ -54,6 +57,13 @@ def main():
 
     def say(body):
         gh(f"{endpoint}/comments", "-f", f"body={body}", "--silent")
+
+    if match.group(2) is not None and int(match.group(2)) != int(issue):
+        say(f"`{command}` names issue {match.group(2)}, but this comment is on "
+            f"issue {issue}. Comment `{match.group(1)}` (or "
+            f"`{match.group(1)} {issue}`) to act on this issue.")
+        return 1
+    command = match.group(1)
 
     initial = snapshot(endpoint)
     # A PR's assignees mean something else; closed issues cannot be worked.

@@ -161,6 +161,40 @@ claim_rejected() {
   run_claim 1
 }
 
+claim_with_number() {
+  body='/claim 7'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+claim_with_hash_number() {
+  body='/claim #7'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+unclaim_with_number() {
+  body='/unclaim 7'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Unassigned @octo-claimant.' --silent
+  run_claim 0
+}
+
+claim_number_mismatch() {
+  body='/claim 8'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=`/claim 8` names issue 8, but this comment is on issue 7. Comment `/claim` (or `/claim 7`) to act on this issue.' --silent
+  run_claim 1
+}
+
 assignment_post_forbidden() {
   body=/claim
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
@@ -533,7 +567,8 @@ PY
 
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
-  claim_accepted_elsewhere claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
+  claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
+  claim_number_mismatch claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract
