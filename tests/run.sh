@@ -61,17 +61,24 @@ run_claim() {
 
 sentence() {
   body='please /claim this when you can'
-  run_claim 0 $'not a command: please /claim this when you can\n'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `please /claim this when you can`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: please /claim this when you can\n'
 }
 
 multiline() {
   body=$'/claim\nthis is a second line'
-  run_claim 0 $'not a command: /claim\n'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim\n'
 }
 
 interior_cr() {
   body=$'hello there\r\nsecond line'
-  run_claim 0 $'not a command: hello there\n'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `hello there`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: hello there\n'
 }
 
 metacharacters() {
@@ -80,7 +87,11 @@ metacharacters() {
   # shellcheck disable=SC2016
   body='$(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'
   body+=$'\nsecond line'
-  (cd "$GH_CASE" && run_claim 0 $'not a command: $(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'$'\n') || result=$?
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments \
+    -f 'body=Not a command: `$(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' \
+    --silent
+  (cd "$GH_CASE" && run_claim 1 $'not a command: $(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'$'\n') || result=$?
   if [[ -e $GH_CASE/pwned || -e $GH_CASE/backtick-pwned || -e /tmp/pwned ]]; then
     printf '  comment body executed a shell side effect\n'
     result=1
@@ -111,7 +122,9 @@ blank_lines_around_command() {
 
 whitespace_only() {
   body=$' \t\r\n '
-  run_claim 0 $'not a command: \n'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: ``. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: \n'
 }
 
 claimed_by_others() {
@@ -195,6 +208,20 @@ claim_number_mismatch() {
   run_claim 1
 }
 
+claim_number_trailing_prose() {
+  body='/claim 526 extra prose'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim 526 extra prose`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim 526 extra prose\n'
+}
+
+claim_number_next_line() {
+  body=$'/claim\n526'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim\n'
+}
+
 assignment_post_forbidden() {
   body=/claim
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
@@ -251,7 +278,9 @@ release_one_of_two() {
 closed_issue() {
   body=/claim
   expect_gh '{"state":"closed","assignees":[]}' api repos/owner/project/issues/7
-  run_claim 0
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is not open, so `/claim` cannot act on it.' --silent
+  run_claim 1
 }
 
 malformed_snapshot() {
@@ -271,7 +300,9 @@ missing_assignees() {
 pull_request() {
   body=/unclaim
   expect_gh '{"state":"open","pull_request":{"url":"https://api.github.com/repos/owner/project/pulls/7"},"assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  run_claim 0
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This is a pull request, so `/unclaim` has no effect here.' --silent
+  run_claim 1
 }
 
 bot_actor() {
@@ -329,7 +360,9 @@ nonstring_state() {
 unknown_state() {
   body=/claim
   expect_gh '{"state":"unknown","assignees":[]}' api repos/owner/project/issues/7
-  run_claim 0
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is not open, so `/claim` cannot act on it.' --silent
+  run_claim 1
 }
 
 malformed_confirm() {
@@ -364,12 +397,14 @@ repository_query() {
 
 nbsp_noncommand() {
   body=$'\302\240/claim\302\240'
-  run_claim 0 $'not a command: \302\240/claim\302\240\n'
+  expect_gh '' api repos/owner/project/issues/7/comments -f $'body=Not a command: `\302\240/claim\302\240`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: \302\240/claim\302\240\n'
 }
 
 em_space_noncommand() {
   body=$'\342\200\203/claim\342\200\203'
-  run_claim 0 $'not a command: \342\200\203/claim\342\200\203\n'
+  expect_gh '' api repos/owner/project/issues/7/comments -f $'body=Not a command: `\342\200\203/claim\342\200\203`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: \342\200\203/claim\342\200\203\n'
 }
 
 ascii_control_trim() {
@@ -385,7 +420,8 @@ ascii_control_trim() {
 # restoring it makes a body the specification rejects into a valid command.
 unit_separator_noncommand() {
   body=$'\037/claim\037'
-  run_claim 0 $'not a command: \037/claim\037\n'
+  expect_gh '' api repos/owner/project/issues/7/comments -f $'body=Not a command: `\037/claim\037`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: \037/claim\037\n'
 }
 
 read_transport_status() {
@@ -568,7 +604,8 @@ PY
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
-  claim_number_mismatch claim_rejected unclaim_not_assigned unclaim_one_of_two release_one_of_two
+  claim_number_mismatch claim_number_trailing_prose claim_number_next_line claim_rejected
+  unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract

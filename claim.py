@@ -30,12 +30,6 @@ def snapshot(endpoint):
 def main():
     # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
     command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
-    # The number must share the command's line: a body with a newline is
-    # prose, not a command followed by a number on the next line.
-    match = re.fullmatch(r"(/claim|/unclaim|/release)(?:[ \t\v\f]+#?([0-9]+))?", command)
-    if match is None:
-        print("not a command: " + command.split("\n", 1)[0])
-        return 0
 
     actor_type = os.environ["ACTOR_TYPE"]
     if not actor_type:
@@ -58,6 +52,19 @@ def main():
     def say(body):
         gh(f"{endpoint}/comments", "-f", f"body={body}", "--silent")
 
+    # The number must share the command's line: a body with a newline is
+    # prose, not a command followed by a number on the next line.
+    match = re.fullmatch(r"(/claim|/unclaim|/release)(?:[ \t\v\f]+#?([0-9]+))?", command)
+    # Replies wait for the Bot refusal above: the replies quote the command
+    # words, and only that refusal stops a caller that triggers on its own
+    # comments from answering itself forever.
+    if match is None:
+        first = command.split("\n", 1)[0]
+        print("not a command: " + first)
+        say(f"Not a command: `{first}`. Comment one of `/claim`, `/unclaim` "
+            "or `/release` on its own, optionally followed by the issue "
+            f"number, for example `/claim {issue}` or `/claim #{issue}`.")
+        return 1
     if match.group(2) is not None and int(match.group(2)) != int(issue):
         say(f"`{command}` names issue {match.group(2)}, but this comment is on "
             f"issue {issue}. Comment `{match.group(1)}` (or "
@@ -66,9 +73,13 @@ def main():
     command = match.group(1)
 
     initial = snapshot(endpoint)
-    # A PR's assignees mean something else; closed issues cannot be worked.
-    if initial["state"] != "open" or initial.get("pull_request") is not None:
-        return 0
+    # A PR's assignees mean something else, and a closed issue cannot be worked.
+    if initial.get("pull_request") is not None:
+        say(f"This is a pull request, so `{command}` has no effect here.")
+        return 1
+    if initial["state"] != "open":
+        say(f"This issue is not open, so `{command}` cannot act on it.")
+        return 1
     assignees = [assignee["login"] for assignee in initial["assignees"]]
 
     if command in ("/unclaim", "/release"):
