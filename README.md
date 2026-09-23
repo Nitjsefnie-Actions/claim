@@ -16,8 +16,8 @@ surrounding whitespace, including blank lines, optionally followed by the
 issue's number with or without `#`: on issue 7, `/claim`, `/claim 7` and
 `/claim #7` are the same command. A carried number must name the issue the
 comment is on. Carriage returns are removed for Windows clients. A command
-inside a sentence is a sentence: `please /claim this` does nothing.
-Commands are case-sensitive.
+inside a sentence is a sentence: `please /claim this` is declined like any
+other non-command. Commands are case-sensitive.
 
 Anything else is declined loudly: the action posts a reply on the issue
 naming the offending line and the accepted forms, and the run fails, so a
