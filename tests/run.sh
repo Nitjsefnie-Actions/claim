@@ -222,6 +222,20 @@ claim_number_next_line() {
   run_claim 1 $'not a command: /claim\n'
 }
 
+claim_uppercase_noncommand() {
+  body='/CLAIM 7'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/CLAIM 7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /CLAIM 7\n'
+}
+
+claim_number_attached() {
+  body='/claim7'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim7\n'
+}
+
 assignment_post_forbidden() {
   body=/claim
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
@@ -604,7 +618,8 @@ PY
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
-  claim_number_mismatch claim_number_trailing_prose claim_number_next_line claim_rejected
+  claim_number_mismatch claim_number_trailing_prose claim_number_next_line
+  claim_uppercase_noncommand claim_number_attached claim_rejected
   unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
