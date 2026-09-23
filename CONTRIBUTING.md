@@ -222,10 +222,13 @@ Comment `/claim` on an open, unassigned issue and this repository's own
 needed. It runs this action against this repository, so a claim that does not
 work is itself a bug report.
 
-The body must be exactly the command after trimming, so "I'll `/claim` this
-one" is ignored, as are a closed issue, a pull request, a bot, and an issue
-somebody already holds. Re-read the issue afterwards and confirm your login is
-in `assignees`: a posted comment is not a claim.
+The body must be the command after trimming, optionally followed by the
+issue's number with or without `#`, so "I'll `/claim` this one" is declined
+with a comment on the issue and a failed run — as are a closed issue and a
+pull request. A bot's comment is declined in the run log only, and an issue
+somebody already holds is answered without changing assignments. Re-read the
+issue afterwards and confirm your login is in `assignees`: a posted comment
+is not a claim.
 
 Release an issue you stop working, before the merge that closes it — the action
 acts on open issues only, so a stale assignment on a closed one can no longer
