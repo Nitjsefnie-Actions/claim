@@ -1538,9 +1538,33 @@ for node, value in expected.items():
 PY
 }
 
-cases=(sentence multiline interior_cr metacharacters not_a_command_over_long
-  not_a_command_bigger_than_an_argument already_assigned trimmed_command
-  blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
+# The suite, grouped by what it is about. #45, #50 and #51 are the branch;
+# everything else predates it. The three long-body groups are the ones whose
+# size arithmetic is worth knowing before changing: a reply crosses GitHub's
+# 65,536-character limit at 32,713 carried digits, and an argument list dies at
+# 131,072 bytes, which 32,768 four-byte characters reach and 32,740 of them
+# clear with room for the reply's own 160 characters of framing.
+cases=(
+  # The body's shape: prose, not a command.
+  sentence multiline interior_cr metacharacters whitespace_only
+  blank_lines_around_command nbsp_noncommand em_space_noncommand
+  unit_separator_noncommand ascii_control_trim
+  claim_number_trailing_prose claim_number_next_line
+  claim_uppercase_noncommand claim_number_attached
+  # #50 and #51: the two replies a maximum-size body reaches.
+  not_a_command_over_long not_a_command_bigger_than_an_argument
+  claim_number_body_too_long_to_quote
+  # #45: the mismatch refusal, its wording, and the ceiling that bounds it.
+  claim_number_mismatch claim_number_mismatch_other_words
+  claim_number_over_long claim_number_quoted_in_full
+  claim_number_reply_length_bounded claim_number_ceiling_edge
+  # The action itself.
+  already_assigned trimmed_command claimed_by_others claimed_by_three
+  claim_accepted claim_accepted_elsewhere claim_rejected
+  claim_with_number claim_with_hash_number unclaim_with_number
+  unclaim_not_assigned unclaim_one_of_two release_one_of_two
+  closed_issue pull_request
+  # Two claims racing for one issue: the tie, its settlement, and the refusals.
   contested_winner_by_event_order contested_loser_by_event_order
   contested_equal_event_ids unassigned_login_spelling_clears_map
   assigned_login_spelling_decides
@@ -1580,10 +1604,27 @@ cases=(sentence multiline interior_cr metacharacters not_a_command_over_long
   post_response_without_assignees malformed_events_pages malformed_events_page
   malformed_events_object
   no_assignees_left_after_peer_removals
-  nbsp_noncommand em_space_noncommand ascii_control_trim
-  unit_separator_noncommand read_transport_status
+  # The transport: gh's refusals, and a failure to reach it at all.
+  assignment_post_forbidden unclaim_delete_forbidden comment_forbidden
+  read_transport_status unreachable_api_reported_in_its_own_terms
+  stub_models_the_body_on_stdin stub_counts_characters_not_bytes
+  # What the inputs are allowed to be.
+  bot_actor organization_actor mannequin_actor
+  empty_actor_type multiline_actor_type
+  invalid_issue invalid_repository repository_query
+  invalid_assignee_snapshot
+  missing_state null_state nonstring_state unknown_state
+  malformed_snapshot missing_assignees malformed_confirm
+  malformed_post_response post_response_without_assignees
+  malformed_events_pages malformed_events_page malformed_events_object
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
-  missing_login_initial missing_login_confirm)
+  missing_login_initial missing_login_confirm
+  # The manifests this action is.
+  action_contract pr_gate_contract)
+  null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
+  missing_login_initial missing_login_confirm
+  # The manifests this action is.
+  action_contract pr_gate_contract)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
