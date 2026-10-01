@@ -1468,7 +1468,16 @@ stub_models_the_body_on_stdin() {
     | gh api repos/owner/project/issues/7/comments --input - --silent \
       > /dev/null || status=$?
   recorded=$(recorded_body_size "$GH_CASE/calls.jsonl")
-  if (( status != 0 || recorded != 65536 )); then
+  # `unmeasured` is a word, and this is the one place that hands it to bash
+  # arithmetic, which reads a bare name as a variable and not as a number:
+  # under `set -u` a run that recorded nothing at all died here with
+  # `unmeasured: unbound variable` instead of reaching the diagnostic below.
+  # A measurement that did not happen is not a length that differs, and the
+  # other two callers of recorded_body_size already say so before comparing.
+  if [[ ! $recorded =~ ^[0-9]+$ ]]; then
+    printf '  could not measure what the stub recorded: %s\n' "$recorded"
+    result=1
+  elif (( status != 0 || recorded != 65536 )); then
     printf '  65536 four-byte characters: exit %s, recorded %s characters, expected 0 and 65536\n' \
       "$status" "$recorded"
     result=1
