@@ -1857,15 +1857,26 @@ PYFIXTURE
   git init --quiet --initial-branch=main "$fixture/tree"
   git -C "$fixture/tree" config user.email fixture@example.invalid
   git -C "$fixture/tree" config user.name fixture
-  # -f because the copied `.gitignore` denies by default and names back exactly
-  # what this repository ships — which would hide the very files the states
-  # below add.
-  git -C "$fixture/tree" add -A -f
-  git -C "$fixture/tree" commit --quiet -m 'base tree'
+  gate_commit_all "$fixture/tree" 'base tree'
   git -C "$fixture/tree" branch head-branch
   git init --quiet --bare "$fixture/origin.git"
   git -C "$fixture/tree" remote add origin "$fixture/origin.git"
   git -C "$fixture/tree" push --quiet origin main
+}
+
+# Stage and commit a fixture's whole tree. `-f` because the copied `.gitignore`
+# denies by default and names back exactly what this repository ships, which
+# would hide the very files the states below add — a fixture that quietly
+# commits nothing is a fixture whose states measure nothing.
+gate_commit_all() {
+  git -C "$1" add -A -f
+  git -C "$1" commit --quiet -m "$2"
+}
+
+# The derived path set for a tree, one path per line. A refusal is the caller's
+# to read: a case that cannot derive a set has no verdict to give.
+gate_derived_paths() {
+  python3 "$ROOT/tests/gate_base_freshness.py" --root "$1" --print-paths
 }
 
 # Commit a change to the fixture's main and publish it, leaving the branch the
@@ -1876,8 +1887,7 @@ gate_commit_to_main() {
   was=$(git -C "$fixture/tree" rev-parse --abbrev-ref HEAD)
   git -C "$fixture/tree" checkout --quiet main
   printf 'a change for %s\n' "$subject" >> "$fixture/tree/$path"
-  git -C "$fixture/tree" add -A -f
-  git -C "$fixture/tree" commit --quiet -m "$subject"
+  gate_commit_all "$fixture/tree" "$subject"
   git -C "$fixture/tree" push --quiet origin main
   git -C "$fixture/tree" checkout --quiet "$was"
 }
@@ -1984,7 +1994,7 @@ gate_base_freshness_states() {
   # between a red that costs a rebase and a red that costs the reader an hour.
   git -C "$tree" checkout --quiet -b merge-branch
   printf 'work on the branch\n' >> "$tree/claim.py"
-  git -C "$tree" add -A -f && git -C "$tree" commit --quiet -m 'a change on the branch'
+  gate_commit_all "$tree" 'a change on the branch'
   git -C "$tree" checkout --quiet main
   git -C "$tree" merge --quiet --no-ff merge-branch -m 'merge the branch'
   git -C "$tree" push --quiet origin HEAD:pr-merge
@@ -2063,8 +2073,7 @@ if renamed == text:
     raise SystemExit(1)
 open(path, "w", encoding="utf-8").write(renamed)
 PYRENAME
-  git -C "$tree" add -A -f
-  git -C "$tree" commit --quiet -m 'rename a required job'
+  gate_commit_all "$tree" 'rename a required job'
   gate_run_step "$fixture" "$script"
   if [[ $(cat "$GH_CASE/status") == 0 ]]; then
     printf '  a required job no workflow defines: expected a non-zero exit, got 0\n'
@@ -2094,7 +2103,7 @@ gate_paths_derived_from_workflows() {
   local result=0 fixture=$GH_CASE/fixture tree derived
   gate_fixture "$fixture"
   tree=$fixture/tree
-  derived=$(python3 "$ROOT/tests/gate_base_freshness.py" --root "$tree" --print-paths) || {
+  derived=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused on the repository as it stands\n'
     return 1
   }
@@ -2120,8 +2129,8 @@ tests/run.sh'
 
   # The control: the fixture carries the file, and no required check names it.
   printf 'a gate file nobody reads yet\n' > "$tree/gate-extra.txt"
-  git -C "$tree" add -A -f && git -C "$tree" commit --quiet -m 'a file outside the gate'
-  derived=$(python3 "$ROOT/tests/gate_base_freshness.py" --root "$tree" --print-paths) || {
+  gate_commit_all "$tree" 'a file outside the gate'
+  derived=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused on the fixture tree\n'
     result=1
     derived=
@@ -2144,8 +2153,8 @@ if anchor not in text:
 open(path, "w", encoding="utf-8").write(
     text.replace(anchor, anchor + "\n          cat gate-extra.txt > /dev/null", 1))
 PYPLANT
-  git -C "$tree" add -A -f && git -C "$tree" commit --quiet -m 'a required job reads a new file'
-  derived=$(python3 "$ROOT/tests/gate_base_freshness.py" --root "$tree" --print-paths) || {
+  gate_commit_all "$tree" 'a required job reads a new file'
+  derived=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused on the planted fixture tree\n'
     result=1
     derived=
@@ -2167,6 +2176,319 @@ PYPLANT
 # because it is the one thing the executable rehearsal cannot catch: the
 # rehearsal extracts whatever the body says and runs it, so a body naming a
 # different script would be rehearsed happily and pinned green.
+# The shapes the same thing can be written in. A reader that answers one
+# spelling and stays silent on the next narrows the gate without saying so,
+# and the narrowing is indistinguishable from a correct answer until a file
+# goes missing from a red nobody expected. Each of these is two-sided: a
+# control, and a plant differing from it only in the spelling, because the
+# failure is a control that agrees with a narrowing it cannot see.
+#
+# Nothing here is about the shipped tree's files. It is about whether the
+# derivation answers for a second workflow, a one-line step, and a spelling
+# this repository does not use today — all three of which arrive with ordinary
+# changes, and none of which announces itself.
+gate_derivation_handles_every_spelling() {
+  local result=0 fixture=$GH_CASE/fixture tree
+  local before after planted readable
+  gate_fixture "$fixture"
+  tree=$fixture/tree
+
+  # The disclosure. `git grep -nI -E '…' -- .` in the suites job reads every
+  # tracked file, and `.` resolves to nothing, so that step contributes no
+  # paths. CONTRIBUTING.md is the file standing in for the whole of them: it is
+  # tracked, it is read by that step, and it is NOT in the derived set.
+  #
+  # That is a NAMED reach limit rather than a bug, and this assertion is what
+  # makes it named rather than silent. Giving resolve() a whole-tree arm is
+  # correct and would make this "rebase before you merge" on any change at all,
+  # which is `strict_required_status_checks_policy: true` reached through the
+  # back door against a ruleset the maintainer set to false on purpose.
+  #
+  # If this ever goes red, the arm was added on purpose: the gate now watches
+  # every file in the repository, and CONTRIBUTING.md is the first of them it
+  # starts naming.
+  before=$(gate_derived_paths "$tree") || {
+    printf '  the derivation refused on the repository as it stands\n'
+    return 1
+  }
+  if grep -Fxq 'CONTRIBUTING.md' <<< "$before"; then
+    printf '  CONTRIBUTING.md is in the derived set, so the whole-tree spelling\n'
+    printf '  resolves now; every tracked file is watched and this pin is stale\n'
+    result=1
+  fi
+
+  # A second workflow defining a required job name. A job name is unique within
+  # a workflow, not across the repository: `aaa-other.yml` sorts first, so a
+  # reader that takes the first match never opens tests.yml's suites job and
+  # claim.py — the file that job compiles — leaves the gate with exit 0 and no
+  # message. Both halves are asserted: the new file enters, and the old one
+  # stays.
+  printf 'name: other\non:\n  pull_request:\njobs:\n  suites:\n    runs-on: windows-latest\n    steps:\n      - run: cat CONTRIBUTING.md\n' \
+    > "$tree/.github/workflows/aaa-other.yml"
+  gate_commit_all "$tree" 'a second workflow defines the same job name'
+  after=$(gate_derived_paths "$tree") || {
+    printf '  the derivation refused once a second workflow defined the suites job\n'
+    return 1
+  }
+  readable=$(grep -Fxq 'CONTRIBUTING.md' <<< "$after" && printf yes || printf no)
+  if [[ $readable != yes ]]; then
+    printf '  a second workflow defines the suites job and the files IT reads are\n'
+    printf '  absent:\n%s\n' "$after"
+    result=1
+  fi
+  if ! grep -Fxq 'claim.py' <<< "$after"; then
+    printf '  a second workflow defines the suites job and claim.py left the set,\n'
+    printf '  which is the first-match narrowing this case exists to catch\n'
+    result=1
+  fi
+
+  # A step written on its own `- ` line. Every checkout step in this repository
+  # is spelled this way, and a reader that starts after the dash line reads a
+  # step with no keys in it — no path from a `run:` there, and no `uses:` to
+  # reach the local-action branch. Two plants, because the two keys fail
+  # differently.
+  before=$after
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYCOMPACT'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+block = """      - name: Compile the claim script
+        run: python3 -m py_compile claim.py
+"""
+compact = "      - run: python3 -m py_compile claim.py\n"
+if block not in text:
+    print("the fixture's tests.yml has no block-form compile step to compact",
+          file=sys.stderr)
+    raise SystemExit(1)
+open(path, "w", encoding="utf-8").write(text.replace(block, compact, 1))
+PYCOMPACT
+  gate_commit_all "$tree" 'the compile step on one line'
+  after=$(gate_derived_paths "$tree") || {
+    printf '  the derivation refused on the compact-spelling fixture\n'
+    return 1
+  }
+  # Equality, not membership: the finding is that the spelling changed what the
+  # gate watches, so a set that merely still contains claim.py would be a second
+  # way to be wrong rather than a pass.
+  if [[ $before != "$after" ]]; then
+    printf '  the same step written on one line derives a different set:\n'
+    diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true
+    result=1
+  fi
+
+  # And the same dash line carrying `uses:`, which is the spelling that used to
+  # leave the local-action branch unreachable: a directory nothing else in the
+  # repository names, so its absence from the set is only explainable by the
+  # step having been read.
+  mkdir -p "$tree/local-action"
+  printf 'name: local\n' > "$tree/local-action/action.yml"
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYLOCAL'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+anchor = "      - name: Require this head to carry main's gate-defining commits"
+if anchor not in text:
+    print("the fixture's tests.yml has no freshness step to extend", file=sys.stderr)
+    raise SystemExit(1)
+open(path, "w", encoding="utf-8").write(
+    text.replace(anchor, "      - uses: ./local-action\n\n" + anchor, 1))
+PYLOCAL
+  gate_commit_all "$tree" 'a one-line step uses a local action'
+  after=$(gate_derived_paths "$tree") || {
+    printf '  the derivation refused on the local-action fixture\n'
+    return 1
+  }
+  planted=local-action/action.yml
+  if ! grep -Fxq "$planted" <<< "$after"; then
+    printf '  a step says uses: ./local-action and %s is absent, so the\n' "$planted"
+    printf '  local-action branch never ran for the one-line spelling\n'
+    result=1
+  fi
+
+  # Why `resolve()` has no glob arm. A branch that reads a glob metacharacter
+  # would look like coverage and reach nothing, because the candidate class
+  # cannot produce one — and that is a fact about the reader, not a hole in
+  # it, so it is pinned here rather than left to be re-derived. The spelling it
+  # would have served is already covered: `.github/workflows/*.yml` breaks at
+  # the `*`, and the directory before it takes every workflow whole.
+  globbed=$(python3 - "$ROOT" <<'PYGLOB'
+import re
+import sys
+sys.path.insert(0, f"{sys.argv[1]}/tests")
+from gate_base_freshness import CANDIDATE
+# Whether the class can MATCH a metacharacter, not whether the pattern string
+# spells one: the class is written `[A-Za-z0-9._/-]`, which contains brackets.
+print(" ".join(c for c in "*?[]" if re.fullmatch(CANDIDATE, c)))
+PYGLOB
+)
+  if [[ -n $globbed ]]; then
+    printf '  the candidate class now matches %s, so the absence of a glob arm\n' "$globbed"
+    printf '  in resolve() is a hole rather than a fact\n'
+    result=1
+  fi
+  return "$result"
+}
+
+# The shapes this reader must REFUSE. Each is real YAML, each carries a step
+# list that is right there in the document, and each used to parse into a
+# plausible empty — the one outcome a reader built to fail closed must not be
+# able to produce. The assertion is that the derivation says so and exits
+# non-zero, and the message is checked for the shape it refused, so a refusal
+# for some other reason would not pass as this one.
+#
+# The control is the fixture as it stands: the same derivation, on the same
+# tree, answers normally — which is what makes the three refusals refusals
+# rather than a reader that cannot read this repository at all.
+gate_derivation_refuses_each_unmodelled_shape() {
+  local result=0 fixture=$GH_CASE/fixture tree pristine
+  gate_fixture "$fixture"
+  tree=$fixture/tree
+  pristine=$GH_CASE/tests.yml.pristine
+  cp "$tree/.github/workflows/tests.yml" "$pristine"
+  if ! gate_derived_paths "$tree" > /dev/null 2>&1; then
+    printf '  the derivation refused on the repository as it stands, so the\n'
+    printf '  refusals below would prove nothing\n'
+    return 1
+  fi
+
+  # A required job whose steps are a flow sequence. Reading the key's block and
+  # finding no entries in it yields an empty step list — a job with steps right
+  # there, read as a job with none, and every file they read leaves the gate.
+  #
+  # Each mutation is COMMITTED before the derivation runs, because the
+  # derivation reads the tracked files at HEAD and not the working tree: an
+  # uncommitted edit is not a shape the reader has been asked about at all, and
+  # a case that measured it would be measuring the wrong thing.
+  cp "$pristine" "$tree/.github/workflows/tests.yml"
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYFLOW'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+job = text.index("\n  suites:\n")
+start = text.index("    steps:\n", job)
+stop = text.index("\n", start + 1)
+# The step list runs to the next line at the job's own indent, or to the end.
+end = len(text)
+for offset in range(start + 1, len(text)):
+    line = text[offset:].split("\n", 1)[0]
+    if line and not line.startswith("    ") and not line.startswith("  "):
+        end = offset
+        break
+    if line.startswith("  ") and not line.startswith("    "):
+        end = offset
+        break
+flow = "    steps: [{run: 'python3 -m py_compile claim.py'}]\n"
+open(path, "w", encoding="utf-8").write(text[:start] + flow + text[end + 1:])
+PYFLOW
+  gate_commit_all "$tree" 'the suites steps as a flow sequence'
+  if gate_derived_paths "$tree" > "$GH_CASE/refused" 2>&1; then
+    printf '  steps written as a flow sequence: the derivation answered instead of\n'
+    printf '  refusing, so a job carrying steps reads as a job carrying none:\n'
+    cat "$GH_CASE/refused"
+    result=1
+  elif ! grep -Fq 'flow' "$GH_CASE/refused" \
+    || ! grep -Fq 'block form' "$GH_CASE/refused"; then
+    printf '  steps written as a flow sequence: refused, but not by naming it:\n'
+    cat "$GH_CASE/refused"
+    result=1
+  fi
+
+  # A document carrying two top-level `jobs:` mappings. Taking the first is an
+  # answer with no message attached, and which half won is not a thing this
+  # reader can establish.
+  cp "$pristine" "$tree/.github/workflows/tests.yml"
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYJOBS'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+second = (
+    "jobs:\n"
+    "  shellcheck:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - run: cat LICENSE\n"
+)
+open(path, "w", encoding="utf-8").write(text.rstrip("\n") + "\n\n" + second)
+PYJOBS
+  gate_commit_all "$tree" 'a second top-level jobs mapping'
+  if gate_derived_paths "$tree" > "$GH_CASE/refused" 2>&1; then
+    printf '  a second top-level jobs mapping: the derivation answered instead of\n'
+    printf '  refusing, so one of the two documents was read and the other was not:\n'
+    cat "$GH_CASE/refused"
+    result=1
+  elif ! grep -Fq 'top-level' "$GH_CASE/refused" \
+    || ! grep -Fq 'jobs:' "$GH_CASE/refused"; then
+    printf '  a second top-level jobs mapping: refused, but not by naming it:\n'
+    cat "$GH_CASE/refused"
+    result=1
+  fi
+  cp "$pristine" "$tree/.github/workflows/tests.yml"
+  return "$result"
+}
+
+# `git log --name-only` reports no file for a merge commit, and this repository
+# is rebase-merged so main is linear today — a shape that cannot arise on its
+# own, which is exactly why it needs pinning: the day a merge lands, a header
+# claiming every entry names a file is a sentence the reader cannot check.
+#
+# The fixture merges two branches that each changed a DIFFERENT file, which is
+# what keeps the merge in the report at all: git simplifies a merge away when
+# its tree matches either parent, and a merge of one changed branch into an
+# unchanged one is exactly that.
+#
+# The assertion is that no entry is bare. A merge entry says why it names no
+# file; every other entry names its file; and the ordinary commits in the same
+# report are still named with theirs.
+gate_merge_commit_is_reported_honestly() {
+  local result=0 fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
+  local tree=$fixture/tree status merge side
+  gate_fixture "$fixture"
+  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Require this head to carry main's gate-defining commits" "$script"; then
+    printf '  the freshness step could not be extracted from tests.yml\n'
+    return 1
+  fi
+  printf 'a note from main\n' >> "$tree/README.md"
+  gate_commit_all "$tree" 'a change on main'
+  git -C "$tree" checkout --quiet -b side HEAD~1
+  printf 'work on the side branch\n' >> "$tree/claim.py"
+  gate_commit_all "$tree" 'a change on the side branch'
+  side=$(git -C "$tree" rev-parse HEAD)
+  git -C "$tree" checkout --quiet main
+  git -C "$tree" merge --quiet --no-ff side -m 'merge the side branch'
+  git -C "$tree" push --quiet origin main
+  merge=$(git -C "$tree" rev-parse HEAD)
+  git -C "$tree" checkout --quiet head-branch
+  gate_run_step "$fixture" "$script"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  a merge on main the head lacks: expected a non-zero exit, got 0\n'
+    result=1
+  fi
+  if ! grep -Fq "$merge" "$GH_CASE/stdout"; then
+    printf '  the report did not name the merge commit %s:\n' "$merge"
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # The line under the merge entry is the whole finding: a header promising a
+  # file per entry, over an entry that names none, is the sentence that is
+  # wrong. So the entry has to say why it has no file.
+  if ! grep -F -A 1 "$merge" "$GH_CASE/stdout" > "$GH_CASE/merge-context" \
+    || ! grep -Fq 'a merge commit' "$GH_CASE/merge-context"; then
+    printf '  the merge commit was listed with nothing under it:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # And the commits it brought in are still named with the files they changed.
+  if ! grep -Fq "$side" "$GH_CASE/stdout" \
+    || ! grep -Fq 'claim.py' "$GH_CASE/stdout"; then
+    printf '  the commits the merge brought in were not named with their files:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  return "$result"
+}
+
 gate_freshness_step_is_wired() {
   python3 - "$ROOT" <<'PYWIRE'
 from pathlib import Path
@@ -2240,19 +2562,51 @@ if not checkout[0] < at < lint[0]:
 
 # The trap actionlint.yml documents for itself: a path filter on a workflow with
 # a required job means the check never reports, so every pull request blocks
-# forever. There is none here, and there must not come to be one.
-on_pull_request = lines.index("  pull_request:") if "  pull_request:" in lines else -1
-if on_pull_request < 0:
+# forever. It is pinned on EVERY workflow that carries a required job rather than
+# on tests.yml alone, because the rule is about the required context and not
+# about the file this step happens to live in — and because holding it with the
+# comment actionlint.yml carries for itself is holding a rule with prose.
+#
+# The workflows are DERIVED from the workflows: the same REQUIRED_JOBS the check
+# derives its paths from, read out of that module rather than listed here, so
+# this pin cannot drift from the set of jobs it is protecting. A `push:` filter
+# is not in scope: a push to main is not a merge, so a workflow that does not
+# run for one has blocked nothing.
+sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
+from gate_base_freshness import REQUIRED_JOBS
+
+workflows = sorted((Path(sys.argv[1]) / ".github/workflows").glob("*.yml"))
+carrying = []
+for workflow in workflows:
+    body = workflow.read_text().splitlines()
+    if any(line.rstrip() == f"  {job}:" for line in body for job in REQUIRED_JOBS):
+        carrying.append(workflow)
+if not carrying:
+    fail("no workflow under .github/workflows/ defines a required job, so this "
+         "pin protects nothing; REQUIRED_JOBS is empty or every job moved")
+
+for workflow in carrying:
+    body = workflow.read_text().splitlines()
+    for trigger in ("pull_request:", "pull_request_target:"):
+        starts = [index for index, line in enumerate(body)
+                  if line.rstrip() == f"  {trigger}"]
+        if not starts:
+            continue
+        stop = len(body)
+        for index in range(starts[0] + 1, len(body)):
+            line = body[index]
+            if line.strip() and not line.lstrip().startswith("#") \
+                    and len(line) - len(line.lstrip(" ")) <= 2:
+                stop = index
+                break
+        if any(re.match(r"\s*paths(-ignore)?:", line)
+               for line in body[starts[0]:stop]):
+            fail(f"{workflow.name}'s {trigger} trigger must carry no paths "
+                 f"filter: a workflow with a required job that does not run "
+                 f"reports no status, and the pull request blocks forever")
+
+if "  pull_request:" not in lines:
     fail("tests.yml must keep its unfiltered `pull_request:` trigger")
-stop = len(lines)
-for index in range(on_pull_request + 1, len(lines)):
-    line = lines[index]
-    if line.strip() and not line.lstrip().startswith("#") \
-            and len(line) - len(line.lstrip(" ")) <= 2:
-        stop = index
-        break
-if any(re.match(r"\s*paths(-ignore)?:", line) for line in lines[on_pull_request:stop]):
-    fail("tests.yml's pull_request trigger must carry no paths filter")
 PYWIRE
 }
 
@@ -2657,6 +3011,9 @@ cases=(
   action_contract pr_gate_contract
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
+  gate_derivation_handles_every_spelling
+  gate_derivation_refuses_each_unmodelled_shape
+  gate_merge_commit_is_reported_honestly
   gate_base_freshness_states)
 failures=0
 for case_name in "${cases[@]}"; do
