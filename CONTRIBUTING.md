@@ -223,12 +223,14 @@ needed. It runs this action against this repository, so a claim that does not
 work is itself a bug report.
 
 The body must be the command after trimming, optionally followed by the
-issue's number with or without `#`, so "I'll `/claim` this one" is declined
-with a comment on the issue and a failed run — as are a closed issue and a
-pull request. A bot's comment is declined in the run log only, and an issue
-somebody already holds is answered without changing assignments. Re-read the
-issue afterwards and confirm your login is in `assignees`: a posted comment
-is not a claim.
+issue's number with or without `#`. "I'll `/claim` this one" is not an
+attempt to run a command — no line of it starts with one — so it gets no
+reply; a line that does start with a command word but is not exactly one
+command is declined with a comment on the issue and a failed run, as are a
+wrong carried number, a closed issue and a pull request. A bot's comment is
+declined in the run log only, and an issue somebody already holds is
+answered without changing assignments. Re-read the issue afterwards and
+confirm your login is in `assignees`: a posted comment is not a claim.
 
 Release an issue you stop working, before the merge that closes it — the action
 acts on open issues only, so a stale assignment on a closed one can no longer
