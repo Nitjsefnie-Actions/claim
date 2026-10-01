@@ -110,13 +110,18 @@ commenter's identity and the issue and body from that comment event.
 For a recognized command, a non-`User` account type is refused with a log
 diagnostic. An empty `actor-type` fails the run as a configuration error; its
 default comes from the comment event, so other event types need an explicit
-value for this input.
+value for this input. A comment posted by the account the `token` posts as is
+declined in the run log only, because a reply would re-trigger the very
+workflow that configured the token.
 
 ## What it will not do
 
 - Act on a closed issue, including releasing an assignment after closure.
 - Act on a pull request.
 - Act on a bot's comment.
+- Answer a comment posted by the account its `token` posts as. The run
+  declines in the run log only, because a reply would re-trigger a caller
+  that configured a user token and answer itself forever.
 - Treat an inexact body as a command.
 - Stay silent about a refusal: every decline a human can act on is answered
   on the issue, and the run fails.
@@ -131,16 +136,15 @@ value for this input.
   current events sharing an id are broken by login, so that two runs reading
   the same state cannot leave the issue with two holders. The other commenter
   is told it lost and who holds the issue. Every assignment the action removes
-  has to have been made by the same identity, because that is the only thing
-  that makes them all one writer's. It never compares that identity against
-  its own, so it cannot tell a rival `/claim` from a maintainer who assigned
-  every holder by hand inside the same window, and those assignments are
-  removed like any other. When the writers do not agree, or an event is not
-  yet readable, it cannot tell which one is not its own, so it removes nothing
-  at all and says so on the issue. The winner and the removals are computed
-  from the confirmed set and its timeline alone, so two runs that read the
-  same state leave the issue with the same login — what each run posts about
-  it is the one thing that depends on which commenter is running.
+  has to have been made by the action's own account: with a user token the
+  shared identity must be the login the token writes as, and with the default
+  token it must be the Bot account an installation writes as. When the
+  assignees do not all share one identity, an event is not yet readable, or
+  the identity they share is not the action's own, it removes nothing at all
+  and says so on the issue. The winner and the removals are computed from the
+  confirmed set and its timeline alone, so two runs that read the same state
+  leave the issue with the same login — what each run posts about it is the
+  one thing that depends on which commenter is running.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
