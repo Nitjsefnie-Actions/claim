@@ -153,6 +153,46 @@ not_a_command_over_long() {
   run_claim 1 "$expected_stdout"
 }
 
+# The input class #51 was about, and the only case that pins it. A comment of
+# 32,740 four-byte characters is 130,960 bytes in the environment and legal to
+# GitHub; the reply that quotes it is 131,120 bytes — past the kernel's
+# 131,072-byte limit on a single argument — and 32,900 characters, so the
+# ceiling has nothing to say about it. An argv transport cannot carry that
+# reply and dies before the API is reached; only a body off the command line
+# gets it posted.
+#
+# Both margins are deliberate: 112 bytes of headroom under what the
+# environment will hold for BODY, 48 over what one argument will hold for the
+# reply. The assertion at the end re-measures the posted reply, so a reply
+# template that grows or shrinks cannot quietly leave this case testing less
+# than it claims.
+#
+# It goes red on an argv transport with the expectation sites updated to match,
+# which is why it and not claim_number_argument_list_overflow is the case that
+# proves the transport.
+not_a_command_bigger_than_an_argument() {
+  local filler expected_body expected_stdout posted result=0
+  filler=$(emoji_of 32740)
+  body="$filler"
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  printf -v expected_body 'Not a command: `%s`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' "$filler"
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
+    "body=$expected_body" --silent
+  printf -v expected_stdout 'not a command: %s\n' "$filler"
+  run_claim 1 "$expected_stdout" || result=$?
+  posted=$(recorded_body_size "$GH_CASE/calls.jsonl" bytes)
+  if [[ ! $posted =~ ^[0-9]+$ ]]; then
+    printf '  could not measure the posted reply: %s\n' "$posted"
+    result=1
+  elif (( posted <= 131072 )); then
+    printf '  the posted reply is %s bytes, which one argument could have held: this case is no longer driving #51\n' \
+      "$posted"
+    result=1
+  fi
+  return "$result"
+}
+
 already_assigned() {
   body=/claim
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
@@ -587,15 +627,23 @@ emoji_of() {
   printf '%s' "${text//' '/😀}"
 }
 
-# The character count of the body the last recorded call carried, read back off
-# the calls the run actually made.
-recorded_body_chars() {
-  python3 -c '
+# The size of the body the LAST recorded call carried, read back off the calls
+# the run actually made. The unit is named because the two limits in play are
+# in different units: GitHub counts a comment in characters, the kernel counts
+# an argument in bytes, and 65,536 characters can be 262,144 bytes.
+recorded_body_size() {
+  local file=$1 unit=${2-chars}
+  python3 - "$file" "$unit" <<'PYREC'
 import json, sys
 args = json.loads(open(sys.argv[1]).read().splitlines()[-1])
 body = next((a[len("body="):] for a in args if a.startswith("body=")), None)
-print(len(body) if body is not None else "unmeasured")
-' "$1"
+if body is None:
+    print("unmeasured")
+elif sys.argv[2] == "bytes":
+    print(len(body.encode("utf-8")))
+else:
+    print(len(body))
+PYREC
 }
 
 # The JSON `gh api --input -` reads a comment body from, built the way
@@ -1327,7 +1375,7 @@ stub_models_the_body_on_stdin() {
   printf '%s' "$(emoji_of 65536)" | comment_payload 2> /dev/null \
     | gh api repos/owner/project/issues/7/comments --input - --silent \
       > /dev/null || status=$?
-  recorded=$(recorded_body_chars "$GH_CASE/calls.jsonl")
+  recorded=$(recorded_body_size "$GH_CASE/calls.jsonl")
   if (( status != 0 || recorded != 65536 )); then
     printf '  65536 four-byte characters: exit %s, recorded %s characters, expected 0 and 65536\n' \
       "$status" "$recorded"
@@ -1382,7 +1430,7 @@ stub_counts_characters_not_bytes() {
   printf '%s' "$filler" | comment_payload 2> /dev/null \
     | LC_ALL=C gh api repos/owner/project/issues/7/comments --input - --silent \
       > /dev/null 2> "$GH_CASE/stderr" || status=$?
-  recorded=$(recorded_body_chars "$outer/locale/calls.jsonl")
+  recorded=$(recorded_body_size "$outer/locale/calls.jsonl")
   GH_CASE=$outer
   if (( status != 0 )); then
     printf '  65536 emoji under LC_ALL=C: the stub must post them, got exit %s\n' \
@@ -1492,7 +1540,8 @@ for node, value in expected.items():
 PY
 }
 
-cases=(sentence multiline interior_cr metacharacters not_a_command_over_long already_assigned trimmed_command
+cases=(sentence multiline interior_cr metacharacters not_a_command_over_long
+  not_a_command_bigger_than_an_argument already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   contested_winner_by_event_order contested_loser_by_event_order
   contested_equal_event_ids unassigned_login_spelling_clears_map
