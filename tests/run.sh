@@ -102,25 +102,85 @@ posted_comment_length() {
 }
 
 sentence() {
+  # A sentence that merely mentions a command word is not an attempt to run
+  # one: no line of it starts with the word, so nothing is posted and the run
+  # ends quietly, like a bot's comment.
   body='please /claim this when you can'
+  run_claim 0 $'no line starts with a command word\n'
+}
+
+url_mention_ends_quietly() {
+  # The issue's own repro shape: a CI-log analysis whose first line is a
+  # Markdown heading and whose later line holds a release-asset URL. No line
+  # starts with a command word, so the run ends quietly. The empty
+  # expected.jsonl is the assertion: no comment POST happens at all, which is
+  # the absence the old behavior could not keep — it answered this with the
+  # heading quoted as the offender.
+  body=$'## Which code failed\nhttps://github.com/Nitjsefnie-OSC/actionlint/releases/download/v<version>/<asset>'
+  run_claim 0 $'no line starts with a command word\n'
+}
+
+word_start_on_later_line_declines_that_line() {
+  # The pin for the ruling: the decline names the line the command word is
+  # on, never the comment's first line, which here holds no command word at
+  # all.
+  body=$'heading prose\n/claim 7'
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `please /claim this when you can`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: please /claim this when you can\n'
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 2: `/claim 7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 2: /claim 7\n'
+}
+
+topmost_command_word_wins() {
+  # Two lines both start with a command word: the topmost one is declined,
+  # because that is the attempt the commenter made first.
+  body=$'/unclaim\n/claim'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/unclaim` on line 1: `/unclaim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /unclaim on line 1: /unclaim\n'
+}
+
+command_word_needs_a_boundary() {
+  # A command word followed by anything other than whitespace or the end of
+  # the line — `/claims` from a URL-shaped token, a comma, a path — is part
+  # of a longer word, not an attempt at a command, and stays silent. Each
+  # shape's expected.jsonl stays empty: no comment POST, exit 0.
+  local result=0
+  body=/claims
+  run_claim 0 $'no line starts with a command word\n' || result=1
+  body='/claim,'
+  run_claim 0 $'no line starts with a command word\n' || result=1
+  body='/claim/7'
+  run_claim 0 $'no line starts with a command word\n' || result=1
+  return "$result"
+}
+
+cr_stripped_before_the_line_scan() {
+  # CRs are removed before the trim and the scan, so a Windows client's
+  # `/claim\r\nsecond line` is a line that starts with `/claim` followed by
+  # the end of the line — declined naming line 1, and the quoted line carries
+  # no CR, which the stub's recorded argv would show.
+  body=$'/claim\r\nsecond line'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 1: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 1: /claim\n'
 }
 
 multiline() {
   body=$'/claim\nthis is a second line'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: /claim\n'
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 1: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 1: /claim\n'
 }
 
 interior_cr() {
+  # A CR before the newline is removed before the trim, so this body is
+  # "hello there\nsecond line" to the scan and no line of it starts with a
+  # command word: prose, not an attempt, and the run ends quietly.
   body=$'hello there\r\nsecond line'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `hello there`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: hello there\n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 metacharacters() {
@@ -129,11 +189,9 @@ metacharacters() {
   # shellcheck disable=SC2016
   body='$(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'
   body+=$'\nsecond line'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments \
-    --input - 'body=Not a command: `$(touch /tmp/pwned) $(touch pwned) \`touch backtick-pwned\` '\''single'\'' "double"`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' \
-    --silent
-  (cd "$GH_CASE" && run_claim 1 $'not a command: $(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'$'\n') || result=$?
+  # No line of this body starts with a command word, so nothing is posted —
+  # and the body travels through the environment, never a shell.
+  (cd "$GH_CASE" && run_claim 0 $'no line starts with a command word\n') || result=$?
   if [[ -e $GH_CASE/pwned || -e $GH_CASE/backtick-pwned || -e /tmp/pwned ]]; then
     printf '  comment body executed a shell side effect\n'
     result=1
@@ -141,30 +199,33 @@ metacharacters() {
   return "$result"
 }
 
-# The same shape as the mismatch reply, reached by a body that is prose rather
-# than a command: a maximum-size comment is 65,536 characters, and quoting its
-# first line built a 65,696-character answer. GitHub refuses that, so the
-# commenter got nothing at all — which is what #50 reports, and it was the same
-# defect as #45 one branch above.
+# The ceiling's reach, driven by a body that is an attempt: a maximum-size
+# comment whose FIRST line starts with a command word (`/claim ` plus 65,529
+# filler characters, 65,536 in total). The decline reply quotes the line that
+# holds the word — here the whole body — so it is 65,723 characters and GitHub
+# refuses that, which is what #50 reports: the commenter is answered with the
+# ceiling's sentence instead of nothing at all. The mismatch reply one branch
+# above reaches the ceiling the same way.
 not_a_command_over_long() {
-  body=$(chars_of 65536)
+  body="/claim $(chars_of 65529)"
   # The ceiling's own reply replaces this one, so the only large expectation is
   # the line claim.py prints, and expect_not_a_command writes it.
-  expect_not_a_command 65536 chars stdout
+  expect_not_a_command 65529 chars stdout
   expect_over_length_reply
   run_claim 1
 }
 
 # The input class #51 was about, and the only case that pins it. A comment of
-# 32,740 four-byte characters is 130,960 bytes in the environment and legal to
-# GitHub; the reply that quotes it is 131,120 bytes — past the kernel's
-# 131,072-byte limit on a single argument — and 32,900 characters, so the
-# ceiling has nothing to say about it. An argv transport cannot carry that
+# `/claim ` plus 32,740 four-byte characters is 130,967 bytes in the
+# environment and legal to GitHub; the decline reply quotes the line that
+# holds the word — the whole body here — and is 131,147 bytes, past the
+# kernel's 131,072-byte limit on a single argument, and 32,927 characters, so
+# the ceiling has nothing to say about it. An argv transport cannot carry that
 # reply and dies before the API is reached; only a body off the command line
 # gets it posted.
 #
-# Both margins are deliberate: 112 bytes of headroom under what the
-# environment will hold for BODY, 48 over what one argument will hold for the
+# Both margins are deliberate: 105 bytes of headroom under what the
+# environment will hold for BODY, 75 over what one argument will hold for the
 # reply. The assertion at the end re-measures the posted reply, so a reply
 # template that grows or shrinks cannot quietly leave this case testing less
 # than it claims.
@@ -185,7 +246,7 @@ not_a_command_over_long() {
 # proves the transport.
 not_a_command_bigger_than_an_argument() {
   local posted result=0
-  body=$(emoji_of 32740)
+  body="/claim $(emoji_of 32740)"
   # Both expectations here are the size of the payload, so python3 writes them.
   expect_not_a_command 32740 emoji
   run_claim 1 || result=$?
@@ -223,10 +284,11 @@ blank_lines_around_command() {
 }
 
 whitespace_only() {
+  # Whitespace trimmed to nothing is not an attempt at anything: the scan
+  # runs over one empty line and finds no command word, so the run ends
+  # quietly.
   body=$' \t\r\n '
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: ``. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: \n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 claimed_by_others() {
@@ -873,20 +935,24 @@ emoji_of() { filler_of "$1" emoji; }
 # reply it posts are each a quarter of a megabyte, and a case that pins a
 # property should not pay for it in bash. The case names a size, a unit, and
 # which of the two it wants — a body over the ceiling gets the line but not the
-# reply, because the reply it posts is the ceiling's sentence instead.
+# reply, because the reply it posts is the ceiling's sentence instead. The
+# bodies these cases hand over always begin `/claim `, so the word and the
+# line it was on are fixed and only the filler varies.
 expect_not_a_command() {
   python3 - "$1" "$2" "${3-both}" "$GH_CASE" <<'PYEXPECT'
 import json, sys
 count, unit, what, case = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 fill = {"digits": "1", "chars": "x", "emoji": "\U0001F600"}[unit] * count
+line = f"/claim {fill}"
 if what in ("stdout", "both"):
     with open(f"{case}/expected.stdout", "wb") as out:
-        out.write(f"not a command: {fill}\n".encode("utf-8"))
+        out.write(f"not a command: /claim on line 1: {line}\n".encode("utf-8"))
 if what in ("reply", "both"):
     call = ["api", "repos/owner/project/issues/7/comments", "--input", "-",
-            f"body=Not a command: `{fill}`. Comment one of `/claim`, "
-            f"`/unclaim` or `/release` on its own, optionally followed by the "
-            f"issue number, for example `/claim 7` or `/claim #7`.", "--silent"]
+            f"body=Not a command: `/claim` on line 1: `{line}`. Comment one "
+            f"of `/claim`, `/unclaim` or `/release` on its own, optionally "
+            f"followed by the issue number, for example `/claim 7` or "
+            f"`/claim #7`.", "--silent"]
     with open(f"{case}/expected.jsonl", "ab") as out:
         out.write((json.dumps(call, separators=(",", ":")) + "\n").encode("utf-8"))
     # The stub answers call N from response.N, and expect_gh creates that file
@@ -1129,29 +1195,31 @@ claim_number_reply_length_bounded() {
 claim_number_trailing_prose() {
   body='/claim 526 extra prose'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim 526 extra prose`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: /claim 526 extra prose\n'
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 1: `/claim 526 extra prose`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 1: /claim 526 extra prose\n'
 }
 
 claim_number_next_line() {
   body=$'/claim\n526'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: /claim\n'
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 1: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 1: /claim\n'
 }
 
 claim_uppercase_noncommand() {
+  # Commands are case-sensitive, and so is the word scan: no line of this
+  # body starts with a lowercase command word, so it is prose, not an
+  # attempt, and the run ends quietly.
   body='/CLAIM 7'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/CLAIM 7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: /CLAIM 7\n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 claim_number_attached() {
+  # `/claim7` is one longer token, not a command word followed by a number:
+  # the word is not followed by whitespace or the end of the line, so nothing
+  # answers it.
   body='/claim7'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: /claim7\n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 assignment_post_forbidden() {
@@ -1532,15 +1600,16 @@ repository_query() {
 }
 
 nbsp_noncommand() {
+  # The line starts with the NBSP, not with the word: the trim stops at ASCII
+  # whitespace, so the word never starts the line and nothing answers it.
   body=$'\302\240/claim\302\240'
-  expect_gh '' api repos/owner/project/issues/7/comments --input - $'body=Not a command: `\302\240/claim\302\240`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: \302\240/claim\302\240\n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 em_space_noncommand() {
+  # The EMSP shape, for the same reason as the NBSP above.
   body=$'\342\200\203/claim\342\200\203'
-  expect_gh '' api repos/owner/project/issues/7/comments --input - $'body=Not a command: `\342\200\203/claim\342\200\203`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: \342\200\203/claim\342\200\203\n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 ascii_control_trim() {
@@ -1556,8 +1625,7 @@ ascii_control_trim() {
 # restoring it makes a body the specification rejects into a valid command.
 unit_separator_noncommand() {
   body=$'\037/claim\037'
-  expect_gh '' api repos/owner/project/issues/7/comments --input - $'body=Not a command: `\037/claim\037`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
-  run_claim 1 $'not a command: \037/claim\037\n'
+  run_claim 0 $'no line starts with a command word\n'
 }
 
 read_transport_status() {
@@ -1913,13 +1981,18 @@ PY
 # everything else predates it. The three long-body groups are the ones whose
 # size arithmetic is worth knowing before changing: a reply crosses GitHub's
 # 65,536-character limit at 32,713 carried digits, and an argument list dies at
-# 131,072 bytes, which exactly 32,768 four-byte characters reach; 32,740 of them
-# clear it with room for the reply's own 160 characters of framing.
+# 131,072 bytes, which exactly 32,768 four-byte characters reach; the decline
+# case posts `/claim ` plus 32,740 of them, and the reply quoting that line is
+# 187 bytes of framing over and above the filler — 131,147 bytes, past the
+# argument limit, with the body itself still 105 bytes under it.
 cases=(
-  # The body's shape: prose, not a command.
-  sentence multiline interior_cr metacharacters whitespace_only
-  blank_lines_around_command nbsp_noncommand em_space_noncommand
-  unit_separator_noncommand ascii_control_trim
+  # The body's shape: prose, not a command — and the one line that starts a
+  # command word, which is an attempt.
+  sentence url_mention_ends_quietly multiline interior_cr metacharacters
+  whitespace_only blank_lines_around_command nbsp_noncommand
+  em_space_noncommand unit_separator_noncommand ascii_control_trim
+  word_start_on_later_line_declines_that_line topmost_command_word_wins
+  command_word_needs_a_boundary cr_stripped_before_the_line_scan
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached
   # #50 and #51: the two replies a maximum-size body reaches.

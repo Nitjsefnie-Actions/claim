@@ -299,15 +299,37 @@ def main():
     # refusal above is what stops that, since a reply can never come from a
     # different account than the token posts as.
     if match is None:
-        first = command.split("\n", 1)[0]
-        print("not a command: " + first)
-        # The line's own backticks are escaped so they cannot end the code
-        # span the reply quotes it in.
-        quoted = first.replace("`", "\\`")
-        say(f"Not a command: `{quoted}`. Comment one of `/claim`, `/unclaim` "
-            "or `/release` on its own, optionally followed by the issue "
-            f"number, for example `/claim {issue}` or `/claim #{issue}`.")
-        return 1
+        # A comment is an attempt at a command only where a line of it STARTS
+        # with a command word — the word, then whitespace or the end of the
+        # line. A word inside a URL, a path or a sentence is a mention, not
+        # an attempt, and answering prose drew a reply to whatever line came
+        # first: daedalus#1448's CI-log analysis was told "Not a command:
+        # `## Which code failed...`" because line 31 held a release-asset
+        # URL. CRs are already gone above, so a line ends at the newline and
+        # a Windows client's `/claim\r` still ends with the word. The scan is
+        # case-sensitive because the exact match above is. The topmost match
+        # wins because it is the attempt the commenter made first, and the
+        # reply names the line it was on rather than repeating the comment's
+        # first line, which may hold no command word at all.
+        for number, line in enumerate(command.split("\n"), 1):
+            started = re.match(r"(/claim|/unclaim|/release)(?:[ \t\v\f]|$)", line)
+            if started is None:
+                continue
+            word = started.group(1)
+            print(f"not a command: {word} on line {number}: {line}")
+            # The line's own backticks are escaped so they cannot end the code
+            # span the reply quotes it in.
+            quoted = line.replace("`", "\\`")
+            say(f"Not a command: `{word}` on line {number}: `{quoted}`. "
+                "Comment one of `/claim`, `/unclaim` or `/release` on its "
+                "own, optionally followed by the issue number, for example "
+                f"`/claim {issue}` or `/claim #{issue}`.")
+            return 1
+        # No line even starts with a command word: nothing here is an attempt
+        # to run one, and a reply to it would be a reply to prose. The run
+        # ends quietly, the way a bot's comment is skipped.
+        print("no line starts with a command word")
+        return 0
     # Compare the digit strings, never through int(): a comment can carry
     # more digits than int() will convert, and the mismatch reply below is
     # the answer such a comment must still get.
