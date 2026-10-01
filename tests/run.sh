@@ -6,7 +6,10 @@ RUN="$(mktemp -d "$ROOT/tests/.run.XXXXXX")"
 mkdir "$RUN/bin"
 ln -s "$ROOT/tests/gh.sh" "$RUN/bin/gh"
 export PATH="$RUN/bin:$PATH"
-export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE
+# GH_IDENTITY is the default answer for the stub's identity lookup
+# (`gh api user`); a case overrides it by writing identity.response into its
+# own case directory. The value is per-case state, set in reset_case below.
+export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY
 
 reset_case() {
   GH_TOKEN=test-token
@@ -14,6 +17,7 @@ reset_case() {
   ISSUE=7
   ACTOR=octo-claimant
   ACTOR_TYPE=User
+  GH_IDENTITY=$ROOT/tests/identity.response
   body=
   expected_error=
 }
@@ -36,6 +40,19 @@ expect_gh_failure() {
   printf '%s\n' "$error" > "$GH_CASE/response.$ordinal.stderr"
 }
 
+# expected.jsonl describes the calls that ACT: the identity lookup is answered
+# from its own fixture outside that sequence, so its record is set aside before
+# the diff. A case that must pin the identity call itself reads calls.jsonl.
+ordinary_calls() {
+  python3 -c '
+import json, sys
+with open(sys.argv[1]) as recorded:
+    for line in recorded:
+        if json.loads(line) != ["api", "user"]:
+            sys.stdout.write(line)
+' "$1"
+}
+
 run_claim() {
   local expected_status=$1 expected_output=${2-} status=0 failed=0
   BODY="$body" python3 "$ROOT/claim.py" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
@@ -45,7 +62,7 @@ run_claim() {
   fi
   printf '%s' "$expected_output" > "$GH_CASE/expected.stdout"
   if ! diff -u "$GH_CASE/expected.stdout" "$GH_CASE/stdout"; then failed=1; fi
-  if ! diff -u "$GH_CASE/expected.jsonl" "$GH_CASE/calls.jsonl"; then failed=1; fi
+  if ! diff -u "$GH_CASE/expected.jsonl" <(ordinary_calls "$GH_CASE/calls.jsonl"); then failed=1; fi
   if [[ -n $expected_error ]]; then
     printf '%s\n' "$expected_error" > "$GH_CASE/expected.stderr"
   else
@@ -976,6 +993,7 @@ for case_name in "${cases[@]}"; do
   mkdir "$GH_CASE"
   : > "$GH_CASE/expected.jsonl"
   : > "$GH_CASE/calls.jsonl"
+  printf '0\n' > "$GH_CASE/sequence"
   reset_case
   if "$case_name"; then
     printf 'PASS %s\n' "$case_name"
