@@ -1657,6 +1657,605 @@ null_assignee_confirm() { invalid_assignee_snapshot '[null]' confirm; }
 missing_login_initial() { invalid_assignee_snapshot '[{}]' initial; }
 missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 
+# --- the base-freshness check and the fixtures that drive it ---------------
+#
+# The check is executable code reached through a CI step, so it is rehearsed by
+# EXECUTING it: the run block is taken out of tests.yml the way the platform
+# hands it to bash, and run against a real git repository with a real second
+# branch and real commits. A double that implemented the assumption the check
+# already makes could not tell a working check from a broken one, and a stub
+# whose unmodelled branch returns a plausible empty rather than a loud failure
+# is harder to see than one that refuses — so everything below refuses.
+
+# The `run:` block of one named step, as the runner would hand it to bash:
+# `${{ }}` expanded before a byte of it is executed, and the step's own `env:`
+# bound. Written as its own reader rather than reusing the check's, because a
+# rehearsal that borrows the code under test finds whatever that code finds —
+# including nothing at all, which is a green that measures nothing.
+#
+# It refuses on anything it does not model rather than guessing: an expression
+# it cannot expand, or a `run:` written in a shape it does not read, exits
+# non-zero and says which. A rehearsal whose every limb reads false reports the
+# harness, not the thing under test.
+freshness_step_script() {
+  python3 - "$1" "$2" "$3" "$4" <<'PYRUNNER'
+import re
+import sys
+
+workflow, job, step, target = sys.argv[1:5]
+lines = open(workflow, encoding="utf-8").read().splitlines()
+
+
+def indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def skippable(line):
+    stripped = line.strip()
+    return not stripped or stripped.startswith("#")
+
+
+def refuse(reason):
+    print(f"freshness_step_script: {reason}", file=sys.stderr)
+    raise SystemExit(3)
+
+
+def block_end(start, depth):
+    index = start + 1
+    while index < len(lines):
+        if not skippable(lines[index]) and indent(lines[index]) <= depth:
+            break
+        index += 1
+    return index
+
+
+def scalar(start, depth, stop):
+    body = []
+    index = start + 1
+    while index < stop:
+        if lines[index].strip() and indent(lines[index]) <= depth:
+            break
+        body.append(lines[index])
+        index += 1
+    leads = [indent(line) for line in body if line.strip()]
+    lead = min(leads) if leads else depth + 2
+    return "\n".join(line[lead:] if len(line) > lead else "" for line in body), index
+
+
+wanted = [index for index, line in enumerate(lines)
+          if line.strip() == f"{job}:"]
+if len(wanted) != 1:
+    refuse(f"expected exactly one `{job}:` job, found {len(wanted)}")
+job_span = (wanted[0] + 1, block_end(wanted[0], 2))
+
+entries = [index for index in range(*job_span)
+           if not skippable(lines[index]) and indent(lines[index]) == 6
+           and lines[index].strip().startswith("- ")]
+if not entries:
+    refuse(f"job `{job}` has no step entries")
+
+named = [index for index in entries
+         if lines[index].strip() == f"- name: {step}"]
+if len(named) != 1:
+    refuse(f"expected exactly one step named {step!r}, found {len(named)}")
+step_span = (named[0] + 1, block_end(named[0], 6))
+
+run, uses, env = None, None, {}
+index = step_span[0]
+while index < step_span[1]:
+    line = lines[index]
+    if skippable(line):
+        index += 1
+        continue
+    if indent(line) != 8:
+        refuse(f"expected a key in the step, found {line!r}")
+    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_.-]*):(?:[ \t]+(.*))?", line.strip())
+    if not match:
+        refuse(f"expected a key in the step, found {line!r}")
+    key, value = match[1], (match[2] or "").strip()
+    if key == "uses":
+        uses = value.split()[0] if value else None
+    elif key == "env":
+        stop = block_end(index, 8)
+        for child in range(index + 1, stop):
+            if skippable(lines[child]):
+                continue
+            pair = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*):[ \t]+(.*)",
+                                lines[child].strip())
+            if not pair:
+                refuse(f"expected an environment binding, found {lines[child]!r}")
+            env[pair[1]] = pair[2].strip().strip('"').strip("'")
+        index = stop
+        continue
+    elif key == "run":
+        if not value or re.fullmatch(r"[|>][0-9+-]*", value):
+            run, index = scalar(index, 8, step_span[1])
+            continue
+        run = value
+    index += 1
+
+if run is None:
+    refuse(f"step {step!r} carries no `run:` block")
+if uses is not None:
+    refuse(f"step {step!r} is a `uses:` step; this rehearsal runs `run:` blocks only")
+
+# The contexts a step's expressions can be expanded from, and nothing else.
+# One is unmodelled and refused rather than blanked: an expression expanded to
+# an empty string is a different program, and a rehearsal that cannot tell the
+# difference is a rehearsal that would go green over a check it never ran.
+BINDINGS = {
+    "github.repository": "owner/project",
+    "github.event.pull_request.number": "7",
+    "github.event.pull_request.head.sha": "f" * 40,
+    "github.sha": "f" * 40,
+    "github.workspace": "WORKSPACE",
+    "runner.temp": "RUNNER_TEMP",
+    "runner.os": "Linux",
+}
+EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+
+
+def expand(text, what):
+    def substitute(match):
+        expression = match[1].strip()
+        if expression.startswith("env."):
+            name = expression[4:].strip()
+            if name not in env:
+                refuse(f"{what} reads env.{name}, which the step does not bind")
+            return expand(env[name], f"env.{name}")
+        if expression in BINDINGS:
+            return BINDINGS[expression]
+        refuse(f"{what} uses the expression {expression!r}, which this "
+               f"rehearsal does not know how to expand")
+    return EXPRESSION.sub(substitute, text)
+
+
+script = ["#!/usr/bin/env bash", "set -eu"]
+for name in sorted(env):
+    script.append(f"export {name}='{expand(env[name], name)}'")
+script.append(expand(run, "the run block"))
+open(target, "w", encoding="utf-8").write("\n".join(script) + "\n")
+PYRUNNER
+}
+
+# A real git repository: a real initial commit, a real second branch, real
+# commits on top of a real bare origin, and the repository's own tree copied in
+# so the check derives its path set from something real.
+#
+# The tree is every file this repository tracks, from `git ls-files` rather than
+# from a list written here. A hand-written copy list is the same remembered
+# shapes the check itself is forbidden to use, and this fixture missed
+# `.github/dependabot.yml` that way — a file a required check reads, and a
+# change to that check that this case could not see.
+#
+# The identity is set on the FIXTURE's config, not this repository's and not on
+# the command line: these commits are a throwaway repository's history and must
+# not touch this repository's identity or its trailer.
+gate_fixture() {
+  local fixture=$1
+  rm -rf -- "$fixture"
+  mkdir -p "$fixture/tree"
+  python3 - "$ROOT" "$fixture/tree" <<'PYFIXTURE'
+import os
+import shutil
+import subprocess
+import sys
+
+root, destination = sys.argv[1], sys.argv[2]
+listed = subprocess.run(("git", "-C", root, "ls-files", "-z"),
+                        capture_output=True, check=True).stdout
+for raw in listed.split(b"\0"):
+    if not raw:
+        continue
+    name = raw.decode("utf-8")
+    target = os.path.join(destination, name)
+    parent = os.path.dirname(target)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    shutil.copyfile(os.path.join(root, name), target)
+PYFIXTURE
+  git init --quiet --initial-branch=main "$fixture/tree"
+  git -C "$fixture/tree" config user.email fixture@example.invalid
+  git -C "$fixture/tree" config user.name fixture
+  # -f because the copied `.gitignore` denies by default and names back exactly
+  # what this repository ships — which would hide the very files the states
+  # below add.
+  git -C "$fixture/tree" add -A -f
+  git -C "$fixture/tree" commit --quiet -m 'base tree'
+  git -C "$fixture/tree" branch head-branch
+  git init --quiet --bare "$fixture/origin.git"
+  git -C "$fixture/tree" remote add origin "$fixture/origin.git"
+  git -C "$fixture/tree" push --quiet origin main
+}
+
+# Commit a change to the fixture's main and publish it, leaving the branch the
+# caller had checked out alone: the states under test are about what the HEAD
+# branch lacks, so the caller puts it back where it wants it.
+gate_commit_to_main() {
+  local fixture=$1 path=$2 subject=$3 was
+  was=$(git -C "$fixture/tree" rev-parse --abbrev-ref HEAD)
+  git -C "$fixture/tree" checkout --quiet main
+  printf 'a change for %s\n' "$subject" >> "$fixture/tree/$path"
+  git -C "$fixture/tree" add -A -f
+  git -C "$fixture/tree" commit --quiet -m "$subject"
+  git -C "$fixture/tree" push --quiet origin main
+  git -C "$fixture/tree" checkout --quiet "$was"
+}
+
+# Run the extracted step against the fixture and put its two streams and its
+# status where the caller reads them. `set -e` would stop the case at the first
+# non-zero status, and most of the states under test ARE non-zero.
+#
+# The working tree is named rather than fixed at $fixture/tree, because one
+# state runs from a different directory entirely: a depth-1 checkout is what
+# actions/checkout hands this job.
+gate_run_step() {
+  local fixture=$1 script=$2 status=0
+  local where=${3-$fixture/tree}
+  (cd "$where" && bash "$script" \
+    > "$GH_CASE/stdout" 2> "$GH_CASE/stderr") || status=$?
+  printf '%s\n' "$status" > "$GH_CASE/status"
+}
+
+# The states the check has to tell apart: fresh, main moved on a file no
+# required check reads, a planted stale base, and the rebase that clears it.
+# Then the three ways it has to refuse rather than answer. Each state runs the
+# step's own run block; none of them reaches into the check.
+#
+# The refusals are the half that matters. A guard that cannot fetch its base,
+# cannot find it, or cannot build the path set reports green over a comparison
+# it never made, which is the false green this check exists to prevent — and a
+# green run is not evidence that it does not.
+gate_base_freshness_states() {
+  local fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
+  local tree=$fixture/tree status result=0 planted
+  gate_fixture "$fixture"
+  # The step is located by name, so a rename reds this case as well as
+  # gate_freshness_step_is_wired rather than quietly rehearsing whatever moved.
+  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Require this head to carry main's gate-defining commits" "$script"; then
+    printf '  the freshness step could not be extracted from tests.yml\n'
+    return 1
+  fi
+
+  # Fresh: the head IS main, so there is nothing it lacks.
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  fresh head: expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+
+  # Main advanced, but only on a file no required check reads. The head is left
+  # behind main rather than diverged from it, which is the state a pull request
+  # that has not rebased is actually in.
+  gate_commit_to_main "$fixture" NOTES.md 'notes only'
+  git -C "$tree" checkout --quiet head-branch
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  main moved on NOTES.md, which no required check reads: expected exit 0, got %s\n' \
+      "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+
+  # Planted stale base: main holds a commit touching tests/run.sh, which the
+  # `find tests` in the shellcheck job reads, and the head does not have it. The
+  # message has to name that commit and that file — a red that names neither
+  # leaves the reader to go and find them.
+  gate_commit_to_main "$fixture" tests/run.sh 'touch the suite'
+  planted=$(git -C "$tree" rev-parse origin/main)
+  gate_run_step "$fixture" "$script"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  planted stale base: expected a non-zero exit, got 0\n'
+    result=1
+  fi
+  if ! grep -Fq "$planted" "$GH_CASE/stdout"; then
+    printf '  the refusal did not name the commit main holds:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if ! grep -Fq 'tests/run.sh' "$GH_CASE/stdout"; then
+    printf '  the refusal did not name the file that commit touched:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # Rebasing onto main is what the message asks for, and it has to clear the
+  # red: a check that stays red after the repair is a check nobody can satisfy.
+  git -C "$tree" rebase --quiet origin/main
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  head rebased onto main: expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+
+  # The shape actions/checkout actually hands this job on a pull request: a
+  # depth-1 checkout of the MERGE ref, which is not on main's history, while
+  # main has moved on since that merge was built. The head's own ancestry is
+  # grafted away, so `head..main` cannot tell which of main's commits the head
+  # already carries and reports the whole of main against it — naming commits
+  # whose content is sitting in the checkout, and every file under them.
+  #
+  # The assertion is an ABSENCE: the root commit is IN the checkout, so naming
+  # it is naming something the head demonstrably carries. That is the difference
+  # between a red that costs a rebase and a red that costs the reader an hour.
+  git -C "$tree" checkout --quiet -b merge-branch
+  printf 'work on the branch\n' >> "$tree/claim.py"
+  git -C "$tree" add -A -f && git -C "$tree" commit --quiet -m 'a change on the branch'
+  git -C "$tree" checkout --quiet main
+  git -C "$tree" merge --quiet --no-ff merge-branch -m 'merge the branch'
+  git -C "$tree" push --quiet origin HEAD:pr-merge
+  git -C "$tree" reset --quiet --hard HEAD^
+  gate_commit_to_main "$fixture" README.md 'move the readme pin'
+  planted=$(git -C "$tree" rev-parse origin/main)
+  carried=$(git -C "$tree" rev-list --max-parents=0 HEAD)
+  git clone --quiet --depth 1 --branch pr-merge "file://$fixture/origin.git" \
+    "$fixture/shallow"
+  if [[ $(git -C "$fixture/shallow" rev-parse --is-shallow-repository) != true ]]; then
+    printf '  the clone under test is not shallow, so this state is not the one it claims\n'
+    result=1
+  fi
+  gate_run_step "$fixture" "$script" "$fixture/shallow"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  depth-1 checkout with a stale base: expected a non-zero exit, got 0\n'
+    result=1
+  fi
+  if ! grep -Fq "$planted" "$GH_CASE/stdout"; then
+    printf '  the depth-1 checkout did not name the commit main holds (%s):\n' "$planted"
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if ! grep -Fq 'README.md' "$GH_CASE/stdout"; then
+    printf '  the depth-1 checkout did not name the file that commit touched:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if grep -Fq "$carried" "$GH_CASE/stdout"; then
+    printf '  the depth-1 checkout named %s, which its own tree carries:\n' "$carried"
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # An unreachable base. Not "an error happened" — the run reports that main
+  # could not be fetched, which is the fact a reader needs.
+  git -C "$tree" remote set-url origin "$fixture/absent.git"
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  base could not be fetched: expected a non-zero exit, got 0\n'
+    result=1
+  elif ! grep -Fq 'cannot fetch origin/main' "$GH_CASE/stderr"; then
+    printf '  an unreachable base was not reported as one:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+
+  # A base that exists but has no main on it: the fetch succeeds and the
+  # comparison has nothing to compare against. The other half of "cannot
+  # resolve origin/main".
+  git init --quiet --bare "$fixture/empty.git"
+  git -C "$tree" remote set-url origin "$fixture/empty.git"
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  base ref does not exist: expected a non-zero exit, got 0\n'
+    result=1
+  elif ! grep -Fq 'origin/main' "$GH_CASE/stderr"; then
+    printf '  a base with no main on it was not named:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+
+  # A workflow the required jobs cannot be found in: no path set, so no
+  # comparison, so a refusal rather than a clean tree.
+  git -C "$tree" remote set-url origin "$fixture/origin.git"
+  git -C "$tree" fetch --quiet origin main
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYRENAME'
+import re
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+renamed = re.sub(r"^  suites:$", "  suites_renamed:", text, count=1, flags=re.M)
+if renamed == text:
+    print("the fixture's tests.yml has no `suites:` job to rename", file=sys.stderr)
+    raise SystemExit(1)
+open(path, "w", encoding="utf-8").write(renamed)
+PYRENAME
+  git -C "$tree" add -A -f
+  git -C "$tree" commit --quiet -m 'rename a required job'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  a required job no workflow defines: expected a non-zero exit, got 0\n'
+    result=1
+  elif ! grep -Fq 'suites' "$GH_CASE/stderr"; then
+    printf '  an unbuildable path set did not name the job it could not find:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  return "$result"
+}
+
+# The derived path set, pinned twice over. First against the repository as it
+# stands — exactly the files listed below, which is the control that makes a
+# change to the derivation or to a required job loud, in either direction. Then
+# against a fixture whose required job starts reading a NEW file, which the set
+# must grow to cover, with the same fixture BEFORE that reference as the
+# control: the mutant, because a pin that only measured the shipped tree would
+# pass on a derivation that had stopped reading the workflows at all.
+#
+# The shipped half runs on a fixture built from the working tree rather than on
+# HEAD. A pin that reads HEAD answers about the last commit and not about the
+# tree somebody is editing, which is the same measurement-blindness this suite
+# keeps arguing against; and the check reads git's blobs at run time precisely
+# because in CI the working tree and HEAD are the same commit anyway.
+gate_paths_derived_from_workflows() {
+  local result=0 fixture=$GH_CASE/fixture tree derived
+  gate_fixture "$fixture"
+  tree=$fixture/tree
+  derived=$(python3 "$ROOT/tests/gate_base_freshness.py" --root "$tree" --print-paths) || {
+    printf '  the derivation refused on the repository as it stands\n'
+    return 1
+  }
+  local expected='.github/workflows/actionlint.yml
+.github/workflows/claim.yml
+.github/workflows/codeql.yml
+.github/workflows/pr-gate.yml
+.github/workflows/requirements.txt
+.github/workflows/scorecard.yml
+.github/workflows/tests.yml
+README.md
+action.yml
+claim.py
+tests/gate_base_freshness.py
+tests/gh.sh
+tests/identity.response
+tests/run.sh'
+  if [[ $derived != "$expected" ]]; then
+    printf '  the derived path set changed:\n'
+    diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$derived") || true
+    result=1
+  fi
+
+  # The control: the fixture carries the file, and no required check names it.
+  printf 'a gate file nobody reads yet\n' > "$tree/gate-extra.txt"
+  git -C "$tree" add -A -f && git -C "$tree" commit --quiet -m 'a file outside the gate'
+  derived=$(python3 "$ROOT/tests/gate_base_freshness.py" --root "$tree" --print-paths) || {
+    printf '  the derivation refused on the fixture tree\n'
+    result=1
+    derived=
+  }
+  if [[ -n $derived ]] && grep -Fxq 'gate-extra.txt' <<< "$derived"; then
+    printf '  gate-extra.txt is in the derived set with no required check naming it\n'
+    result=1
+  fi
+
+  # The plant: a required job starts reading it.
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYPLANT'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+anchor = "          find tests -type f -name '*.sh' -exec shellcheck {} +"
+if anchor not in text:
+    print(f"the fixture's tests.yml has no shellcheck step to extend: {anchor!r}",
+          file=sys.stderr)
+    raise SystemExit(1)
+open(path, "w", encoding="utf-8").write(
+    text.replace(anchor, anchor + "\n          cat gate-extra.txt > /dev/null", 1))
+PYPLANT
+  git -C "$tree" add -A -f && git -C "$tree" commit --quiet -m 'a required job reads a new file'
+  derived=$(python3 "$ROOT/tests/gate_base_freshness.py" --root "$tree" --print-paths) || {
+    printf '  the derivation refused on the planted fixture tree\n'
+    result=1
+    derived=
+  }
+  if [[ -z $derived ]] || ! grep -Fxq 'gate-extra.txt' <<< "$derived"; then
+    printf '  a required job reads gate-extra.txt and the derived set did not grow:\n%s\n' \
+      "$derived"
+    result=1
+  fi
+  return "$result"
+}
+
+# The step is what makes the check a required status context rather than a
+# script nobody runs. Deleting it has to red this suite: the check would still
+# be here, still correct, and would never once run.
+#
+# The primary pin is this one — the step exists, it runs the script, and it sits
+# after the checkout and before the lint. The text of the run body is asserted
+# because it is the one thing the executable rehearsal cannot catch: the
+# rehearsal extracts whatever the body says and runs it, so a body naming a
+# different script would be rehearsed happily and pinned green.
+gate_freshness_step_is_wired() {
+  python3 - "$ROOT" <<'PYWIRE'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1]) / ".github/workflows/tests.yml"
+lines = path.read_text().splitlines()
+STEP = "Require this head to carry main's gate-defining commits"
+SCRIPT = "python3 tests/gate_base_freshness.py"
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+# The job's KEY is the required context's name, so it is pinned as well as the
+# steps: renaming the job would leave this step in a context the ruleset has
+# never heard of.
+if lines.count("  shellcheck:") != 1:
+    fail("tests.yml must keep exactly one `shellcheck:` job")
+start = lines.index("  shellcheck:") + 1
+end = len(lines)
+for index in range(start, len(lines)):
+    line = lines[index]
+    if line.strip() and not line.lstrip().startswith("#") \
+            and len(line) - len(line.lstrip(" ")) <= 2:
+        end = index
+        break
+job = lines[start:end]
+
+steps = []
+index = 0
+while index < len(job):
+    line = job[index]
+    if line.strip().startswith("- "):
+        steps.append((line.strip()[2:], index))
+    index += 1
+if not steps:
+    fail("the shellcheck job has no steps")
+
+
+def step_end(at):
+    for offset in range(at + 1, len(job)):
+        line = job[offset]
+        if line.strip().startswith("- "):
+            return offset
+    return len(job)
+
+
+named = [at for entry, at in steps if entry == f"name: {STEP}"]
+if len(named) != 1:
+    fail(f"expected exactly one step named {STEP!r}, found {len(named)}")
+at = named[0]
+body = job[at + 1:step_end(at)]
+runs = [line.strip() for line in body if line.strip().startswith("run:")]
+if runs != [f"run: {SCRIPT}"]:
+    fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
+if any(line.strip().startswith("uses:") for line in body):
+    fail("the step must be a run step, not a uses step")
+
+checkout = [at for entry, at in steps if entry.startswith("uses: actions/checkout@")]
+if len(checkout) != 1:
+    fail(f"expected exactly one checkout step, found {len(checkout)}")
+lint = [at for entry, at in steps if entry == "name: Check every shell file"]
+if len(lint) != 1:
+    fail(f"expected exactly one `Check every shell file` step, found {len(lint)}")
+if not checkout[0] < at < lint[0]:
+    fail("the freshness step must sit after the checkout and before the lint step")
+
+# The trap actionlint.yml documents for itself: a path filter on a workflow with
+# a required job means the check never reports, so every pull request blocks
+# forever. There is none here, and there must not come to be one.
+on_pull_request = lines.index("  pull_request:") if "  pull_request:" in lines else -1
+if on_pull_request < 0:
+    fail("tests.yml must keep its unfiltered `pull_request:` trigger")
+stop = len(lines)
+for index in range(on_pull_request + 1, len(lines)):
+    line = lines[index]
+    if line.strip() and not line.lstrip().startswith("#") \
+            and len(line) - len(line.lstrip(" ")) <= 2:
+        stop = index
+        break
+if any(re.match(r"\s*paths(-ignore)?:", line) for line in lines[on_pull_request:stop]):
+    fail("tests.yml's pull_request trigger must carry no paths filter")
+PYWIRE
+}
+
 action_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -2055,7 +2654,10 @@ cases=(
   cap_role_snapshot_not_an_object cap_custom_role_base_unreadable
   cap_role_lookup_failure cap_malformed_search_response cap_search_transport_failure
   # The manifests this action is.
-  action_contract pr_gate_contract)
+  action_contract pr_gate_contract
+  # Issue 64: a green head must carry what main holds, or it vouches for nothing.
+  gate_freshness_step_is_wired gate_paths_derived_from_workflows
+  gate_base_freshness_states)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
