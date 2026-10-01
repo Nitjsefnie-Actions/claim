@@ -132,6 +132,19 @@ metacharacters() {
   return "$result"
 }
 
+# The same shape as the mismatch reply, reached by a body that is prose rather
+# than a command: a maximum-size comment is 65,536 characters, and quoting its
+# first line built a 65,696-character answer. GitHub refuses that, so the
+# commenter got nothing at all — which is what #50 reports, and it was the same
+# defect as #45 one branch above.
+not_a_command_over_long() {
+  local expected_stdout
+  body=$(chars_of 65536)
+  printf -v expected_stdout 'not a command: %s\n' "$body"
+  expect_over_length_reply
+  run_claim 1 "$expected_stdout"
+}
+
 already_assigned() {
   body=/claim
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
@@ -581,6 +594,18 @@ claim_number_over_long() {
   # answered with nothing at all. It must still be answered, and briefly.
   digits=$(digits_of 33000)
   body="/claim #${digits}"
+  expect_over_length_reply
+  run_claim 1
+}
+
+# The body that killed a run. Over about 65,477 digits the reply passed as a
+# `-f body=…` argument crossed the kernel's 131,072-byte limit on one argument
+# and the run died with `OSError: [Errno 7] Argument list too long` before any
+# API call — nothing posted, nobody answered. A hundred thousand digits cannot
+# be on a command line at all, so this cannot be answered by a reply short
+# enough to fit: the body has to travel somewhere other than argv.
+claim_number_argument_list_overflow() {
+  body="/claim #$(digits_of 100000)"
   expect_over_length_reply
   run_claim 1
 }
@@ -1394,7 +1419,7 @@ for node, value in expected.items():
 PY
 }
 
-cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
+cases=(sentence multiline interior_cr metacharacters not_a_command_over_long already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   contested_winner_by_event_order contested_loser_by_event_order
   contested_equal_event_ids unassigned_login_spelling_clears_map
@@ -1408,6 +1433,7 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   contested_removal_forbidden
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
   claim_number_mismatch claim_number_mismatch_other_words claim_number_over_long
+  claim_number_argument_list_overflow
   claim_number_quoted_in_full
   claim_number_reply_length_bounded claim_number_ceiling_edge
   claim_number_trailing_prose claim_number_next_line
