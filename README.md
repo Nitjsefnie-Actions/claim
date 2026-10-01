@@ -123,19 +123,24 @@ value for this input.
 - Claim an issue somebody already holds or replace its assignees. If the
   commenter already holds it, the action says so without changing assignments.
   Two claims landing in the same instant are the one case that removes
-  somebody else's assignment — a `/unclaim` removes only the commenter's own:
-  the issue is left with whoever the issue's assignment events record as
-  assigned **first** — the order comes from those events, not from the
-  commenter list and not from any alphabetical rule — and the other commenter
+  somebody else's assignment; a `/unclaim` removes only the commenter's own.
+  The issue is then left with whichever login's **current** assignment event
+  comes first. The order comes from those events and never from the commenter
+  list: a login assigned, unassigned and reassigned inside the window is
+  ordered by the reassignment rather than by its original assignment, and two
+  current events sharing an id are broken by login, so that two runs reading
+  the same state cannot leave the issue with two holders. The other commenter
   is told it lost and who holds the issue. Every assignment the action removes
   has to have been made by the same identity, because that is the only thing
-  that makes it one of the action's own writes. If the assignees do not all
-  share one identity — somebody assigned this issue by hand in the same
-  window, or an event is not yet readable — it cannot tell which one is not
-  its own, so it removes nothing at all and says so on the issue. Nothing it
-  removes depends on which commenter is running — the winner and the removals
-  are computed from the confirmed set alone — so two runs that read the same
-  state always settle it the same way.
+  that makes them all one writer's. It never compares that identity against
+  its own, so it cannot tell a rival `/claim` from a maintainer who assigned
+  every holder by hand inside the same window, and those assignments are
+  removed like any other. When the writers do not agree, or an event is not
+  yet readable, it cannot tell which one is not its own, so it removes nothing
+  at all and says so on the issue. The winner and the removals are computed
+  from the confirmed set and its timeline alone, so two runs that read the
+  same state leave the issue with the same login — what each run posts about
+  it is the one thing that depends on which commenter is running.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
