@@ -208,6 +208,18 @@ claim_number_mismatch() {
   run_claim 1
 }
 
+claim_number_over_long() {
+  local digits
+  printf -v digits '%*s' 4301 ''
+  digits=${digits//' '/1}
+  body="/claim #${digits}"
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  expect_gh '' api repos/owner/project/issues/7/comments -f \
+    "body=\`/claim #${digits}\` names issue ${digits}, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
+    --silent
+  run_claim 1
+}
+
 claim_number_trailing_prose() {
   body='/claim 526 extra prose'
   # shellcheck disable=SC2016
@@ -618,7 +630,7 @@ PY
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
-  claim_number_mismatch claim_number_trailing_prose claim_number_next_line
+  claim_number_mismatch claim_number_over_long claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached claim_rejected
   unclaim_not_assigned unclaim_one_of_two release_one_of_two
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
