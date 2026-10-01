@@ -570,6 +570,26 @@ chars_of() {
   printf '%s' "${text//' '/x}"
 }
 
+# N copies of a four-byte character. A body of these is short in characters and
+# long in bytes, which is the only way to drive a reply that GitHub accepts and
+# an argument list cannot hold — the input class #51 was about.
+emoji_of() {
+  local count=$1 text
+  printf -v text '%*s' "$count" ''
+  printf '%s' "${text//' '/😀}"
+}
+
+# The character count of the body the last recorded call carried, read back off
+# the calls the run actually made.
+recorded_body_chars() {
+  python3 -c '
+import json, sys
+args = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+body = next((a[len("body="):] for a in args if a.startswith("body=")), None)
+print(len(body) if body is not None else "unmeasured")
+' "$1"
+}
+
 # The JSON `gh api --input -` reads a comment body from, built the way
 # claim.py builds it rather than by hand, so a case that drives the stub
 # directly sends the transport claim.py sends.
@@ -1290,6 +1310,21 @@ stub_models_the_body_on_stdin() {
     cat "$GH_CASE/stderr"
     result=1
   fi
+  # And the largest comment GitHub accepts, in four-byte characters: 65,536 of
+  # them is 262,144 bytes, twice what one argument can hold. Recording a body
+  # that size as an argument is how the stub used to kill itself with the
+  # shell's 126 on a body it was supposed to be modelling.
+  : > "$GH_CASE/response.3"
+  status=0
+  printf '%s' "$(emoji_of 65536)" | comment_payload 2> /dev/null \
+    | gh api repos/owner/project/issues/7/comments --input - --silent \
+      > /dev/null || status=$?
+  recorded=$(recorded_body_chars "$GH_CASE/calls.jsonl")
+  if (( status != 0 || recorded != 65536 )); then
+    printf '  65536 four-byte characters: exit %s, recorded %s characters, expected 0 and 65536\n' \
+      "$status" "$recorded"
+    result=1
+  fi
   GH_CASE=$outer
   return "$result"
 }
@@ -1319,6 +1354,36 @@ unreachable_api_reported_in_its_own_terms() {
   fi
   if grep -Fq 'Traceback' "$GH_CASE/stderr"; then
     printf '  unexpected traceback\n'
+    result=1
+  fi
+  return "$result"
+}
+
+# Which unit the stub counts in. GitHub's limit is 65,536 characters and
+# claim.py's ceiling counts characters, so a comment of exactly 65,536 emoji
+# is legal and has to be posted. Bash's ${#body} counts characters or bytes
+# according to the ambient locale, and the suite sets none: under LC_ALL=C it
+# would call that body 262,144 and refuse it, which reads as a product defect
+# rather than as a harness disagreement about units.
+stub_counts_characters_not_bytes() {
+  local outer=$GH_CASE filler status=0 result=0 recorded
+  filler=$(emoji_of 65536)
+  mkdir "$outer/locale"
+  GH_CASE="$outer/locale"
+  : > "$GH_CASE/response.1"
+  printf '%s' "$filler" | comment_payload 2> /dev/null \
+    | LC_ALL=C gh api repos/owner/project/issues/7/comments --input - --silent \
+      > /dev/null 2> "$GH_CASE/stderr" || status=$?
+  recorded=$(recorded_body_chars "$outer/locale/calls.jsonl")
+  GH_CASE=$outer
+  if (( status != 0 )); then
+    printf '  65536 emoji under LC_ALL=C: the stub must post them, got exit %s\n' \
+      "$status"
+    cat "$outer/locale/stderr"
+    result=1
+  fi
+  if [[ $recorded != 65536 ]]; then
+    printf '  the recorded body is %s characters, expected 65536\n' "$recorded"
     result=1
   fi
   return "$result"
