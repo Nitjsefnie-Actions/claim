@@ -62,10 +62,11 @@ an old comment does not trigger a claim. The job runs on Ubuntu with a
 five-minute timeout.
 
 The job's `permissions:` block grants the token only `issues: write`, which
-is needed to read issues, change assignees, and post replies. Inside the
-single job is the narrowest placement for a one-job workflow, and the one
-least-privilege audits expect; the same scope at workflow level draws an
-`excessive-permissions` finding from them. The action never
+is needed to read issues, change assignees, and post replies. On a one-job
+workflow, job level is the narrower equivalent of the same scope at workflow
+level: it applies only while the job runs. Workflow-level write scopes are
+what least-privilege audits flag — zizmor's pedantic persona reports the
+placement this block replaced as `excessive-permissions`. The action never
 reads the repository tree, so the calling workflow needs neither
 `contents: read` nor a checkout step. The default `github.token` is sufficient.
 
@@ -77,8 +78,9 @@ keeps only a single pending run per group and cancels it when a newer claim
 arrives, so the third claim on a busy issue would silently leave the second
 claimer without an answer. `queue: max` instead keeps up to 100 pending runs
 in first-in, first-out order — GitHub's documented cap — and cancels any
-further run once the queue is full. It cannot be combined with
-`cancel-in-progress: true`, which this block never sets.
+further run once the queue is full. The ordering follows when each run
+started waiting, and GitHub notes it is not guaranteed. It cannot be
+combined with `cancel-in-progress: true`, which this block never sets.
 
 The job's `if:` is only a prefilter to save starting a runner. The action
 re-checks all three conditions itself: the target is an issue rather than a
