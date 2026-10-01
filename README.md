@@ -41,6 +41,7 @@ permissions:
 concurrency:
   group: claim-${{ github.event.issue.number }}
   cancel-in-progress: false
+  queue: max
 jobs:
   claim:
     if: >-
@@ -68,7 +69,13 @@ reads the repository tree, so the calling workflow needs neither
 The per-issue `concurrency:` group serializes competing claims so they do not
 both act on the same unassigned snapshot. `cancel-in-progress: false` is
 deliberate: when two people claim at once, both must get an answer instead of
-one run being cancelled halfway through an assignment.
+one run being cancelled halfway through an assignment. The default queue also
+keeps only a single pending run per group and cancels it when a newer claim
+arrives, so the third claim on a busy issue would silently leave the second
+claimer without an answer. `queue: max` instead keeps up to 100 pending runs
+in first-in, first-out order — GitHub's documented cap — and cancels any
+further run once the queue is full. It cannot be combined with
+`cancel-in-progress: true`, which this block never sets.
 
 The job's `if:` is only a prefilter to save starting a runner. The action
 re-checks all three conditions itself: the target is an issue rather than a
