@@ -15,15 +15,21 @@ The entire comment body must be **exactly** one command after trimming
 surrounding whitespace, including blank lines, optionally followed by the
 issue's number with or without `#`: on issue 7, `/claim`, `/claim 7` and
 `/claim #7` are the same command. A carried number must name the issue the
-comment is on. Carriage returns are removed for Windows clients. A command
-inside a sentence is a sentence: `please /claim this` is declined like any
-other non-command. Commands are case-sensitive.
+comment is on. Carriage returns are removed for Windows clients. Commands
+are case-sensitive.
 
-Anything else is declined loudly: the action posts a reply on the issue
-naming the offending line and the accepted forms, and the run fails, so a
-refused command is visible to the commenter and on the issue instead of a
-silent green run. A command carrying a different issue's number, and a
-command on a closed issue or a pull request, is declined the same way.
+A comment that never starts a line with a command word is not an attempt to
+run one: a command word inside a URL, a path or a sentence — `please /claim
+this`, a `/releases/` link — gets no reply, and the run ends quietly, the
+same way a bot's comment is skipped.
+
+A line that does start with a command word makes the comment an attempt, and
+a failed attempt is declined loudly: the action posts a reply naming the
+command word and quoting the line it was on, with the accepted forms, and
+the run fails, so a refused command is visible to the commenter and on the
+issue instead of a silent green run. A command carrying a different issue's
+number, and a command on a closed issue or a pull request, is declined the
+same way.
 
 ## Install
 
@@ -90,7 +96,12 @@ The job's `if:` is only a prefilter to save starting a runner. The action
 re-checks all three conditions itself: the target is an issue rather than a
 pull request, the issue is open, and the commenter is not a bot. The
 `contains()` checks also only prefilter: the action performs the exact command
-match itself.
+match itself. Those checks stay loose on purpose. The accepted forms include
+a body with leading whitespace or a leading blank line, which a
+`startsWith()` on the raw body would refuse to start a run for — GitHub's
+expression language has no `trim`, so a caller cannot strip first, and a
+valid command would be one the action could never see. A loose prefilter
+only starts a runner for a comment the action then ends quietly.
 
 ## Inputs
 
@@ -162,8 +173,10 @@ catches up.
   declines in the run log only, because a reply would re-trigger a caller
   that configured a user token and answer itself forever.
 - Treat an inexact body as a command.
-- Stay silent about a refusal: every decline a human can act on is answered
-  on the issue, and the run fails.
+- Stay silent about anything that is not an attempt: a comment no line of
+  which starts with a command word — a URL or a sentence that merely
+  mentions one — gets no reply and a green run. Every declined attempt is
+  answered on the issue, and the run fails.
 - Claim an issue somebody already holds or replace its assignees. If the
   commenter already holds it, the action says so without changing assignments.
   Two claims landing in the same instant are the one case that removes
