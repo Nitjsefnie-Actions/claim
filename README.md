@@ -143,7 +143,7 @@ endpoint's `permission` field, where `triage` folds to `read` and
 `maintain` to `write` — because custom role names cannot be named in
 the map.
 
-Above a role's finite cap the action counts the commenter's open
+At or above a role's finite cap the action counts the commenter's open
 assigned issues in this repository with the search API and refuses with
 a reply on the issue naming the role, the cap and the count; refusals
 exit 0. A `0` cap replies that claiming is disabled for the role and
