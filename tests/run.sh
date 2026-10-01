@@ -78,7 +78,8 @@ run_claim() {
 
 # The character count of the comment body the last recorded call posted: the
 # reply as it went out, not as the case expected it to. A call that posted no
-# body has no length, so this prints -1.
+# body has no length, so this prints `unmeasured` — a word, not a number, so
+# the caller cannot compare or count it by accident and pass.
 posted_comment_length() {
   python3 -c '
 import json, sys
@@ -87,7 +88,7 @@ for line in open(sys.argv[1]):
     for arg in json.loads(line):
         if arg.startswith("body="):
             body = arg[len("body="):]
-print(len(body) if body is not None else -1)
+print(len(body) if body is not None else "unmeasured")
 ' "$GH_CASE/calls.jsonl"
 }
 
@@ -622,12 +623,15 @@ claim_number_reply_length_bounded() {
   expect_over_length_reply
   run_claim 1 || result=$?
   long_len=$(posted_comment_length)
-  if [[ $short_len != "$long_len" ]]; then
+  if [[ ! $short_len =~ ^[0-9]+$ || ! $long_len =~ ^[0-9]+$ ]]; then
+    printf '  reply length could not be measured: %s and %s\n' \
+      "$short_len" "$long_len"
+    result=1
+  elif [[ $short_len != "$long_len" ]]; then
     printf '  reply length grew with the carried number: %s then %s\n' \
       "$short_len" "$long_len"
     result=1
-  fi
-  if (( long_len > 65536 )); then
+  elif (( long_len > 65536 )); then
     printf "  reply of %s characters exceeds GitHub's comment limit\n" "$long_len"
     result=1
   fi
