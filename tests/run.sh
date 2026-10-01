@@ -585,6 +585,39 @@ claim_number_over_long() {
   run_claim 1
 }
 
+# The mismatch refusal is written from the command word and the issue, so it
+# is worded differently for each. Only `/claim` had a case; `/unclaim` and
+# `/release` take the same branch, and the ceiling's own sentence names the
+# issue it was answering on — which no case checked either.
+claim_number_mismatch_other_words() {
+  local result=0
+  body='/unclaim 8'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
+    'body=`/unclaim 8` names issue 8, but this comment is on issue 7. Comment `/unclaim` (or `/unclaim 7`) to act on this issue.' \
+    --silent
+  run_claim 1 || result=$?
+  body='/release 8'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
+    'body=`/release 8` names issue 8, but this comment is on issue 7. Comment `/release` (or `/release 7`) to act on this issue.' \
+    --silent
+  run_claim 1 || result=$?
+  ISSUE=42
+  body='/claim 8'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/42/comments --input - \
+    'body=`/claim 8` names issue 8, but this comment is on issue 42. Comment `/claim` (or `/claim 42`) to act on this issue.' \
+    --silent
+  run_claim 1 || result=$?
+  # and the same command over the ceiling, on another issue, so the sentence
+  # that replaces the answer is known to name the issue it was answering on
+  body="/claim #$(digits_of 40000)"
+  expect_over_length_reply 42
+  run_claim 1 || result=$?
+  return "$result"
+}
+
 # Any carried number that fits in a reply is quoted in full, and the ceiling
 # in say() is the only thing that decides where that stops: nothing here counts
 # digits, so a number one digit longer is quoted exactly as one digit shorter.
@@ -1374,7 +1407,8 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   contested_claim_winner_of_three contested_claim_loser_among_three
   contested_removal_forbidden
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
-  claim_number_mismatch claim_number_over_long claim_number_quoted_in_full
+  claim_number_mismatch claim_number_mismatch_other_words claim_number_over_long
+  claim_number_quoted_in_full
   claim_number_reply_length_bounded claim_number_ceiling_edge
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached claim_rejected
