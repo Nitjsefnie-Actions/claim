@@ -161,7 +161,7 @@ not_a_command_over_long() {
 # than it claims.
 #
 # It goes red on an argv transport with the expectation sites updated to match,
-# which is why it and not claim_number_argument_list_overflow is the case that
+# which is why it and not claim_number_body_too_long_to_quote is the case that
 # proves the transport.
 not_a_command_bigger_than_an_argument() {
   local filler expected_body expected_stdout posted result=0
@@ -667,13 +667,18 @@ claim_number_over_long() {
   run_claim 1
 }
 
-# The body that killed a run. Over about 65,477 digits the reply passed as a
-# `-f body=…` argument crossed the kernel's 131,072-byte limit on one argument
-# and the run died with `OSError: [Errno 7] Argument list too long` before any
-# API call — nothing posted, nobody answered. A hundred thousand digits cannot
-# be on a command line at all, so this cannot be answered by a reply short
-# enough to fit: the body has to travel somewhere other than argv.
-claim_number_argument_list_overflow() {
+# The size that killed a run at the base commit, where the reply was passed as a
+# `-f body=…` argument: over about 65,477 digits it crossed the kernel's
+# 131,072-byte limit on one argument and the run died with `OSError: [Errno 7]
+# Argument list too long` before any API call — nothing posted, nobody
+# answered.
+#
+# It no longer drives an argument list, and it does not prove the transport.
+# The ceiling answers this body in 247 characters, so what it proves now is
+# that a body far larger than any reply still gets an answer on the issue and a
+# failed run. not_a_command_bigger_than_an_argument is the case that pins the
+# transport.
+claim_number_body_too_long_to_quote() {
   body="/claim #$(digits_of 100000)"
   expect_over_length_reply
   run_claim 1
@@ -1548,7 +1553,7 @@ cases=(sentence multiline interior_cr metacharacters not_a_command_over_long
   contested_removal_forbidden
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
   claim_number_mismatch claim_number_mismatch_other_words claim_number_over_long
-  claim_number_argument_list_overflow
+  claim_number_body_too_long_to_quote
   claim_number_quoted_in_full
   claim_number_reply_length_bounded claim_number_ceiling_edge
   claim_number_trailing_prose claim_number_next_line
