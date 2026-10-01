@@ -15,6 +15,32 @@ def gh(*args):
     ).stdout
 
 
+def own_identity():
+    """The login this token writes as, or None when it has no user account.
+
+    Best effort on purpose. The default `${{ github.token }}` is an App
+    installation token, and `GET /user` refuses it with HTTP 403 "Resource
+    not accessible by integration" (verified on an Actions runner
+    2026-10-01), while a user token answers 200 with its account. Any
+    non-zero exit therefore means "no user identity available", not a run
+    failure: an unconditional refusal here would have killed every
+    default-token caller at the first line. The callers below each have an
+    answer for a token whose identity cannot be established. A 200 whose
+    body is unreadable is still an error, because proceeding would compare
+    the commenter against an identity that was never established.
+    """
+    probe = subprocess.run(
+        ["gh", "api", "user"], check=False, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True,
+    )
+    if probe.returncode != 0:
+        return None
+    identity = json.loads(probe.stdout)
+    if not isinstance(identity, dict) or not isinstance(identity.get("login"), str):
+        raise ValueError("identity snapshot must contain a login string")
+    return identity["login"]
+
+
 def assignee_logins(issue):
     """Return an issue payload's assignee logins, or refuse an unreadable one."""
     if not isinstance(issue, dict) or not isinstance(issue.get("state"), str):
@@ -113,6 +139,33 @@ def main():
     issue = os.environ["ISSUE"]
     repo = os.environ["REPOSITORY"]
     actor = os.environ["ACTOR"]
+
+    # Every reply is authored by the account the token posts as, so a caller
+    # that configured a user token re-triggers this action with its own
+    # replies: the Bot prefilter only stops accounts GitHub marks Bot, and a
+    # reply quoting `/unclaim` is then answered with itself forever. `/user`
+    # is the token's own account where it has one, available before this
+    # action has ever assigned on the issue — the assignment-event
+    # attribution below needs an assignment the action already made, and the
+    # loop has to be broken before the first reply, including on issues
+    # assigned by hand. When the commenter is that account nothing is posted
+    # and nothing is assigned, so the loop's first turn can never happen;
+    # the decline is silent because a posted refusal would itself be the
+    # next turn.
+    identity = own_identity()
+    # identity is None when the token has no user account behind it — the
+    # default `${{ github.token }}` is an App installation token, whose own
+    # comments are Bot-typed, so the User check above has already refused
+    # the only account those replies could come from and the loop is
+    # impossible without this comparison.
+    #
+    # GitHub logins are case-insensitive, and the comment event and /user
+    # can spell one account with different letter cases; the comparison
+    # folds both sides the way assignment_timeline's spellings map does.
+    if identity is not None and actor.casefold() == identity.casefold():
+        print("commenter is the token's own account: " + identity)
+        return 0
+
     if not re.fullmatch(r"[0-9]+", issue):
         raise ValueError("invalid issue: expected digits")
     if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repo)
@@ -127,9 +180,10 @@ def main():
     # The number must share the command's line: a body with a newline is
     # prose, not a command followed by a number on the next line.
     match = re.fullmatch(r"(/claim|/unclaim|/release)(?:[ \t\v\f]+#?([0-9]+))?", command)
-    # Replies wait for the Bot refusal above: the replies quote the command
-    # words, and only that refusal stops a caller that triggers on its own
-    # comments from answering itself forever.
+    # The replies below quote the command words, so a caller that triggers on
+    # its own comments would answer its reply with itself; the token-identity
+    # refusal above is what stops that, since a reply can never come from a
+    # different account than the token posts as.
     if match is None:
         first = command.split("\n", 1)[0]
         print("not a command: " + first)
