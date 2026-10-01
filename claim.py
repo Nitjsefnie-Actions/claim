@@ -41,14 +41,16 @@ def event_actor(event):
     return actor["login"]
 
 
-def assignment_timeline(pages):
-    """Map every assigned login to the event that assigned it, and to its last one.
+def assignment_timeline(pages, relevant):
+    """Map each of `relevant` that is assigned to the event that assigned it.
 
-    The second map is keyed the same way but survives an unassign, so a run a
-    peer's DELETE removed can still recognise the write that was its own.
+    Only events naming one of `relevant` are this function's business. The
+    issue's history is unbounded — a deleted account's assigned event, or one
+    from a claim cycle that ended before this one — and a field this function
+    cannot read must leave a login out of the map rather than raise, so the
+    caller bails with an explanation instead of the whole issue going dark.
     """
     current = {}
-    last_assigned = {}
     if not isinstance(pages, list):
         raise ValueError("issue events must be an array of pages")
     events = []
@@ -56,25 +58,29 @@ def assignment_timeline(pages):
         if not isinstance(page, list):
             raise ValueError("issue events must be an array of pages")
         for event in page:
-            if not isinstance(event, dict) or not isinstance(event.get("id"), int):
-                raise ValueError("issue event must contain an integer id")
+            if not isinstance(event, dict):
+                raise ValueError("issue events must contain event objects")
             # Every other event type is none of this action's business.
             if event.get("event") not in ("assigned", "unassigned"):
                 continue
             assignee = event.get("assignee")
-            if not isinstance(assignee, dict) or not isinstance(assignee.get("login"), str):
-                raise ValueError("issue event assignee must be an object with a string login")
-            events.append((event["id"], event["event"], assignee["login"], event))
+            if not isinstance(assignee, dict) or assignee.get("login") not in relevant:
+                continue
+            identifier = event.get("id")
+            if isinstance(identifier, bool) or not isinstance(identifier, int):
+                continue
+            if event_actor(event) is None:
+                continue
+            events.append((identifier, event["event"], assignee["login"], event))
     # An assign-and-unassign cycle ends at the LAST event recorded for that
     # login, not the first, which is why the list is replayed into a map
     # instead of being read for the earliest assignment of each login.
     for _, kind, login, event in sorted(events, key=lambda entry: entry[0]):
         if kind == "assigned":
             current[login] = event
-            last_assigned[login] = event
         else:
             current.pop(login, None)
-    return current, last_assigned
+    return current
 
 
 def mention(logins):
@@ -170,8 +176,8 @@ def main():
     # GitHub declining the assignee, and the run would blame the commenter's
     # account for a race it lost. The POST is reached only when the first
     # snapshot held nobody, so every assignee confirmed below arrived after
-    # that read: the removals below reach only recent assignees, and only the
-    # ones the issue's events attribute to this action's own writes.
+    # that read: the removals below reach only recent assignees, and only
+    # when every one of them is a write the action made itself.
     assigned = assignee_logins(json.loads(
         gh("-X", "POST", f"{endpoint}/assignees", "-f", f"assignees[]={actor}")))
     if actor not in assigned:
@@ -193,53 +199,49 @@ def main():
     # The order comes from the issue's events, not from the assignee list,
     # because the list carries no order: {alice, bob} read by two runs that
     # both POSTed, and {bob, alice} read by a run that finished second, are
-    # the same list, and any rule over the list alone breaks one of them. The
-    # earliest assignment event is the one nothing removes, so the first
-    # claimant is permanent; every later claim is removed by a run that read it
-    # beside an earlier one, or by its own run, and a run that never reaches
-    # its re-read is covered by the next one that does. An assignment this
-    # action cannot attribute to its own writes is never removed at all, which
-    # is what keeps a maintainer's manual assignment safe.
-    current, last_assigned = assignment_timeline(json.loads(
-        gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")))
-    # Read off this run's own assignment event, which an unassign has not
-    # erased: a run a peer removed still has to recognise its own write.
-    token = event_actor(current.get(actor) or last_assigned.get(actor))
-    if token is None or any(login not in current for login in confirmed):
-        # The order is unreadable — an event not yet visible, a page the read
-        # did not follow, or a login assigned before the window. Changing
-        # nothing is the only answer that cannot destroy a stranger's write.
-        say(f"@{actor} this issue is assigned to more than one person. This "
-            "run could not determine who was assigned first, so no assignment "
-            "was changed.")
+    # the same list, and any rule over the list alone breaks one of them.
+    # Every quantity below is a function of the whole confirmed set, so two
+    # runs reading the same state settle it the same way. Nothing here may be
+    # derived from which login is running: a partition that depends on that is
+    # not one the other run shares, and the two runs then take opposite
+    # branches of the same state. If every confirmed assignee's current
+    # assignment was made by the same identity they were all made by one
+    # caller — this action — and the earliest of them wins; if not, somebody
+    # else's write is among them and the action cannot say which, so it does
+    # nothing. The earliest assignment is the one no run removes, so the first
+    # claimant is permanent; every later one is removed by a run that read it
+    # beside an earlier claim, or by its own run, and a run that never reaches
+    # its own re-read is removed by whichever run does reach one while the
+    # contest is still live, and by nothing else.
+    current = assignment_timeline(json.loads(
+        gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")),
+        confirmed)
+    actors = {event_actor(current[login]) for login in confirmed
+              if login in current}
+    if any(login not in current for login in confirmed) or len(actors) != 1:
+        # A login with no readable current event, or two identities among the
+        # assignments: the order cannot be established, and changing nothing is
+        # the only answer that cannot destroy a write the action did not make.
+        others = [login for login in confirmed if login != actor]
+        say(f"@{actor} this issue is assigned to {mention(others)}. This run "
+            "could not attribute every assignment on it to one commenter, so "
+            "no assignment was changed. Comment `/unclaim` (or `/release`) if "
+            "you are giving up yours.")
         return 1
-    claims = [login for login in confirmed if event_actor(current[login]) == token]
-    if len(claims) < len(confirmed):
-        # Somebody assigned this issue by hand inside the window. That person
-        # holds it: the action yields to a write it cannot attribute to
-        # itself rather than delete it, and does not call it a claim, because
-        # only the events say who did it and this run cannot read that.
-        holders = [login for login in confirmed
-                   if login not in claims and login != actor]
-        if actor in confirmed:
-            gh("-X", "DELETE", f"{endpoint}/assignees",
-               "-f", f"assignees[]={actor}", "--silent")
-        say(f"@{actor} this issue is assigned to {mention(holders)}, so "
-            "nothing was assigned to you.")
-        return 0
-    winner = min(claims, key=lambda login: current[login]["id"])
-    # Every claim later than the winner's, this run's own login included: a
-    # run that writes last may be the second of a pair it read, and a pair it
-    # read is a pair it must not leave behind.
-    removed = [login for login in claims
-               if current[login]["id"] > current[winner]["id"]]
+    # (id, login) is a total order, so two events sharing an id settle the same
+    # way in every run rather than leaving a pair behind.
+    def order(login):
+        return (current[login]["id"], login)
+
+    winner = min(confirmed, key=order)
+    removed = sorted((login for login in confirmed if login != winner), key=order)
     for login in removed:
         # DELETE names exactly one login so every other assignee stays.
         gh("-X", "DELETE", f"{endpoint}/assignees",
            "-f", f"assignees[]={login}", "--silent")
     if winner != actor:
-        say(f"@{actor} @{winner} claimed this issue at the same time and "
-            "holds it, so your claim was released.")
+        say(f"You and @{winner} claimed this issue at the same time, and "
+            f"@{winner} holds it, so your claim was released.")
         return 0
     if removed:
         were = "were" if len(removed) > 1 else "was"
