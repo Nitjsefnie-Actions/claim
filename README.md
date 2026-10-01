@@ -70,6 +70,7 @@ placement this block replaced as `excessive-permissions`. The action never
 reads the repository tree, so the calling workflow needs neither
 `contents: read` nor a checkout step. The default `github.token` is sufficient.
 
+<<<<<<< HEAD
 The per-issue `concurrency:` group serializes competing claims so they do not
 both act on the same unassigned snapshot. `cancel-in-progress: false` is
 deliberate: when two people claim at once, both must get an answer instead of
@@ -81,6 +82,11 @@ in first-in, first-out order — GitHub's documented cap — and cancels any
 further run once the queue is full. The ordering follows when each run
 started waiting, and GitHub notes it is not guaranteed. It cannot be
 combined with `cancel-in-progress: true`, which this block never sets.
+
+That group is per repository and per workflow, though, so a caller without
+that exact group — or with it under another name — gets no protection from it.
+The action therefore settles a tie itself rather than depending on the group.
+>>>>>>> 0d9bffc (docs(readme): say what a tie settles, and what it cannot)
 
 The job's `if:` is only a prefilter to save starting a runner. The action
 re-checks all three conditions itself: the target is an issue rather than a
@@ -118,12 +124,23 @@ value for this input.
   on the issue, and the run fails.
 - Claim an issue somebody already holds or replace its assignees. If the
   commenter already holds it, the action says so without changing assignments.
+  Two assignments landing in the same instant are the one case that removes an
+  assignment the action did not make: the issue is left with the assignee whose
+  login is smallest by Unicode code point — not alphabetically, so `Zoe` outranks
+  `alice` — and the other commenter is told it lost and who holds the issue.
+  GitHub's assignee list records no author, so the action cannot tell a rival
+  `/claim` from a maintainer's own assignment made inside that same window, and
+  treats both alike.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
-posts its answer as a comment on the issue. Like every decline, a declined
-assignment also fails the run. Check that your login actually appears in the
-issue's assignees.
+posts its answer as a comment on the issue. That same re-read settles a tie: if
+another `/claim` was assigned in the same moment, the issue is left with one
+assignee and every run that reaches its re-read says which of the two holds it.
+A run cancelled before its re-read settles nothing, so keep
+`cancel-in-progress: false` if you want a race settled. Like every
+decline, a declined assignment also fails the run. Check that your login
+actually appears in the issue's assignees.
 
 ## Contributing and security
 
