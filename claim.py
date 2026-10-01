@@ -68,7 +68,10 @@ def main():
             "or `/release` on its own, optionally followed by the issue "
             f"number, for example `/claim {issue}` or `/claim #{issue}`.")
         return 1
-    if match.group(2) is not None and int(match.group(2)) != int(issue):
+    # Compare the digit strings, never through int(): a comment can carry
+    # more digits than int() will convert, and the mismatch reply below is
+    # the answer such a comment must still get.
+    if match.group(2) is not None and match.group(2).lstrip("0") != issue.lstrip("0"):
         say(f"`{command}` names issue {match.group(2)}, but this comment is on "
             f"issue {issue}. Comment `{match.group(1)}` (or "
             f"`{match.group(1)} {issue}`) to act on this issue.")
