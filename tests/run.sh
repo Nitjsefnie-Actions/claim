@@ -153,69 +153,149 @@ claim_accepted() {
   run_claim 0
 }
 
-# Two claims that both read an empty assignee list: the confirming re-read
-# finds the pair, and this run keeps only the smallest login by code point.
-contested_claim_winner() {
+# Two claims that both read an empty assignee list. The winner is the one the
+# issue's events record as assigned FIRST, which here is yuki-dev even though
+# alice sorts before it: the assignee list carries no order, so a sort over it
+# would have picked the wrong login. The "labeled" event pins that an event of
+# any other type is ignored even though it names no assignee.
+contested_winner_by_event_order() {
+  body=/claim
+  ACTOR=yuki-dev
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"yuki-dev"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}},{"id":950,"event":"labeled","actor":{"login":"claim-bot"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @yuki-dev. @alice was assigned at the same time, so that assignment was removed.' --silent
+  run_claim 0
+}
+
+# The straggler ordering: alice's run finishes second and finds zoe-helper
+# already assigned, and alice sorts first of the two. It removes its OWN login
+# and says who holds the issue — the interleaving no rule over the assignee list
+# alone can express.
+contested_loser_by_event_order() {
+  body=/claim
+  ACTOR=alice
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=alice'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zoe-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@alice @zoe-helper claimed this issue at the same time and holds it, so your claim was released.' --silent
+  run_claim 0
+}
+
+# zara-helper was assigned, unassigned and reassigned inside the window, and its
+# FIRST event has the smallest id of all. The event that decides is the current
+# one, so yuki-dev wins; reading the earliest assignment per login would have
+# made zara-helper the winner and deleted yuki-dev instead.
+contested_assign_cycle_decides_current_event() {
+  body=/claim
+  ACTOR=yuki-dev
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"yuki-dev"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
+  expect_gh '{"state":"open","assignees":[{"login":"yuki-dev"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":100,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":200,"event":"unassigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":250,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"yuki-dev"}},{"id":300,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @yuki-dev. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
+  run_claim 0
+}
+
+# A maintainer assigned this issue by hand inside the window. The events name
+# them as the actor, so their write is not this action's and is never removed:
+# the run releases its OWN login and calls the other party a holder, not a
+# claimer. This is the case that would otherwise destroy a human's assignment.
+contested_manual_assignment_present() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"aaron-maintainer"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"aaron-maintainer"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"aaron-maintainer"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @aaron-maintainer, so nothing was assigned to you.' --silent
+  run_claim 0
+}
+
+# The events page does not cover one of the confirmed logins — an event not yet
+# visible, or a page the read did not follow. Nothing is changed, the run says
+# so, and it fails: guessing an order here could remove a stranger's write.
+cannot_attribute_missing_event() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
-  run_claim 0
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to more than one person. This run could not determine who was assigned first, so no assignment was changed.' --silent
+  run_claim 1
 }
 
-# The same race seen by the run that lost it, while it is still assigned: it
-# removes its OWN login, because every run performs the removals, and never
-# claims to be assigned.
-contested_claim_loser() {
+# No event for this run's own login at all, so the action cannot tell which
+# identity posted it and cannot attribute anything: nothing changes, exit 1.
+cannot_attribute_token_unknown() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice were assigned at the same time, and @alice holds it, so nothing was assigned to you.' --silent
-  run_claim 0
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to more than one person. This run could not determine who was assigned first, so no assignment was changed.' --silent
+  run_claim 1
+}
+
+# zara-helper's assignment was undone after the confirming read. Its unassigned
+# event must take it out of the current map, so the run cannot crown the
+# earliest id it saw and delete octo-claimant on the strength of an assignment
+# that no longer exists.
+unassigned_event_drops_from_current() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":800,"event":"unassigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to more than one person. This run could not determine who was assigned first, so no assignment was changed.' --silent
+  run_claim 1
 }
 
 # The other ordering of that race, and the reason the POST's own response is
 # the decline discriminator: this run's POST was accepted, and a peer removed
 # it before the re-read. It must be told it lost, and must write NOTHING — it
-# holds nothing and has no business deleting somebody else's assignment. Pinning
-# the absence of the DELETE is what fails if the decline test goes back to the
-# confirming read, which would blame this commenter's account instead.
+# holds nothing and has no business deleting somebody else's assignment. Its own
+# unassigned event is why the token still has to be readable from the timeline.
 contested_claim_loser_removed_before_read() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice were assigned at the same time, and @alice holds it, so nothing was assigned to you.' --silent
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":850,"event":"unassigned","actor":{"login":"alice"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant @alice claimed this issue at the same time and holds it, so your claim was released.' --silent
   run_claim 0
 }
 
-# Three claimants at once: the loop must remove EVERY login but the winner, not
-# only the first one it sees.
+# Three claimants at once: every claim later than the winner's is removed, not
+# only the first one the list happens to name.
 contested_claim_winner_of_three() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"sana-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=sana-helper' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @sana-helper, @zara-helper were assigned at the same time, so those assignments were removed.' --silent
   run_claim 0
 }
 
-# The loser among three: it removes its own login, and leaves the permanent
-# minimum alone, and never names a cause for what it lost.
+# The loser among three: it removes its own login and the claim after it, and
+# leaves the earliest event alone.
 contested_claim_loser_among_three() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"sana-helper"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice were assigned at the same time, and @alice holds it, so nothing was assigned to you.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant @sana-helper claimed this issue at the same time and holds it, so your claim was released.' --silent
   run_claim 0
 }
 
@@ -224,12 +304,48 @@ contested_claim_loser_among_three() {
 # does not have.
 contested_removal_forbidden() {
   body=/claim
+  ACTOR=yuki-dev
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"yuki-dev"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
+    api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  run_claim 1
+}
+
+# Every assignment the run can see is gone: its own was removed after the POST
+# and no rival holds the issue either. There is nobody to name and nothing to
+# settle, which must not fall through to picking a winner from an empty list.
+no_assignees_left_after_peer_removals() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant nothing is assigned to this issue any more.' --silent
+  run_claim 0
+}
+
+# An events page the script cannot read aborts it, rather than settling an order
+# it guessed at.
+malformed_events() {
+  body=/claim
+  expected_error='issue event must contain an integer id'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
-    api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '[[{"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  run_claim 1
+}
+
+malformed_events_pages() {
+  body=/claim
+  expected_error='issue events must be an array of pages'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open"}' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   run_claim 1
 }
 
@@ -728,7 +844,10 @@ PY
 
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
-  contested_claim_winner contested_claim_loser
+  contested_winner_by_event_order contested_loser_by_event_order
+  contested_assign_cycle_decides_current_event contested_manual_assignment_present
+  cannot_attribute_missing_event cannot_attribute_token_unknown
+  unassigned_event_drops_from_current
   contested_claim_loser_removed_before_read
   contested_claim_winner_of_three contested_claim_loser_among_three
   contested_removal_forbidden
@@ -741,7 +860,8 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract
   empty_actor_type multiline_actor_type missing_state null_state nonstring_state
   unknown_state malformed_confirm malformed_post_response
-  post_response_without_assignees
+  post_response_without_assignees malformed_events malformed_events_pages
+  no_assignees_left_after_peer_removals
   nbsp_noncommand em_space_noncommand ascii_control_trim
   unit_separator_noncommand read_transport_status
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
