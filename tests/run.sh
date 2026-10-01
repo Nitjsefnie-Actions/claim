@@ -607,6 +607,43 @@ claim_number_quoted_in_full() {
   return "$result"
 }
 
+# The edge of the ceiling, and the property it stands for rather than a value
+# of anything: measured on the unbounded reply at the base commit, and a
+# different number for every command word because the reply quotes the word
+# twice. 32,712 digits is the most `/claim` could carry and still be posted,
+# at 65,535 characters; 32,713 gives 65,537 and was refused. `/release` is two
+# characters longer, so it crosses two digits earlier: 32,709 fits at 65,535
+# and 32,710 does not. All four have to be answered, and the two that fit have
+# to be answered whole — a ceiling set above that point re-opens the defect
+# these numbers came from, and these two samples catch it on the length rather
+# than incidentally on the reply's text.
+claim_number_ceiling_edge() {
+  local carried result=0
+  carried=$(digits_of 32712)
+  body="/claim #${carried}"
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
+    "body=\`/claim #${carried}\` names issue ${carried}, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
+    --silent
+  run_claim 1 || result=$?
+  carried=$(digits_of 32713)
+  body="/claim #${carried}"
+  expect_over_length_reply
+  run_claim 1 || result=$?
+  carried=$(digits_of 32709)
+  body="/release #${carried}"
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
+    "body=\`/release #${carried}\` names issue ${carried}, but this comment is on issue 7. Comment \`/release\` (or \`/release 7\`) to act on this issue." \
+    --silent
+  run_claim 1 || result=$?
+  carried=$(digits_of 32710)
+  body="/release #${carried}"
+  expect_over_length_reply
+  run_claim 1 || result=$?
+  return "$result"
+}
+
 # The reply's length must not depend on the carried number's, so it is read
 # back off the calls the run actually made rather than off what this case
 # expected: two sizes an order of magnitude apart, one shared length, and
@@ -1338,7 +1375,7 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   contested_removal_forbidden
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
   claim_number_mismatch claim_number_over_long claim_number_quoted_in_full
-  claim_number_reply_length_bounded
+  claim_number_reply_length_bounded claim_number_ceiling_edge
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached claim_rejected
   unclaim_not_assigned unclaim_one_of_two release_one_of_two
