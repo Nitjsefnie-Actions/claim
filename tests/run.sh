@@ -548,6 +548,20 @@ digits_of() {
   printf '%s' "${digits//' '/1}"
 }
 
+# N characters of filler, for a comment body of a length the stub has to judge.
+chars_of() {
+  local count=$1 text
+  printf -v text '%*s' "$count" ''
+  printf '%s' "${text//' '/x}"
+}
+
+# The JSON `gh api --input -` reads a comment body from, built the way
+# claim.py builds it rather than by hand, so a case that drives the stub
+# directly sends the transport claim.py sends.
+comment_payload() {
+  python3 -c 'import json, sys; print(json.dumps({"body": sys.stdin.read()}))'
+}
+
 # The reply owed a `/claim` whose N-digit number is too long to be quoted,
 # commented on issue 7: one comment, one refusal, the command to type instead.
 expect_number_reply() {
@@ -1131,6 +1145,51 @@ assert set(specs) == expected_inputs, "inputs must match the environment binding
 PY
 }
 
+# The tripwire for the tripwire. The stub's refusal is what lets a case tell
+# an answered command from an unanswered one, and its stdin handling is what
+# lets a case see the comment body at all, so both doors need a case of their
+# own: delete either and every other case goes quietly blind rather than red.
+stub_models_the_body_on_stdin() {
+  local at_limit over_limit outer=$GH_CASE status=0 result=0
+  at_limit=$(chars_of 65536)
+  over_limit=$(chars_of 65537)
+  mkdir "$outer/direct"
+  GH_CASE="$outer/direct"
+  # 65,536 characters is the last legal comment, so the boundary is a body the
+  # stub must post and read; only the character past it is one it must refuse.
+  : > "$GH_CASE/response.1"
+  # The writer's stderr is dropped: a stub that does not read stdin breaks
+  # the pipe, and the case below says so in words worth reading.
+  printf '%s' "$at_limit" | comment_payload 2> /dev/null \
+    | gh api repos/owner/project/issues/7/comments --input - --silent \
+      > /dev/null || status=$?
+  if (( status != 0 )); then
+    printf '  a body of exactly 65536 characters: the stub must post it, got exit %s\n' \
+      "$status"
+    result=1
+  fi
+  if ! grep -Fq "\"body=$at_limit\"" "$GH_CASE/calls.jsonl"; then
+    printf '  the stub did not read the 65536-character body off stdin\n'
+    result=1
+  fi
+  status=0
+  printf '%s' "$over_limit" | comment_payload 2> /dev/null \
+    | gh api repos/owner/project/issues/7/comments --input - --silent \
+      > /dev/null 2> "$GH_CASE/stderr" || status=$?
+  if (( status != 92 )); then
+    printf '  a body of 65537 characters: the stub must refuse with 92, got exit %s\n' \
+      "$status"
+    result=1
+  fi
+  if ! grep -Fq 'refused a comment body of 65537 characters' "$GH_CASE/stderr"; then
+    printf '  the refusal did not name the body it refused:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  GH_CASE=$outer
+  return "$result"
+}
+
 pr_gate_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -1247,12 +1306,18 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   closed_issue malformed_snapshot missing_assignees pull_request bot_actor
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract
-  empty_actor_type multiline_actor_type token_commenter_declined
+  # The stub itself: what it records, and what it refuses.
+  stub_models_the_body_on_stdin stub_counts_characters_not_bytes
+  # Who is commenting: the token's own account, and the identity lookup.
+  token_commenter_declined
   token_commenter_declined_case_insensitive distinct_commenter_proceeds
   malformed_identity_snapshot identity_not_an_object
   identity_answer_missing_proceeds identity_answer_403_proceeds
-  bot_commenter_no_identity_call contested_hand_assignment_bails
+  bot_commenter_no_identity_call
+  # A hand assignment, which this action did not make and must not settle.
+  contested_hand_assignment_bails
   contested_hand_assignment_bails_integration contested_integration_still_settles
+  empty_actor_type multiline_actor_type
   missing_state null_state nonstring_state
   unknown_state malformed_confirm malformed_post_response
   post_response_without_assignees malformed_events_pages malformed_events_page
