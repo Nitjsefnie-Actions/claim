@@ -51,6 +51,14 @@ def assignment_timeline(pages, relevant):
     caller bails with an explanation instead of the whole issue going dark.
     """
     current = {}
+    # GitHub treats logins case-insensitively, so this filter has to as well: an
+    # unassigned event spelling an account differently from the issue payload is
+    # the same signal, and skipping it would leave a stale assigned behind to
+    # win on a stale id and delete a live claim. Keying the map by the
+    # spelling the ISSUE payload used keeps every key of `current` a key of
+    # `confirmed` by construction, so the lookups the caller makes and the
+    # `assignees[]=` DELETE it builds all name the spelling GitHub returned.
+    spellings = {login.casefold(): login for login in relevant}
     if not isinstance(pages, list):
         raise ValueError("issue events must be an array of pages")
     events = []
@@ -64,14 +72,17 @@ def assignment_timeline(pages, relevant):
             if event.get("event") not in ("assigned", "unassigned"):
                 continue
             assignee = event.get("assignee")
-            if not isinstance(assignee, dict) or assignee.get("login") not in relevant:
+            if not isinstance(assignee, dict) or not isinstance(assignee.get("login"), str):
+                continue
+            login = spellings.get(assignee["login"].casefold())
+            if login is None:
                 continue
             identifier = event.get("id")
             if isinstance(identifier, bool) or not isinstance(identifier, int):
                 continue
             if event_actor(event) is None:
                 continue
-            events.append((identifier, event["event"], assignee["login"], event))
+            events.append((identifier, event["event"], login, event))
     # An assign-and-unassign cycle ends at the LAST event recorded for that
     # login, not the first, which is why the list is replayed into a map
     # instead of being read for the earliest assignment of each login.
@@ -216,6 +227,10 @@ def main():
     current = assignment_timeline(json.loads(
         gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")),
         confirmed)
+    # The comprehension's guard and the re-check below are one predicate, not
+    # two: `len(actors) != 1` also catches the empty set, so if the guard stops
+    # skipping logins it does not have, a missing login stops bailing and the
+    # settle runs on an event that was never established.
     actors = {event_actor(current[login]) for login in confirmed
               if login in current}
     if any(login not in current for login in confirmed) or len(actors) != 1:
@@ -223,10 +238,16 @@ def main():
         # assignments: the order cannot be established, and changing nothing is
         # the only answer that cannot destroy a write the action did not make.
         others = [login for login in confirmed if login != actor]
+        if actor in confirmed:
+            advice = ("Comment `/unclaim` (or `/release`) if you are giving up "
+                      "yours.")
+        else:
+            # `/unclaim` would answer that there is nothing to give up, which
+            # is the one thing this commenter does not need to be told twice.
+            advice = "You are not assigned to this issue."
         say(f"@{actor} this issue is assigned to {mention(others)}. This run "
-            "could not attribute every assignment on it to one commenter, so "
-            "no assignment was changed. Comment `/unclaim` (or `/release`) if "
-            "you are giving up yours.")
+            f"could not attribute every assignment on it to one identity, so "
+            f"no assignment was changed. {advice}")
         return 1
     # (id, login) is a total order, so two events sharing an id settle the same
     # way in every run rather than leaving a pair behind.
@@ -243,14 +264,16 @@ def main():
         say(f"You and @{winner} claimed this issue at the same time, and "
             f"@{winner} holds it, so your claim was released.")
         return 0
+    # `removed` cannot be empty here: it is everyone but the winner out of a
+    # confirmed list of two or more, since confirmed == [actor] returned above.
+    # The branch is kept so that a future narrowing which empties it posts no
+    # winner's claim rather than one the issue does not have.
     if removed:
         were = "were" if len(removed) > 1 else "was"
         that = ("those assignments were" if len(removed) > 1
                 else "that assignment was")
         say(f"Assigned to @{actor}. {mention(removed)} {were} assigned at the "
             f"same time, so {that} removed.")
-        return 0
-    say(f"Assigned to @{actor}.")
     return 0
 
 
