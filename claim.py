@@ -15,10 +15,11 @@ import sys
 MAX_NAMED_DIGITS = 32
 
 
-def gh(*args):
+def gh(*args, stdin=None):
     """Leave authentication, HTTP errors, and rate limits to the CLI."""
     return subprocess.run(
-        ["gh", "api", *args], check=True, stdout=subprocess.PIPE, text=True
+        ["gh", "api", *args], check=True, input=stdin,
+        stdout=subprocess.PIPE, text=True
     ).stdout
 
 
@@ -192,7 +193,14 @@ def main():
     endpoint = f"repos/{repo}/issues/{issue}"
 
     def say(body):
-        gh(f"{endpoint}/comments", "-f", f"body={body}", "--silent")
+        # The body travels on stdin: a maximum-size comment does not fit in an
+        # argument list, and an argv that cannot hold it takes the whole run
+        # down with E2BIG before any API call is made. GitHub's limit on the
+        # length of a comment is not what this avoids — the limit is on the
+        # body, wherever it arrives from — but moving it here is what stops
+        # that class of failure from being reachable at all.
+        gh(f"{endpoint}/comments", "--input", "-", "--silent",
+           stdin=json.dumps({"body": body}))
 
     # The number must share the command's line: a body with a newline is
     # prose, not a command followed by a number on the next line.
