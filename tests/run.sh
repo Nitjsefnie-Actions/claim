@@ -25,7 +25,15 @@ reset_case() {
 expect_gh() {
   local response=$1 ordinal
   shift
-  python3 -c 'import json, sys; print(json.dumps(sys.argv[1:], separators=(",", ":")))' "$@" >> "$GH_CASE/expected.jsonl"
+  # The expectation goes to the recorder NUL-separated on stdin rather than as
+  # arguments, for the same reason the stub does: a case has to be able to
+  # state a call the size of the largest comment GitHub accepts, and that
+  # string does not fit in one argument.
+  printf '%s\0' "$@" | python3 -c '
+import json, sys
+args = sys.stdin.buffer.read().decode("utf-8").split("\0")[:-1]
+sys.stdout.buffer.write((json.dumps(args, separators=(",", ":")) + "\n").encode("utf-8"))
+' >> "$GH_CASE/expected.jsonl"
   ordinal=$(wc -l < "$GH_CASE/expected.jsonl")
   printf '%s' "$response" > "$GH_CASE/response.$((ordinal))"
 }
