@@ -124,23 +124,25 @@ value for this input.
   on the issue, and the run fails.
 - Claim an issue somebody already holds or replace its assignees. If the
   commenter already holds it, the action says so without changing assignments.
-  Two assignments landing in the same instant are the one case that removes an
-  assignment the action did not make: the issue is left with the assignee whose
-  login is smallest by Unicode code point — not alphabetically, so `Zoe` outranks
-  `alice` — and the other commenter is told it lost and who holds the issue.
-  GitHub's assignee list records no author, so the action cannot tell a rival
-  `/claim` from a maintainer's own assignment made inside that same window, and
-  treats both alike.
+  Two claims landing in the same instant are the one case that removes an
+  assignment: the issue is left with whoever the issue's assignment events
+  record as assigned **first** — the order comes from those events, not from
+  the commenter list and not from any alphabetical rule — and the other
+  commenter is told it lost and who holds the issue. Only assignments the
+  events attribute to this action's own writes are ever removed, so an
+  assignment somebody else made in the same window is left alone and is never
+  called a claim. When the action cannot read the order it changes nothing and
+  says so on the issue.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
 posts its answer as a comment on the issue. That same re-read settles a tie: if
 another `/claim` was assigned in the same moment, the issue is left with one
 assignee and every run that reaches its re-read says which of the two holds it.
-A run cancelled before its re-read settles nothing, so keep
-`cancel-in-progress: false` if you want a race settled. Like every
-decline, a declined assignment also fails the run. Check that your login
-actually appears in the issue's assignees.
+A write that lands after every other run's re-read leaves a pair that nothing
+settles, so keep `cancel-in-progress: false` in the concurrency group above.
+Like every decline, a declined assignment also fails the run. Check that your
+login actually appears in the issue's assignees.
 
 ## Contributing and security
 
