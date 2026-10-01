@@ -1,0 +1,24 @@
+# Hash-pinned requirements for the "Install zizmor" step in actionlint.yml,
+# which installs this file with --require-hashes. A version pin alone still
+# installs whatever artifact the index serves for that version; these sha256
+# hashes make the install the same bytes on every run.
+#
+# The hashes cover the wheels pip resolves on the ubuntu-latest runner
+# platform: x86_64 glibc, CPython 3.13. zizmor declares no runtime
+# dependencies, so PyYAML is the whole transitive closure.
+#
+# Bumping either package: regenerate the hashes rather than copying them
+# from a release page --
+#
+#   python3 -m pip download -d /tmp/req-dl zizmor==<new> PyYAML==<new>
+#   sha256sum /tmp/req-dl/*
+#
+# then rewrite the --hash lines from that output. Dependabot is deliberately
+# not configured for pip: it cannot maintain --hash entries. The workflow's
+# `.github/workflows/**` path filter re-runs this gate when the file
+# changes.
+
+zizmor==1.29.0 \
+    --hash=sha256:587b99c2e1b34575c6c8565c2bfde415ca8bc0310f5589f19bc948c8dea10a20
+PyYAML==6.0.3 \
+    --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6
