@@ -78,6 +78,26 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Check the README pin matches claim.yml
+        # Dependabot's github-actions ecosystem reads workflow files and action
+        # metadata, never markdown, so it updates .github/workflows/claim.yml
+        # alone and nothing moves README.md's pin. This step is the mechanism
+        # that keeps the two synchronized: a Dependabot bump of claim.yml goes
+        # red here until the README pin is moved to the same release SHA, so
+        # the drift this workflow exists to catch cannot ship silently either.
+        run: |
+          readme_pin=$(grep -m1 'uses: Nitjsefnie-Actions/claim@' README.md | sed 's/.*@//' | cut -d' ' -f1)
+          workflow_pin=$(grep -m1 'uses: Nitjsefnie-Actions/claim@' .github/workflows/claim.yml | sed 's/.*@//' | cut -d' ' -f1)
+          if [ -z "$readme_pin" ] || [ -z "$workflow_pin" ]; then
+            echo "Could not read a Nitjsefnie-Actions/claim pin from README.md and .github/workflows/claim.yml."
+            exit 1
+          fi
+          if [ "$readme_pin" != "$workflow_pin" ]; then
+            echo "README.md pins $readme_pin but .github/workflows/claim.yml pins $workflow_pin."
+            echo "Move the README pin to the same release SHA, with its # vX.Y.Z comment; Dependabot keeps claim.yml current."
+            exit 1
+          fi
+
       - name: Install actionlint
         # Downloaded and checksum-verified rather than piped from the
         # install script: `curl | bash` would make this job trust whatever
