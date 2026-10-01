@@ -36,8 +36,6 @@ name: claim
 on:
   issue_comment:
     types: [created]
-permissions:
-  issues: write
 concurrency:
   group: claim-${{ github.event.issue.number }}
   cancel-in-progress: false
@@ -53,6 +51,8 @@ jobs:
           || contains(github.event.comment.body, '/release'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      issues: write
     steps:
       - uses: Nitjsefnie-Actions/claim@10f882ee4dc5cd39b7d3cbcbf151902d6427b53f
 ```
@@ -61,8 +61,11 @@ jobs:
 an old comment does not trigger a claim. The job runs on Ubuntu with a
 five-minute timeout.
 
-The narrow `permissions:` block grants the token only `issues: write`, which
-is needed to read issues, change assignees, and post replies. The action never
+The job's `permissions:` block grants the token only `issues: write`, which
+is needed to read issues, change assignees, and post replies. Inside the
+single job is the narrowest placement for a one-job workflow, and the one
+least-privilege audits expect; the same scope at workflow level draws an
+`excessive-permissions` finding from them. The action never
 reads the repository tree, so the calling workflow needs neither
 `contents: read` nor a checkout step. The default `github.token` is sufficient.
 
