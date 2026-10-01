@@ -8,6 +8,13 @@ import subprocess
 import sys
 
 
+# No GitHub issue number is anywhere near this long, so a carried number past
+# it is named by its length instead of being quoted: the reply quotes the
+# comment's own body, and a body can carry more digits than a comment is
+# allowed to hold.
+MAX_NAMED_DIGITS = 32
+
+
 def gh(*args):
     """Leave authentication, HTTP errors, and rate limits to the CLI."""
     return subprocess.run(
@@ -208,9 +215,20 @@ def main():
     # more digits than int() will convert, and the mismatch reply below is
     # the answer such a comment must still get.
     if match.group(2) is not None and match.group(2).lstrip("0") != issue.lstrip("0"):
-        say(f"`{command}` names issue {match.group(2)}, but this comment is on "
-            f"issue {issue}. Comment `{match.group(1)}` (or "
-            f"`{match.group(1)} {issue}`) to act on this issue.")
+        # GitHub refuses a comment body over 65,536 characters, so quoting a
+        # carried number without a bound is a way to make this action answer
+        # nobody: the POST is refused and the run fails with the commenter's
+        # command unanswered. A number too long to be an issue number is
+        # named by its length, which bounds the reply without hiding from the
+        # commenter that the number they carried is not this issue's.
+        if len(match.group(2)) > MAX_NAMED_DIGITS:
+            named = (f"`{match.group(1)}` names a number "
+                     f"{len(match.group(2))} digits long")
+        else:
+            named = f"`{command}` names issue {match.group(2)}"
+        say(f"{named}, but this comment is on issue {issue}. Comment "
+            f"`{match.group(1)}` (or `{match.group(1)} {issue}`) to act on "
+            "this issue.")
         return 1
     command = match.group(1)
 
