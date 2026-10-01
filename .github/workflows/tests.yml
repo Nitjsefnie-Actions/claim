@@ -3,8 +3,8 @@ name: tests
 # Linux-only checks cannot establish macOS portability. Both platforms run
 # the same real-subprocess behavioral suite, including the bash API stub.
 #
-# No package install for the suite: bash and python3 are on both hosted images,
-# and tests/gh.sh supplies the API stub.
+# No package install anywhere in the file: bash, python3, and shellcheck are
+# preinstalled on the hosted images, and tests/gh.sh supplies the API stub.
 
 on:
   push:
@@ -36,10 +36,12 @@ jobs:
           # Nothing pushes; later steps must not inherit a stored token.
           persist-credentials: false
 
-      - name: Install ShellCheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes shellcheck
+      # ShellCheck ships with the image (0.9.0-1 on ubuntu-24.04, which
+      # ubuntu-latest currently maps to, per the runner-images docs:
+      # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md),
+      # so no install step: its apt mirror fetch hung intermittently until
+      # the job timeout, while a missing binary fails the step in seconds
+      # instead of hanging.
 
       - name: Check every shell file
         # Recurse so adding a nested test helper cannot silently escape lint.
