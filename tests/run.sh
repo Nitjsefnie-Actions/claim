@@ -160,6 +160,17 @@ not_a_command_over_long() {
 # template that grows or shrinks cannot quietly leave this case testing less
 # than it claims.
 #
+# The window a reply has to sit in is between GitHub's 65,536-character limit
+# and the kernel's 131,072-byte limit on one argument, and only a reply that is
+# longer in bytes than in characters can occupy it. `Not a command` reaches
+# that window because it can quote a body of the commenter's choosing. The
+# mismatch reply cannot: it is a command word, digits and fixed wording, all
+# ASCII, so its character count and its byte count are the same number and the
+# two limits arrive together. say()'s ceiling replaces it at 32,713 carried
+# digits, where it is 65,537 characters; it would need 65,481 digits, 131,073
+# characters, to reach the argument limit, and it can never be posted that
+# long.
+#
 # It goes red on an argv transport with the expectation sites updated to match,
 # which is why it and not claim_number_body_too_long_to_quote is the case that
 # proves the transport.
@@ -621,14 +632,21 @@ emoji_of() {
 }
 
 # The size of the body the LAST recorded call carried, read back off the calls
-# the run actually made. The unit is named because the two limits in play are
-# in different units: GitHub counts a comment in characters, the kernel counts
-# an argument in bytes, and 65,536 characters can be 262,144 bytes.
+# the run actually made. Nothing to measure is `unmeasured` rather than an
+# error: a run that recorded no call at all — it died before gh was executed —
+# has no last line to read, and the caller is owed the same word either way.
+# The unit is named because the two limits in play are in different units:
+# GitHub counts a comment in characters, the kernel counts an argument in
+# bytes, and 65,536 characters can be 262,144 bytes.
 recorded_body_size() {
   local file=$1 unit=${2-chars}
   python3 - "$file" "$unit" <<'PYREC'
 import json, sys
-args = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+lines = open(sys.argv[1]).read().splitlines()
+if not lines:
+    print("unmeasured")
+    raise SystemExit
+args = json.loads(lines[-1])
 body = next((a[len("body="):] for a in args if a.startswith("body=")), None)
 if body is None:
     print("unmeasured")
@@ -674,7 +692,7 @@ claim_number_over_long() {
 # answered.
 #
 # It no longer drives an argument list, and it does not prove the transport.
-# The ceiling answers this body in 247 characters, so what it proves now is
+# The ceiling answers this body in 243 characters, so what it proves now is
 # that a body far larger than any reply still gets an answer on the issue and a
 # failed run. not_a_command_bigger_than_an_argument is the case that pins the
 # transport.
@@ -1542,8 +1560,8 @@ PY
 # everything else predates it. The three long-body groups are the ones whose
 # size arithmetic is worth knowing before changing: a reply crosses GitHub's
 # 65,536-character limit at 32,713 carried digits, and an argument list dies at
-# 131,072 bytes, which 32,768 four-byte characters reach and 32,740 of them
-# clear with room for the reply's own 160 characters of framing.
+# 131,072 bytes, which exactly 32,768 four-byte characters reach; 32,740 of them
+# clear it with room for the reply's own 160 characters of framing.
 cases=(
   # The body's shape: prose, not a command.
   sentence multiline interior_cr metacharacters whitespace_only
