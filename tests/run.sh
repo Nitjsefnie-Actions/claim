@@ -713,6 +713,27 @@ else:
 PYREC
 }
 
+# Whether a recorded call carried THIS body, rebuilt here rather than handed
+# over as a pattern. The bodies a case asks this about are the size GitHub
+# accepts: 65,536 characters is a 65,543-byte fixed string, and BSD grep — the
+# `grep` a macOS runner resolves — runs out of memory matching one against the
+# line it is in, reporting a platform limit as a stub that read no body. So the
+# search is python3's, over a body it builds itself, and the comparison is an
+# element of a parsed argv: the recorded call has to carry exactly that body,
+# which is what grep was being asked for. `yes` or `no`; nothing to search is
+# `no`, because a call that recorded nothing carried no body.
+recorded_call_carries_body() {
+  local file=$1 count=$2 unit=${3-chars}
+  python3 - "$file" "$count" "$unit" <<'PYCARRIES'
+import json, sys
+file, count, unit = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+fill = {"digits": "1", "chars": "x", "emoji": "\U0001F600"}[unit] * count
+carried = f"body={fill}"
+found = any(carried in json.loads(line) for line in open(file))
+print("yes" if found else "no")
+PYCARRIES
+}
+
 # The JSON `gh api --input -` reads a comment body from, built the way
 # claim.py builds it rather than by hand, so a case that drives the stub
 # directly sends the transport claim.py sends.
@@ -1419,7 +1440,7 @@ stub_models_the_body_on_stdin() {
       "$status"
     result=1
   fi
-  if ! grep -Fq "\"body=$at_limit\"" "$GH_CASE/calls.jsonl"; then
+  if [[ $(recorded_call_carries_body "$GH_CASE/calls.jsonl" 65536) != yes ]]; then
     printf '  the stub did not read the 65536-character body off stdin\n'
     result=1
   fi
