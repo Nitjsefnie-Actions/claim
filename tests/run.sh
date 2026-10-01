@@ -182,7 +182,21 @@ contested_loser_by_event_order() {
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zoe-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@alice @zoe-helper claimed this issue at the same time and holds it, so your claim was released.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @zoe-helper claimed this issue at the same time, and @zoe-helper holds it, so your claim was released.' --silent
+  run_claim 0
+}
+
+# Two events sharing an id: the order is (id, login), so the loser is still
+# removed. Reading "everyone with a LARGER id" leaves the pair behind and the
+# run answers Assigned to @octo-claimant on an issue held by two.
+contested_equal_event_ids() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
 }
 
@@ -202,43 +216,49 @@ contested_assign_cycle_decides_current_event() {
   run_claim 0
 }
 
-# A maintainer assigned this issue by hand inside the window. The events name
-# them as the actor, so their write is not this action's and is never removed:
-# the run releases its OWN login and calls the other party a holder, not a
-# claimer. This is the case that would otherwise destroy a human's assignment.
-contested_manual_assignment_present() {
+# A third identity in the window: two of the assignments are this action's own
+# and one is a maintainer's. Nothing is deleted — not the rival claim, not this
+# run's own login — and the run says so. The earlier design settled this by
+# having every claimant delete itself, which emptied the issue and left each
+# commenter told the other held it.
+# Backticks here are Markdown in the expected comment, not shell substitutions.
+# shellcheck disable=SC2016
+contested_third_identity_bails() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"aaron-maintainer"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"aaron-maintainer"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"aaron-maintainer"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @aaron-maintainer, so nothing was assigned to you.' --silent
-  run_claim 0
+  expect_gh '{"state":"open","assignees":[{"login":"aaron-maintainer"},{"login":"alice"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"aaron-maintainer"},{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"aaron-maintainer"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @aaron-maintainer, @alice. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  run_claim 1
 }
 
 # The events page does not cover one of the confirmed logins — an event not yet
 # visible, or a page the read did not follow. Nothing is changed, the run says
 # so, and it fails: guessing an order here could remove a stranger's write.
+# shellcheck disable=SC2016
 cannot_attribute_missing_event() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to more than one person. This run could not determine who was assigned first, so no assignment was changed.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
 
-# No event for this run's own login at all, so the action cannot tell which
-# identity posted it and cannot attribute anything: nothing changes, exit 1.
-cannot_attribute_token_unknown() {
+# The other shape of the bail: this run's own login is not among the confirmed
+# assignees, and one of theirs has no readable event. Every confirmed assignee
+# is named, because none of them is this runer's to exclude.
+# shellcheck disable=SC2016
+bail_with_actor_absent() {
   body=/claim
+  ACTOR=octo-claimant
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to more than one person. This run could not determine who was assigned first, so no assignment was changed.' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @alice, @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
 
@@ -246,14 +266,45 @@ cannot_attribute_token_unknown() {
 # event must take it out of the current map, so the run cannot crown the
 # earliest id it saw and delete octo-claimant on the strength of an assignment
 # that no longer exists.
+# shellcheck disable=SC2016
 unassigned_event_drops_from_current() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":800,"event":"unassigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to more than one person. This run could not determine who was assigned first, so no assignment was changed.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
+}
+
+# An event the parser cannot read for a login that IS assigned here: the login
+# drops out of the current map and the run bails with an explanation. Raising
+# here would be an outage with nothing on the issue saying why.
+# shellcheck disable=SC2016
+unreadable_event_field_bails() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  run_claim 1
+}
+
+# The issue's history is unbounded, and none of it is this action's business
+# unless it names somebody assigned here: a deleted account's event with a null
+# assignee, and an old claim by somebody who is not on the issue now. Both are
+# skipped, and the settle proceeds — validating the whole history would let one
+# malformed event from years ago disable every future claim on this issue.
+contested_unrelated_events_ignored() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":50,"event":"assigned","actor":{"login":"ghost-account"},"assignee":null},{"id":60,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"someone-else"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
+  run_claim 0
 }
 
 # The other ordering of that race, and the reason the POST's own response is
@@ -267,7 +318,7 @@ contested_claim_loser_removed_before_read() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":850,"event":"unassigned","actor":{"login":"alice"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant @alice claimed this issue at the same time and holds it, so your claim was released.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice claimed this issue at the same time, and @alice holds it, so your claim was released.' --silent
   run_claim 0
 }
 
@@ -293,9 +344,9 @@ contested_claim_loser_among_three() {
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"sana-helper"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant @sana-helper claimed this issue at the same time and holds it, so your claim was released.' --silent
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @sana-helper claimed this issue at the same time, and @sana-helper holds it, so your claim was released.' --silent
   run_claim 0
 }
 
@@ -327,18 +378,9 @@ no_assignees_left_after_peer_removals() {
   run_claim 0
 }
 
-# An events page the script cannot read aborts it, rather than settling an order
-# it guessed at.
-malformed_events() {
-  body=/claim
-  expected_error='issue event must contain an integer id'
-  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  run_claim 1
-}
-
+# A response the script cannot read at all aborts it, rather than settling an
+# order it guessed at. Three shapes, three cases: the slurped payload is not an
+# array of pages, a page is not an array, and an entry is not an event object.
 malformed_events_pages() {
   body=/claim
   expected_error='issue events must be an array of pages'
@@ -346,6 +388,26 @@ malformed_events_pages() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open"}' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  run_claim 1
+}
+
+malformed_events_page() {
+  body=/claim
+  expected_error='issue events must be an array of pages'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  run_claim 1
+}
+
+malformed_events_object() {
+  body=/claim
+  expected_error='issue events must contain event objects'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '[["not an event"]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   run_claim 1
 }
 
@@ -845,9 +907,10 @@ PY
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   contested_winner_by_event_order contested_loser_by_event_order
-  contested_assign_cycle_decides_current_event contested_manual_assignment_present
-  cannot_attribute_missing_event cannot_attribute_token_unknown
-  unassigned_event_drops_from_current
+  contested_equal_event_ids contested_assign_cycle_decides_current_event
+  contested_third_identity_bails contested_unrelated_events_ignored
+  cannot_attribute_missing_event bail_with_actor_absent
+  unassigned_event_drops_from_current unreadable_event_field_bails
   contested_claim_loser_removed_before_read
   contested_claim_winner_of_three contested_claim_loser_among_three
   contested_removal_forbidden
@@ -860,7 +923,8 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract
   empty_actor_type multiline_actor_type missing_state null_state nonstring_state
   unknown_state malformed_confirm malformed_post_response
-  post_response_without_assignees malformed_events malformed_events_pages
+  post_response_without_assignees malformed_events_pages malformed_events_page
+  malformed_events_object
   no_assignees_left_after_peer_removals
   nbsp_noncommand em_space_noncommand ascii_control_trim
   unit_separator_noncommand read_transport_status
