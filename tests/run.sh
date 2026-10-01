@@ -147,10 +147,90 @@ claimed_by_three() {
 claim_accepted() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
+}
+
+# Two claims that both read an empty assignee list: the confirming re-read
+# finds the pair, and this run keeps only the smallest login by code point.
+contested_claim_winner() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
+  run_claim 0
+}
+
+# The same race seen by the run that lost it, while it is still assigned: it
+# removes its OWN login, because every run performs the removals, and never
+# claims to be assigned.
+contested_claim_loser() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice were assigned at the same time, and @alice holds it, so nothing was assigned to you.' --silent
+  run_claim 0
+}
+
+# The other ordering of that race, and the reason the POST's own response is
+# the decline discriminator: this run's POST was accepted, and a peer removed
+# it before the re-read. It must be told it lost, and must write NOTHING — it
+# holds nothing and has no business deleting somebody else's assignment. Pinning
+# the absence of the DELETE is what fails if the decline test goes back to the
+# confirming read, which would blame this commenter's account instead.
+contested_claim_loser_removed_before_read() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice were assigned at the same time, and @alice holds it, so nothing was assigned to you.' --silent
+  run_claim 0
+}
+
+# Three claimants at once: the loop must remove EVERY login but the winner, not
+# only the first one it sees.
+contested_claim_winner_of_three() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=sana-helper' --silent
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @sana-helper, @zara-helper were assigned at the same time, so those assignments were removed.' --silent
+  run_claim 0
+}
+
+# The loser among three: it removes its own login, and leaves the permanent
+# minimum alone, and never names a cause for what it lost.
+contested_claim_loser_among_three() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=You and @alice were assigned at the same time, and @alice holds it, so nothing was assigned to you.' --silent
+  run_claim 0
+}
+
+# A removal the token is not allowed to make fails the run before any comment,
+# exactly as the /unclaim DELETE does, rather than posting a success the issue
+# does not have.
+contested_removal_forbidden() {
+  body=/claim
+  expected_error='gh: Resource not accessible by integration (HTTP 403)'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
+  expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
+    api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
+  run_claim 1
 }
 
 claim_accepted_elsewhere() {
@@ -159,17 +239,18 @@ claim_accepted_elsewhere() {
   REPOSITORY=other-team/widget.tools
   ISSUE=42
   expect_gh '{"state":"open","assignees":[]}' api repos/other-team/widget.tools/issues/42
-  expect_gh '' api -X POST repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api -X POST repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper'
   expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
   expect_gh '' api repos/other-team/widget.tools/issues/42/comments -f 'body=Assigned to @river-helper.' --silent
   run_claim 0
 }
 
+# GitHub declines the assignee: the POST's own response omits the actor, which
+# is the only place a decline and a peer's removal can be told apart.
 claim_rejected() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '' api repos/owner/project/issues/7/comments -f 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
   run_claim 1
 }
@@ -177,7 +258,7 @@ claim_rejected() {
 claim_with_number() {
   body='/claim 7'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
@@ -186,7 +267,7 @@ claim_with_number() {
 claim_with_hash_number() {
   body='/claim #7'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
@@ -253,7 +334,7 @@ assignment_post_forbidden() {
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
-    api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+    api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   run_claim 1
 }
 
@@ -395,8 +476,26 @@ malformed_confirm() {
   body=/claim
   expected_error='parse error: Expecting property name enclosed in double quotes: line 1 column 17 (char 16)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open",' api repos/owner/project/issues/7
+  run_claim 1
+}
+
+# The POST's response is the decline discriminator, so an unreadable one must
+# abort the same way an unreadable re-read does: no comment, no verdict.
+malformed_post_response() {
+  body=/claim
+  expected_error='parse error: Expecting property name enclosed in double quotes: line 1 column 17 (char 16)'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open",' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  run_claim 1
+}
+
+post_response_without_assignees() {
+  body=/claim
+  expected_error='issue snapshot must contain an assignees array'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open"}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   run_claim 1
 }
 
@@ -465,7 +564,7 @@ invalid_assignee_snapshot() {
   else
     body=/claim
     expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-    expect_gh '' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
+    expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   fi
   expect_gh "{\"state\":\"open\",\"assignees\":$assignees}" api repos/owner/project/issues/7
   run_claim 1
@@ -629,6 +728,10 @@ PY
 
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
+  contested_claim_winner contested_claim_loser
+  contested_claim_loser_removed_before_read
+  contested_claim_winner_of_three contested_claim_loser_among_three
+  contested_removal_forbidden
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
   claim_number_mismatch claim_number_over_long claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached claim_rejected
@@ -637,7 +740,8 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   organization_actor mannequin_actor invalid_issue invalid_repository repository_query
   assignment_post_forbidden unclaim_delete_forbidden comment_forbidden action_contract pr_gate_contract
   empty_actor_type multiline_actor_type missing_state null_state nonstring_state
-  unknown_state malformed_confirm
+  unknown_state malformed_confirm malformed_post_response
+  post_response_without_assignees
   nbsp_noncommand em_space_noncommand ascii_control_trim
   unit_separator_noncommand read_transport_status
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
