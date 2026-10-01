@@ -13,10 +13,14 @@
 #   python3 -m pip download -d /tmp/req-dl zizmor==<new> PyYAML==<new>
 #   sha256sum /tmp/req-dl/*
 #
-# then rewrite the --hash lines from that output. Dependabot is deliberately
-# not configured for pip: it cannot maintain --hash entries. The workflow's
-# `.github/workflows/**` path filter re-runs this gate when the file
-# changes.
+# then rewrite the --hash lines from that output. If a bump introduces a
+# new transitive dependency, add a requirement line for it too:
+# hash-checking mode still resolves dependencies and refuses any it cannot
+# pin, so a dep the file omits fails the install loudly -- the sha256sum
+# output above lists every artifact in the closure. Dependabot is
+# deliberately not configured for pip: it cannot maintain --hash entries.
+# The workflow's `.github/workflows/**` path filter re-runs this gate when
+# the file changes.
 
 zizmor==1.29.0 \
     --hash=sha256:587b99c2e1b34575c6c8565c2bfde415ca8bc0310f5589f19bc948c8dea10a20
