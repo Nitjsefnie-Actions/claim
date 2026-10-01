@@ -36,6 +36,24 @@ jobs:
           # Nothing pushes; later steps must not inherit a stored token.
           persist-credentials: false
 
+      - name: Require this head to carry main's gate-defining commits
+        # `main requires green checks` sets strict_required_status_checks_policy
+        # to false, so a green head vouches only for the tree this run checked
+        # out: a commit that lands on main touching a file a required check
+        # reads is never applied to a pull request before it merges, and the
+        # merge then publishes a tree no green run ever saw. This is the only
+        # check that compares the two.
+        #
+        # In a job that is ALREADY a required status context, because a new job
+        # would be a new context — which means editing the ruleset — and a
+        # `paths:` filter on any workflow with a required job would stop this
+        # reporting at all and block every pull request instead (see the same
+        # trap documented on actionlint.yml's pull_request trigger).
+        #
+        # Before the lint step: work done against a base main has already moved
+        # on from is work whose verdict does not carry.
+        run: python3 tests/gate_base_freshness.py
+
       # ShellCheck ships with the image (0.9.0-1 on ubuntu-24.04, which
       # ubuntu-latest currently maps to, per the runner-images docs:
       # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md),
