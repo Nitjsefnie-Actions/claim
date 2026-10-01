@@ -15,16 +15,20 @@ def gh(*args):
     ).stdout
 
 
-def snapshot(endpoint):
-    data = json.loads(gh(endpoint))
-    if not isinstance(data, dict) or not isinstance(data.get("state"), str):
+def assignee_logins(issue):
+    """Return an issue payload's assignee logins, or refuse an unreadable one."""
+    if not isinstance(issue, dict) or not isinstance(issue.get("state"), str):
         raise ValueError("issue snapshot must contain a state string")
-    if not isinstance(data.get("assignees"), list):
+    if not isinstance(issue.get("assignees"), list):
         raise ValueError("issue snapshot must contain an assignees array")
-    for assignee in data["assignees"]:
+    for assignee in issue["assignees"]:
         if not isinstance(assignee, dict) or not isinstance(assignee.get("login"), str):
             raise ValueError("issue snapshot assignees must be objects with string logins")
-    return data
+    return [assignee["login"] for assignee in issue["assignees"]]
+
+
+def snapshot(endpoint):
+    return json.loads(gh(endpoint))
 
 
 def main():
@@ -79,6 +83,7 @@ def main():
     command = match.group(1)
 
     initial = snapshot(endpoint)
+    assignees = assignee_logins(initial)
     # A PR's assignees mean something else, and a closed issue cannot be worked.
     if initial.get("pull_request") is not None:
         say(f"This is a pull request, so `{command}` has no effect here.")
@@ -86,7 +91,6 @@ def main():
     if initial["state"] != "open":
         say(f"This issue is not open, so `{command}` cannot act on it.")
         return 1
-    assignees = [assignee["login"] for assignee in initial["assignees"]]
 
     if command in ("/unclaim", "/release"):
         if actor not in assignees:
@@ -108,18 +112,61 @@ def main():
                 "Comment `/unclaim` (or `/release`) if you are giving it up.")
         return 0
 
-    gh("-X", "POST", f"{endpoint}/assignees",
-       "-f", f"assignees[]={actor}", "--silent")
-    # GitHub can silently ignore an assignee. A failed re-read must abort,
-    # never publish a rejection or success based on an unreadable response.
-    confirmed = snapshot(endpoint)
-    if any(assignee["login"] == actor for assignee in confirmed["assignees"]):
-        say(f"Assigned to @{actor}.")
+    # Assigning is additive: a second claimant is added beside the first rather
+    # than refused, so two runs that both read an empty assignee list can both
+    # write and leave the issue held twice. The POST's own body is the only
+    # place this run can learn whether ITS assignment was accepted — a peer
+    # that removes this login before the re-read is then indistinguishable from
+    # GitHub declining the assignee, and the run would blame the commenter's
+    # account for a race it lost. The POST is reached only when the first
+    # snapshot held nobody, so every assignee confirmed below arrived after
+    # that read: the removals reach only recent assignees. Whom they are, the
+    # API does not say — an assignee list carries no author — so the replies
+    # below claim only what the two reads and this POST actually establish.
+    assigned = assignee_logins(json.loads(
+        gh("-X", "POST", f"{endpoint}/assignees", "-f", f"assignees[]={actor}")))
+    if actor not in assigned:
+        say(f"GitHub would not accept @{actor} as an assignee here. "
+            "That usually means the account needs to have commented on or been "
+            "granted access to this repository.")
+        return 1
+    # A failed re-read must abort, never publish a rejection or success based
+    # on an unreadable response.
+    confirmed = assignee_logins(snapshot(endpoint))
+    # The winner is the smallest login by Unicode code point, which is not what
+    # a reader predicts from "alphabetically": Zoe outranks alice.
+    winner = min(confirmed)
+    # This settles the issue among the runs that reach this line: a run never
+    # removes the minimum of what it read, so the smallest login ever assigned
+    # is permanent and the set never drains empty; every other login is removed
+    # by an earlier run that read it, or by its own run, which reads a view
+    # holding that permanent minimum and finds a winner that is not itself; and
+    # the last run to write reads the final set. A run cancelled before its
+    # re-read settles nothing and is never settled — that gap is the caller's
+    # concurrency group, not this code.
+    if actor in confirmed:
+        # Including this run's own login when it is not the minimum: a run that
+        # writes last may be the second of a pair it read, and a pair it read
+        # is a pair it must not leave behind.
+        for login in confirmed:
+            if login != winner:
+                # DELETE names exactly one login so every other assignee stays.
+                gh("-X", "DELETE", f"{endpoint}/assignees",
+                   "-f", f"assignees[]={login}", "--silent")
+    if winner != actor:
+        say(f"You and @{winner} were assigned at the same time, and "
+            f"@{winner} holds it, so nothing was assigned to you.")
         return 0
-    say(f"GitHub would not accept @{actor} as an assignee here. "
-        "That usually means the account needs to have commented on or been "
-        "granted access to this repository.")
-    return 1
+    losers = [login for login in confirmed if login != winner]
+    if losers:
+        removed = ", ".join("@" + login for login in losers)
+        were = "were" if len(losers) > 1 else "was"
+        that = "those assignments were" if len(losers) > 1 else "that assignment was"
+        say(f"Assigned to @{actor}. {removed} {were} assigned at the same "
+            f"time, so {that} removed.")
+        return 0
+    say(f"Assigned to @{actor}.")
+    return 0
 
 
 if __name__ == "__main__":
