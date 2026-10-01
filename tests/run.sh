@@ -1190,6 +1190,36 @@ stub_models_the_body_on_stdin() {
   return "$result"
 }
 
+# The entry point's own report of a failure to reach the API. With the body
+# off the command line, a gh that is not there is the OSError a run can still
+# reach, and without the catch it is a traceback in the run log — the one
+# artefact a maintainer reads when the command went unanswered.
+unreachable_api_reported_in_its_own_terms() {
+  local empty=$GH_CASE/no-gh status=0 result=0
+  mkdir "$empty"
+  # claim.py runs directly here: the runner puts the stub on PATH for every
+  # other case, and this is the case that must not find it.
+  env -i PATH="$empty" GH_TOKEN=test-token REPOSITORY=owner/project ISSUE=7 \
+    ACTOR=octo-claimant ACTOR_TYPE=User BODY=/claim \
+    "$(command -v python3)" "$ROOT/claim.py" \
+    > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
+  if (( status != 1 )); then
+    printf '  exit status: expected 1, got %s\n' "$status"
+    result=1
+  fi
+  if [[ $(wc -l < "$GH_CASE/stderr") != 1 ]] \
+      || ! grep -Fq 'could not reach the API: ' "$GH_CASE/stderr"; then
+    printf '  stderr: expected one line reporting the failure, got:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  if grep -Fq 'Traceback' "$GH_CASE/stderr"; then
+    printf '  unexpected traceback\n'
+    result=1
+  fi
+  return "$result"
+}
+
 pr_gate_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -1319,6 +1349,7 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   contested_hand_assignment_bails_integration contested_integration_still_settles
   empty_actor_type multiline_actor_type
   missing_state null_state nonstring_state
+  unreachable_api_reported_in_its_own_terms
   unknown_state malformed_confirm malformed_post_response
   post_response_without_assignees malformed_events_pages malformed_events_page
   malformed_events_object

@@ -397,3 +397,11 @@ if __name__ == "__main__":
     except ValueError as error:
         print(error, file=sys.stderr)
         sys.exit(1)
+    except OSError as error:
+        # A failure to reach the API at all — no gh to execute, a descriptor
+        # closed under it — is news about this run, and a run log is where a
+        # maintainer reads news. This reports it in the same terms as the
+        # refusals above; it does not answer the comment that provoked it, and
+        # no exception handler here can.
+        print(f"could not reach the API: {error}", file=sys.stderr)
+        sys.exit(1)
