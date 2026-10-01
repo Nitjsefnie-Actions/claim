@@ -67,6 +67,47 @@ def snapshot(endpoint):
     return json.loads(gh(endpoint))
 
 
+def open_claims(repo, actor):
+    """Count one account's open assigned issues in one repository, via search."""
+    result = json.loads(gh("-X", "GET", "search/issues", "-f",
+                           f"q=repo:{repo} is:issue is:open assignee:{actor}"))
+    # A total that is missing, a string or a bool is a response this run
+    # cannot read; proceeding would compare the cap against a number that
+    # was never established. Search API and the repository role endpoint
+    # both verified live on an Actions runner 2026-10-01 with the default
+    # token: total_count carries the full count without pagination,
+    # `assignee:` matches case-insensitively, and collaborators/permission
+    # answers 200 for an outsider (role_name "read") as well as for the
+    # repo owner.
+    if not isinstance(result, dict):
+        raise ValueError("search snapshot must contain a total_count integer")
+    total = result.get("total_count")
+    if isinstance(total, bool) or not isinstance(total, int):
+        raise ValueError("search snapshot must contain a total_count integer")
+    return total
+
+
+def actor_role(repo, actor):
+    """The repository role a login holds here, folded to a cap key."""
+    result = json.loads(gh(f"repos/{repo}/collaborators/{actor}/permission"))
+    if not isinstance(result, dict):
+        raise ValueError("role snapshot must contain a role_name string")
+    role = result.get("role_name")
+    if not isinstance(role, str):
+        raise ValueError("role snapshot must contain a role_name string")
+    # The five standard levels pass through under their own names. A
+    # custom repository role reports its own name here and the endpoint
+    # exposes its base only through the folded `permission` field (triage
+    # folds to read, maintain to write), so a custom role counts as its
+    # folded base level — documented in the README.
+    if role in ("read", "triage", "write", "maintain", "admin"):
+        return role
+    base = result.get("permission")
+    if base not in ("read", "triage", "write", "maintain", "admin"):
+        raise ValueError("role snapshot must give a readable role")
+    return base
+
+
 def event_actor(event):
     """The login that performed an assignment event, or None if it names none."""
     if not isinstance(event, dict):
@@ -192,6 +233,32 @@ def main():
             or repo.split("/", 1)[1] in (".", "..")):
         raise ValueError("invalid repository: expected owner/name")
 
+    raw = os.environ["MAX_CLAIMS"]
+    # A value this run cannot read must fail it loudly rather than cap
+    # nothing, cap the wrong role, or let a repeated entry win silently.
+    # The single token -1 is the disabled default; every other value is a
+    # comma-separated map of ROLE=CAP pairs.
+    malformed = "invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs"
+    if raw == "-1":
+        caps = None
+    else:
+        caps = {}
+        for entry in raw.split(","):
+            entry = entry.strip()
+            if not re.fullmatch(r"[a-z]+=-?[0-9]+", entry):
+                raise ValueError(malformed)
+            role, _, cap_text = entry.partition("=")
+            # Custom repository roles cannot be named (the README documents
+            # the fold to the base level), so these five are the only keys.
+            if role not in ("read", "triage", "write", "maintain", "admin"):
+                raise ValueError(malformed)
+            cap = int(cap_text)
+            # Below -1 names no cap this action can act on, and a repeated
+            # role would make the effective cap depend on entry order.
+            if cap < -1 or role in caps:
+                raise ValueError(malformed)
+            caps[role] = None if cap == -1 else cap
+
     endpoint = f"repos/{repo}/issues/{issue}"
 
     def say(body):
@@ -279,6 +346,26 @@ def main():
             say(f"This issue is already claimed by {mention(assignees)}. "
                 "Comment `/unclaim` (or `/release`) if you are giving it up.")
         return 0
+
+    # An unnamed role and an explicit -1 both fall through: unlimited, no
+    # search call. The cap governs only this /claim path — it never counts
+    # against, blocks or removes a manual assignment.
+    if caps is not None:
+        role = actor_role(repo, actor)
+        cap = caps.get(role)
+        if cap == 0:
+            say(f"@{actor} claiming is disabled for your role ({role}) in "
+                "this repository. A maintainer can still assign you by hand.")
+            return 0
+        if cap is not None and cap > 0:
+            total = open_claims(repo, actor)
+            if total >= cap:
+                claims = "claim" if total == 1 else "claims"
+                say(f"@{actor} you already hold {total} open {claims} in "
+                    f"this repository, and the cap for your role ({role}) is "
+                    f"{cap}. Comment `/unclaim` (or `/release`) on one you "
+                    "are giving up, then `/claim` again.")
+                return 0
 
     # Assigning is additive: a second claimant is added beside the first rather
     # than refused, so two runs that both read an empty assignee list can both

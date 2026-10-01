@@ -9,7 +9,7 @@ export PATH="$RUN/bin:$PATH"
 # GH_IDENTITY is the default answer for the stub's identity lookup
 # (`gh api user`); a case overrides it by writing identity.response into its
 # own case directory. The value is per-case state, set in reset_case below.
-export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY
+export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY MAX_CLAIMS
 
 reset_case() {
   GH_TOKEN=test-token
@@ -17,6 +17,7 @@ reset_case() {
   ISSUE=7
   ACTOR=octo-claimant
   ACTOR_TYPE=User
+  MAX_CLAIMS=-1
   GH_IDENTITY=$ROOT/tests/identity.response
   body=
   expected_error=
@@ -252,6 +253,192 @@ claim_accepted() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
+}
+
+# The disabled default costs nothing: with MAX_CLAIMS=-1 the exact
+# claim_accepted sequence runs, and the expected/recorded diff IS the
+# no-role-lookup and no-search assertion — the stub answers the role
+# endpoint and search only from the sequence, so any extra call fails the
+# case here.
+cap_disabled_no_search_call() {
+  body=/claim
+  MAX_CLAIMS=-1
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# A role the map does not name is unlimited: the role lookup runs so the run
+# knows that, and counting does not — no search, straight to the assignment.
+cap_unlimited_role_skips_counting() {
+  body=/claim
+  MAX_CLAIMS='read=2, write=6'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# Under the role's cap: the search runs, counts 5 against 6, and the claim
+# proceeds through POST, re-read and the assigned reply exactly as before.
+cap_under_limit_proceeds() {
+  body=/claim
+  MAX_CLAIMS='read=2, write=6'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":5,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# At the role's cap: the search's total is compared against that role's cap
+# and the claim is refused with the reason on the issue, naming the role.
+# The diff pins the absence of a POST — a run that assigned anyway would add
+# records the case never expects.
+cap_refuses_at_limit() {
+  body=/claim
+  MAX_CLAIMS='read=2, write=6'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":6,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already hold 6 open claims in this repository, and the cap for your role (write) is 6. Comment `/unclaim` (or `/release`) on one you are giving up, then `/claim` again.' --silent
+  run_claim 0
+}
+
+# A cap of 0 forbids the role outright: refused after the role lookup with no
+# search call and no assignment, with the maintainer escape named.
+cap_zero_forbids_role() {
+  body=/claim
+  MAX_CLAIMS='read=0, write=6'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant claiming is disabled for your role (read) in this repository. A maintainer can still assign you by hand.' --silent
+  run_claim 0
+}
+
+# An explicit -1 entry leaves that role unlimited: counted nowhere, assigned
+# as usual.
+cap_minus_one_entry_is_unlimited() {
+  body=/claim
+  MAX_CLAIMS='read=2, admin=-1'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# triage keys its OWN cap, not read's: the fixture is a triage holder whose
+# permission field folds to read, and the count of 3 proceeds only because
+# the map's triage=4 governs — under read's cap of 2 it would have refused.
+cap_triage_role() {
+  body=/claim
+  MAX_CLAIMS='read=2, triage=4'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read","role_name":"triage"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":3,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# A custom repository role reports its own role_name and the endpoint exposes
+# its base only through the folded permission field: release-manager is
+# counted under write, and at write's cap the refusal names (write).
+cap_custom_role_folds_to_base() {
+  body=/claim
+  MAX_CLAIMS='read=2, write=6'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"release-manager"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":6,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already hold 6 open claims in this repository, and the cap for your role (write) is 6. Comment `/unclaim` (or `/release`) on one you are giving up, then `/claim` again.' --silent
+  run_claim 0
+}
+
+# Three malformed values, three cases, one refusal: a negative below -1, a
+# role the map cannot name, and a duplicate key whose winner would depend on
+# entry order. Each fails the run before any API call beyond the identity
+# lookup — the empty expected/recorded diff pins that.
+cap_malformed_value_negative_cap() {
+  body=/claim
+  MAX_CLAIMS='read=-2'
+  expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
+  run_claim 1
+}
+
+cap_malformed_value_unknown_role() {
+  body=/claim
+  MAX_CLAIMS='maintainer=3'
+  expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
+  run_claim 1
+}
+
+cap_malformed_value_duplicate_key() {
+  body=/claim
+  MAX_CLAIMS='read=1, read=2'
+  expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
+  run_claim 1
+}
+
+# A role response without role_name is a snapshot this run cannot read:
+# proceeding would compare the cap against a role that was never
+# established. No comment, no search.
+cap_malformed_role_snapshot() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='role snapshot must contain a role_name string'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  run_claim 1
+}
+
+# A role lookup transport failure fails the run with gh's own exit status,
+# before any comment or search, exactly like the other transport failures.
+cap_role_lookup_failure() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='gh: transport unavailable'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh_failure 42 'gh: transport unavailable' \
+    api repos/owner/project/collaborators/octo-claimant/permission
+  run_claim 42
+}
+
+# A search response the cap cannot read — a string where the integer belongs —
+# aborts the run before any assignment or comment.
+cap_malformed_search_response() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='search snapshot must contain a total_count integer'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":"2"}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  run_claim 1
+}
+
+# A search transport failure fails the run with gh's own exit status, before
+# any assignment or comment.
+cap_search_transport_failure() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='gh: transport unavailable'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh_failure 42 'gh: transport unavailable' \
+    api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  run_claim 42
 }
 
 # Two claims that both read an empty assignee list. The winner is the one the
@@ -1396,7 +1583,7 @@ script_variables = {
 # GH_TOKEN is consumed by gh, the script's API client, through its environment.
 assert set(env) == script_variables | {"GH_TOKEN"}, "claim step env must match script dependencies"
 specs = re.findall(r"^  ([a-z-]+):\n((?:    [^\n]+(?:\n|$))+)", inputs, re.M)
-assert len(specs) == 6 and len(dict(specs)) == 6, "expected six distinct inputs"
+assert len(specs) == 7 and len(dict(specs)) == 7, "expected seven distinct inputs"
 specs = dict(specs)
 expected_inputs = set()
 for name, value in env.items():
@@ -1742,6 +1929,12 @@ cases=(
   # What the inputs are allowed to be.
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
   missing_login_initial missing_login_confirm
+  cap_disabled_no_search_call cap_unlimited_role_skips_counting cap_under_limit_proceeds
+  cap_refuses_at_limit cap_zero_forbids_role cap_minus_one_entry_is_unlimited
+  cap_triage_role cap_custom_role_folds_to_base
+  cap_malformed_value_negative_cap cap_malformed_value_unknown_role
+  cap_malformed_value_duplicate_key cap_malformed_role_snapshot
+  cap_role_lookup_failure cap_malformed_search_response cap_search_transport_failure
   # The manifests this action is.
   action_contract pr_gate_contract)
 failures=0
