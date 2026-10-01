@@ -367,9 +367,10 @@ cap_custom_role_folds_to_base() {
   run_claim 0
 }
 
-# Three malformed values, three cases, one refusal: a negative below -1, a
-# role the map cannot name, and a duplicate key whose winner would depend on
-# entry order. Each fails the run before any API call beyond the identity
+# Five malformed values, five cases, one refusal: a negative below -1, a
+# role the map cannot name, a duplicate key whose winner would depend on
+# entry order, a cap that is not an integer, and an entry that strips to
+# nothing. Each fails the run before any API call beyond the identity
 # lookup — the empty expected/recorded diff pins that.
 cap_malformed_value_negative_cap() {
   body=/claim
@@ -392,6 +393,25 @@ cap_malformed_value_duplicate_key() {
   run_claim 1
 }
 
+# A cap that is not an integer never reaches the int() conversion: the entry
+# grammar refuses it first, and a grammar loosened enough to pass read=two
+# would convert it at int() with a different, unhelpful message.
+cap_malformed_value_non_integer() {
+  body=/claim
+  MAX_CLAIMS='read=two'
+  expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
+  run_claim 1
+}
+
+# An entry that strips to nothing — the trailing comma's empty tail — fails
+# the entry grammar like any other shape it cannot parse.
+cap_malformed_value_empty_entry() {
+  body=/claim
+  MAX_CLAIMS='read=2,'
+  expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
+  run_claim 1
+}
+
 # A role response without role_name is a snapshot this run cannot read:
 # proceeding would compare the cap against a role that was never
 # established. No comment, no search.
@@ -401,6 +421,29 @@ cap_malformed_role_snapshot() {
   expected_error='role snapshot must contain a role_name string'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  run_claim 1
+}
+
+# The other unreadable role shape: the payload is not an object at all, and
+# the same refusal fires rather than a role being read out of it.
+cap_role_snapshot_not_an_object() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='role snapshot must contain a role_name string'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '[]' api repos/owner/project/collaborators/octo-claimant/permission
+  run_claim 1
+}
+
+# A custom role whose folded base is not one of the five levels leaves the
+# cap with no key to read; proceeding would compare the cap against a role
+# that was never established.
+cap_custom_role_base_unreadable() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='role snapshot must give a readable role'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"role_name":"release-manager","permission":"none"}' api repos/owner/project/collaborators/octo-claimant/permission
   run_claim 1
 }
 
@@ -1933,7 +1976,9 @@ cases=(
   cap_refuses_at_limit cap_zero_forbids_role cap_minus_one_entry_is_unlimited
   cap_triage_role cap_custom_role_folds_to_base
   cap_malformed_value_negative_cap cap_malformed_value_unknown_role
-  cap_malformed_value_duplicate_key cap_malformed_role_snapshot
+  cap_malformed_value_duplicate_key cap_malformed_value_non_integer
+  cap_malformed_value_empty_entry cap_malformed_role_snapshot
+  cap_role_snapshot_not_an_object cap_custom_role_base_unreadable
   cap_role_lookup_failure cap_malformed_search_response cap_search_transport_failure
   # The manifests this action is.
   action_contract pr_gate_contract)
