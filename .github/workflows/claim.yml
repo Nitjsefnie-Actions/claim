@@ -2,11 +2,10 @@ name: claim
 on:
   issue_comment:
     types: [created]
-permissions:
-  issues: write
 concurrency:
   group: claim-${{ github.event.issue.number }}
   cancel-in-progress: false
+  queue: max
 jobs:
   claim:
     if: >-
@@ -18,5 +17,7 @@ jobs:
           || contains(github.event.comment.body, '/release'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      issues: write
     steps:
       - uses: Nitjsefnie-Actions/claim@ceaadaa096fd249cdeecc137342158ec17347cb9
