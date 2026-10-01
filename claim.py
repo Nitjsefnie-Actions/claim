@@ -31,6 +31,57 @@ def snapshot(endpoint):
     return json.loads(gh(endpoint))
 
 
+def event_actor(event):
+    """The login that performed an assignment event, or None if it names none."""
+    if not isinstance(event, dict):
+        return None
+    actor = event.get("actor")
+    if not isinstance(actor, dict) or not isinstance(actor.get("login"), str):
+        return None
+    return actor["login"]
+
+
+def assignment_timeline(pages):
+    """Map every assigned login to the event that assigned it, and to its last one.
+
+    The second map is keyed the same way but survives an unassign, so a run a
+    peer's DELETE removed can still recognise the write that was its own.
+    """
+    current = {}
+    last_assigned = {}
+    if not isinstance(pages, list):
+        raise ValueError("issue events must be an array of pages")
+    events = []
+    for page in pages:
+        if not isinstance(page, list):
+            raise ValueError("issue events must be an array of pages")
+        for event in page:
+            if not isinstance(event, dict) or not isinstance(event.get("id"), int):
+                raise ValueError("issue event must contain an integer id")
+            # Every other event type is none of this action's business.
+            if event.get("event") not in ("assigned", "unassigned"):
+                continue
+            assignee = event.get("assignee")
+            if not isinstance(assignee, dict) or not isinstance(assignee.get("login"), str):
+                raise ValueError("issue event assignee must be an object with a string login")
+            events.append((event["id"], event["event"], assignee["login"], event))
+    # An assign-and-unassign cycle ends at the LAST event recorded for that
+    # login, not the first, which is why the list is replayed into a map
+    # instead of being read for the earliest assignment of each login.
+    for _, kind, login, event in sorted(events, key=lambda entry: entry[0]):
+        if kind == "assigned":
+            current[login] = event
+            last_assigned[login] = event
+        else:
+            current.pop(login, None)
+    return current, last_assigned
+
+
+def mention(logins):
+    """Format assignee logins the way a comment body names them."""
+    return ", ".join("@" + login for login in logins)
+
+
 def main():
     # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
     command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
@@ -107,8 +158,7 @@ def main():
         if actor in assignees:
             say(f"@{actor} you already have this one.")
         else:
-            current = ", ".join("@" + login for login in assignees)
-            say(f"This issue is already claimed by {current}. "
+            say(f"This issue is already claimed by {mention(assignees)}. "
                 "Comment `/unclaim` (or `/release`) if you are giving it up.")
         return 0
 
@@ -120,9 +170,8 @@ def main():
     # GitHub declining the assignee, and the run would blame the commenter's
     # account for a race it lost. The POST is reached only when the first
     # snapshot held nobody, so every assignee confirmed below arrived after
-    # that read: the removals reach only recent assignees. Whom they are, the
-    # API does not say — an assignee list carries no author — so the replies
-    # below claim only what the two reads and this POST actually establish.
+    # that read: the removals below reach only recent assignees, and only the
+    # ones the issue's events attribute to this action's own writes.
     assigned = assignee_logins(json.loads(
         gh("-X", "POST", f"{endpoint}/assignees", "-f", f"assignees[]={actor}")))
     if actor not in assigned:
@@ -133,37 +182,71 @@ def main():
     # A failed re-read must abort, never publish a rejection or success based
     # on an unreadable response.
     confirmed = assignee_logins(snapshot(endpoint))
-    # The winner is the smallest login by Unicode code point, which is not what
-    # a reader predicts from "alphabetically": Zoe outranks alice.
-    winner = min(confirmed)
-    # This settles the issue among the runs that reach this line: a run never
-    # removes the minimum of what it read, so the smallest login ever assigned
-    # is permanent and the set never drains empty; every other login is removed
-    # by an earlier run that read it, or by its own run, which reads a view
-    # holding that permanent minimum and finds a winner that is not itself; and
-    # the last run to write reads the final set. A run cancelled before its
-    # re-read settles nothing and is never settled — that gap is the caller's
-    # concurrency group, not this code.
-    if actor in confirmed:
-        # Including this run's own login when it is not the minimum: a run that
-        # writes last may be the second of a pair it read, and a pair it read
-        # is a pair it must not leave behind.
-        for login in confirmed:
-            if login != winner:
-                # DELETE names exactly one login so every other assignee stays.
-                gh("-X", "DELETE", f"{endpoint}/assignees",
-                   "-f", f"assignees[]={login}", "--silent")
-    if winner != actor:
-        say(f"You and @{winner} were assigned at the same time, and "
-            f"@{winner} holds it, so nothing was assigned to you.")
+    if confirmed == [actor]:
+        say(f"Assigned to @{actor}.")
         return 0
-    losers = [login for login in confirmed if login != winner]
-    if losers:
-        removed = ", ".join("@" + login for login in losers)
-        were = "were" if len(losers) > 1 else "was"
-        that = "those assignments were" if len(losers) > 1 else "that assignment was"
-        say(f"Assigned to @{actor}. {removed} {were} assigned at the same "
-            f"time, so {that} removed.")
+    if not confirmed:
+        # Every assignment this run can see has been removed by somebody else,
+        # so there is nobody to name and nothing to settle.
+        say(f"@{actor} nothing is assigned to this issue any more.")
+        return 0
+    # The order comes from the issue's events, not from the assignee list,
+    # because the list carries no order: {alice, bob} read by two runs that
+    # both POSTed, and {bob, alice} read by a run that finished second, are
+    # the same list, and any rule over the list alone breaks one of them. The
+    # earliest assignment event is the one nothing removes, so the first
+    # claimant is permanent; every later claim is removed by a run that read it
+    # beside an earlier one, or by its own run, and a run that never reaches
+    # its re-read is covered by the next one that does. An assignment this
+    # action cannot attribute to its own writes is never removed at all, which
+    # is what keeps a maintainer's manual assignment safe.
+    current, last_assigned = assignment_timeline(json.loads(
+        gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")))
+    # Read off this run's own assignment event, which an unassign has not
+    # erased: a run a peer removed still has to recognise its own write.
+    token = event_actor(current.get(actor) or last_assigned.get(actor))
+    if token is None or any(login not in current for login in confirmed):
+        # The order is unreadable — an event not yet visible, a page the read
+        # did not follow, or a login assigned before the window. Changing
+        # nothing is the only answer that cannot destroy a stranger's write.
+        say(f"@{actor} this issue is assigned to more than one person. This "
+            "run could not determine who was assigned first, so no assignment "
+            "was changed.")
+        return 1
+    claims = [login for login in confirmed if event_actor(current[login]) == token]
+    if len(claims) < len(confirmed):
+        # Somebody assigned this issue by hand inside the window. That person
+        # holds it: the action yields to a write it cannot attribute to
+        # itself rather than delete it, and does not call it a claim, because
+        # only the events say who did it and this run cannot read that.
+        holders = [login for login in confirmed
+                   if login not in claims and login != actor]
+        if actor in confirmed:
+            gh("-X", "DELETE", f"{endpoint}/assignees",
+               "-f", f"assignees[]={actor}", "--silent")
+        say(f"@{actor} this issue is assigned to {mention(holders)}, so "
+            "nothing was assigned to you.")
+        return 0
+    winner = min(claims, key=lambda login: current[login]["id"])
+    # Every claim later than the winner's, this run's own login included: a
+    # run that writes last may be the second of a pair it read, and a pair it
+    # read is a pair it must not leave behind.
+    removed = [login for login in claims
+               if current[login]["id"] > current[winner]["id"]]
+    for login in removed:
+        # DELETE names exactly one login so every other assignee stays.
+        gh("-X", "DELETE", f"{endpoint}/assignees",
+           "-f", f"assignees[]={login}", "--silent")
+    if winner != actor:
+        say(f"@{actor} @{winner} claimed this issue at the same time and "
+            "holds it, so your claim was released.")
+        return 0
+    if removed:
+        were = "were" if len(removed) > 1 else "was"
+        that = ("those assignments were" if len(removed) > 1
+                else "that assignment was")
+        say(f"Assigned to @{actor}. {mention(removed)} {were} assigned at the "
+            f"same time, so {that} removed.")
         return 0
     say(f"Assigned to @{actor}.")
     return 0
