@@ -1,8 +1,85 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Record argv without losing argument boundaries, quoting, or embedded newlines.
-python3 -c 'import json, sys; print(json.dumps(sys.argv[1:], separators=(",", ":")))' "$@" >> "$GH_CASE/calls.jsonl"
+# The comment body arrives on stdin rather than on the command line, because a
+# maximum-size comment does not fit in an argument list. The recorded call is
+# the argv with the body read off stdin spliced in after the `-` that
+# `--input -` reads it from, so a case asserts the transport and the text of
+# the comment in one line: a claim.py that passed the body as `-f body=…`
+# again would record a different argv and fail the diff.
+record_call() {
+  # argv and the payload go to the recorder NUL-separated on stdin rather than
+  # as arguments. A comment body can be 262,144 bytes and the kernel's limit on
+  # a single argument is 131,072, so recording the payload as one — which the
+  # previous version did for an ACCEPTED body, having already stopped doing it
+  # for a refused one — killed the stub on a body GitHub accepts. The stub
+  # died with the shell's 126, which reads like a product failure.
+  #
+  # The recorder reads and writes bytes, never text: the suite sets no locale,
+  # and Python's text encoding follows one. Both sides of the double are
+  # UTF-8 whatever LC_ALL says.
+  printf '%s\0' "$@" | python3 -c '
+import json, sys
+args = sys.stdin.buffer.read().decode("utf-8").split("\0")[:-1]
+sys.stdout.buffer.write((json.dumps(args, separators=(",", ":")) + "\n").encode("utf-8"))
+' >> "$GH_CASE/calls.jsonl"
+}
+
+comment_chars() {
+  # Read and write bytes, never text: the suite sets no locale, and Python's
+  # text encoding follows one. A body is UTF-8 whatever LC_ALL says.
+  python3 -c 'import sys; sys.stdout.write(str(len(sys.stdin.buffer.read().decode("utf-8"))))'
+}
+
+recorded=()
+body=
+body_index=0
+previous=
+for arg in "$@"; do
+  if [[ $previous == --input && $arg == - ]]; then
+    # One capture, not two: `payload` held a second copy of a body that can be
+    # 262,144 bytes, and a bash that copies per character makes that the most
+    # expensive part of a suite that already builds bodies that size.
+    body=$(cat | python3 -c '
+import json, sys
+sys.stdout.buffer.write(json.loads(sys.stdin.buffer.read().decode("utf-8"))["body"].encode("utf-8"))
+')
+    body_index=$(( ${#recorded[@]} + 1 ))
+  fi
+  recorded+=("$arg")
+  previous=$arg
+done
+# GitHub refuses a comment body over 65,536 characters, and a POST it refuses
+# is not a comment posted. This stub already fails loudly on an invocation it
+# was not told to expect; refusing a body it does not model is the same door
+# for the same reason, wherever the body arrived from — without it a case
+# cannot tell an answered command from an unanswered one, and a length read
+# off a recorded call is only ever a proxy for this.
+#
+# The count is in CHARACTERS, made in Python, because that is the unit both
+# GitHub's limit and claim.py's ceiling are stated in. Bash's ${#body} would
+# count characters under a UTF-8 locale and bytes under LC_ALL=C, and the
+# suite sets neither, so a runner under LC_ALL=C would refuse a legal
+# multibyte body and read as a product defect. Bytes are the unit the kernel
+# limits, and that constraint is met structurally instead: record_call keeps
+# the body off this command line, so nothing here is bounded by it.
+body_chars=
+if [[ -n $body ]]; then
+  # Measured once and reused: the refusal path used to start python3 twice over
+  # a body that may be a quarter of a megabyte, to print one number twice.
+  body_chars=$(printf '%s' "$body" | comment_chars)
+fi
+if (( body_chars > 65536 )); then
+  record_call "${recorded[@]}"
+  printf 'refused a comment body of %s characters: the limit is 65536\n' \
+    "$body_chars" >&2
+  exit 92
+fi
+if [[ -n $body ]]; then
+  record_call "${recorded[@]:0:$body_index}" "body=$body" "${recorded[@]:$body_index}"
+else
+  record_call "${recorded[@]}"
+fi
 
 # `gh api user` asks who the configured token posts as, and claim.py calls it
 # in every run that gets past the User check. Numbering its answer into the
