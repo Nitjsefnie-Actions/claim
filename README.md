@@ -70,7 +70,6 @@ placement this block replaced as `excessive-permissions`. The action never
 reads the repository tree, so the calling workflow needs neither
 `contents: read` nor a checkout step. The default `github.token` is sufficient.
 
-<<<<<<< HEAD
 The per-issue `concurrency:` group serializes competing claims so they do not
 both act on the same unassigned snapshot. `cancel-in-progress: false` is
 deliberate: when two people claim at once, both must get an answer instead of
@@ -86,7 +85,6 @@ combined with `cancel-in-progress: true`, which this block never sets.
 That group is per repository and per workflow, though, so a caller without
 that exact group — or with it under another name — gets no protection from it.
 The action therefore settles a tie itself rather than depending on the group.
->>>>>>> 0d9bffc (docs(readme): say what a tie settles, and what it cannot)
 
 The job's `if:` is only a prefilter to save starting a runner. The action
 re-checks all three conditions itself: the target is an issue rather than a
