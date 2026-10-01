@@ -106,6 +106,7 @@ commenter's identity and the issue and body from that comment event.
 | `actor` | `${{ github.event.comment.user.login }}` | Commenter's login. |
 | `actor-type` | `${{ github.event.comment.user.type }}` | Commenter's GitHub account type. |
 | `body` | `${{ github.event.comment.body }}` | Comment body containing the command. |
+| `max-claims` | `-1` | Per-role caps on concurrent claims, as comma-separated `ROLE=CAP` pairs (see below). `-1` alone disables the cap. |
 
 For a recognized command, a non-`User` account type is refused with a log
 diagnostic. An empty `actor-type` fails the run as a configuration error; its
@@ -113,6 +114,44 @@ default comes from the comment event, so other event types need an explicit
 value for this input. A comment posted by the account the `token` posts as is
 declined in the run log only, because a reply would re-trigger the very
 workflow that configured the token.
+
+### Per-role claim caps
+
+`max-claims` caps how many open issues one account may hold claims on,
+per repository role. The value is either `-1` alone — the default, which
+disables the cap entirely: no role lookup, no search call, behavior
+exactly as before this input existed — or a comma-separated map of
+`ROLE=CAP` pairs, an optional space after each comma and no spaces
+inside an entry:
+
+```yaml
+with:
+  max-claims: 'read=2, triage=4, write=6, maintain=10, admin=-1'
+```
+
+Roles are exactly `read`, `triage`, `write`, `maintain` and `admin`. A
+cap is `-1` (explicitly unlimited), `0` (the role cannot claim at all),
+or a positive integer. Any other negative, a non-integer, an unknown
+role, or a duplicate role is refused loudly and the run fails. A role
+the map does not name is unlimited.
+
+The role is the `role_name` the collaborators/permission endpoint
+reports for the commenter, read with the default token: a total
+stranger answers `role_name` `read`, so outsiders fall under `read`. A
+custom repository role counts as its folded base level — the
+endpoint's `permission` field, where `triage` folds to `read` and
+`maintain` to `write` — because custom role names cannot be named in
+the map.
+
+Above a role's finite cap the action counts the commenter's open
+assigned issues in this repository with the search API and refuses with
+a reply on the issue naming the role, the cap and the count; refusals
+exit 0. A `0` cap replies that claiming is disabled for the role and
+that a maintainer can still assign by hand. The cap governs only this
+action's `/claim` path: it never counts against, blocks or removes a
+manual assignment. The search index is eventually consistent, so a
+burst of rapid claims can land one or two past a finite cap before it
+catches up.
 
 ## What it will not do
 
@@ -145,6 +184,12 @@ workflow that configured the token.
   confirmed set and its timeline alone, so two runs that read the same state
   leave the issue with the same login — what each run posts about it is the
   one thing that depends on which commenter is running.
+- Exceed a per-role cap on concurrent claims when `max-claims` names a
+  cap for the commenter's role: the count comes from the search API,
+  which is eventually consistent, so a burst of rapid claims can land a
+  claim or two past the cap before the index catches up. The action
+  counts only open issues in the repository being claimed, and the cap
+  never counts against, blocks or removes a manual assignment.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
