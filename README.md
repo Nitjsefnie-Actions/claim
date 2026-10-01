@@ -128,11 +128,14 @@ value for this input.
   assignment: the issue is left with whoever the issue's assignment events
   record as assigned **first** — the order comes from those events, not from
   the commenter list and not from any alphabetical rule — and the other
-  commenter is told it lost and who holds the issue. Only assignments the
-  events attribute to this action's own writes are ever removed, so an
-  assignment somebody else made in the same window is left alone and is never
-  called a claim. When the action cannot read the order it changes nothing and
-  says so on the issue.
+  commenter is told it lost and who holds the issue. Every assignment the
+  action removes has to have been made by the same identity, because that is
+  the only thing that makes it one of the action's own writes. If the
+  assignees do not all share one identity — somebody assigned this issue by
+  hand in the same window, or an event is not yet readable — it cannot tell
+  which one is not its own, so it removes nothing at all and says so on the
+  issue. Nothing it does depends on which commenter is running, so two runs
+  that read the same state always settle it the same way.
 
 A posted command comment is **not proof of a claim**. GitHub can silently
 decline an assignment; the action catches that with a confirming re-read and
