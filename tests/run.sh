@@ -200,6 +200,44 @@ contested_equal_event_ids() {
   run_claim 0
 }
 
+# The reviewer's replay: the unassigned event spells the login with different
+# case from the assigned event AND from the confirming snapshot. GitHub treats
+# logins case-insensitively, so the unassign is the same signal and clears the
+# map — which leaves Zara-Helper with no current event, so the run bails and
+# deletes nothing. Matching case-sensitively would keep the stale assigned, crown
+# the removed login winner on its stale id, and DELETE octo-claimant, a live
+# claim, on the one path where everything else bails.
+unassigned_login_spelling_clears_map() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"Zara-Helper"}},{"id":800,"event":"unassigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @Zara-Helper. This run could not attribute every assignment on it to one identity, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  run_claim 1
+}
+
+# The same spelling question where the differently-cased event is the one that
+# decides: octo-claimant holds id 700 and Zara-Helper's current assignment is
+# the id 800 event spelled in the other case. octo-claimant wins and the DELETE
+# names "Zara-Helper" — the spelling the ISSUE payload returned, not the one the
+# event used. Matching case-sensitively drops the 800, leaves the stale 600
+# assigned, and deletes octo-claimant instead.
+assigned_login_spelling_decides() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '[[{"id":600,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"Zara-Helper"}},{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=Zara-Helper' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant. @Zara-Helper was assigned at the same time, so that assignment was removed.' --silent
+  run_claim 0
+}
+
 # zara-helper was assigned, unassigned and reassigned inside the window, and its
 # FIRST event has the smallest id of all. The event that decides is the current
 # one, so yuki-dev wins; reading the earliest assignment per login would have
@@ -229,7 +267,7 @@ contested_third_identity_bails() {
   expect_gh '{"state":"open","assignees":[{"login":"aaron-maintainer"},{"login":"alice"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"aaron-maintainer"},{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"aaron-maintainer"}},{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @aaron-maintainer, @alice. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @aaron-maintainer, @alice. This run could not attribute every assignment on it to one identity, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
 
@@ -243,7 +281,7 @@ cannot_attribute_missing_event() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one identity, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
 
@@ -258,7 +296,7 @@ bail_with_actor_absent() {
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @alice, @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @alice, @zara-helper. This run could not attribute every assignment on it to one identity, so no assignment was changed. You are not assigned to this issue.' --silent
   run_claim 1
 }
 
@@ -273,7 +311,7 @@ unassigned_event_drops_from_current() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":800,"event":"unassigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one identity, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
 
@@ -287,7 +325,7 @@ unreadable_event_field_bails() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
   expect_gh '[[{"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"octo-claimant"}},{"id":900,"event":"assigned","actor":{"login":"claim-bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one commenter, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not attribute every assignment on it to one identity, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
 
@@ -907,7 +945,9 @@ PY
 cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_command
   blank_lines_around_command whitespace_only claimed_by_others claimed_by_three claim_accepted
   contested_winner_by_event_order contested_loser_by_event_order
-  contested_equal_event_ids contested_assign_cycle_decides_current_event
+  contested_equal_event_ids unassigned_login_spelling_clears_map
+  assigned_login_spelling_decides
+  contested_assign_cycle_decides_current_event
   contested_third_identity_bails contested_unrelated_events_ignored
   cannot_attribute_missing_event bail_with_actor_absent
   unassigned_event_drops_from_current unreadable_event_field_bails
