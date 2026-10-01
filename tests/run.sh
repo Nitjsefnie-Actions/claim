@@ -202,10 +202,11 @@ metacharacters() {
 # The ceiling's reach, driven by a body that is an attempt: a maximum-size
 # comment whose FIRST line starts with a command word (`/claim ` plus 65,529
 # filler characters, 65,536 in total). The decline reply quotes the line that
-# holds the word — here the whole body — so it is 65,723 characters and GitHub
-# refuses that, which is what #50 reports: the commenter is answered with the
-# ceiling's sentence instead of nothing at all. The mismatch reply one branch
-# above reaches the ceiling the same way.
+# holds the word — here the whole body — which adds the same 187 characters of
+# framing as in the emoji case below to the 65,529-character filler: 65,716
+# characters, and GitHub refuses that. That is what #50 reports: the commenter
+# is answered with the ceiling's sentence instead of nothing at all. The
+# mismatch reply one branch above reaches the ceiling the same way.
 not_a_command_over_long() {
   body="/claim $(chars_of 65529)"
   # The ceiling's own reply replaces this one, so the only large expectation is
