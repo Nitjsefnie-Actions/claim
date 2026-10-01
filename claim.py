@@ -197,10 +197,18 @@ def main():
     def say(body):
         # A reply too long for GitHub to accept is replaced by one the
         # commenter can act on rather than by its first MAX_COMMENT
-        # characters: a reply cut where it lands says less than no reply. The
-        # replacement is worded for every reply that can reach here — a
-        # command too long to be quoted back is too long to act on as it
-        # stands — and it is bounded by construction, so it never needs
+        # characters: a reply cut where it lands says less than no reply.
+        #
+        # What makes that sentence correct here is that only the two replies
+        # which quote the commenter's own body can get this far. Everything
+        # else say() is handed is bounded by GitHub rather than by a stranger:
+        # `@{actor}` is a login of at most 39 characters, and the assignee list
+        # is at most ten of them. A reply built from anything else that a
+        # commenter could grow would land in the same sentence and tell its
+        # reader to type `/claim`, which would be wrong — so that is the thing
+        # to check before adding one.
+        #
+        # The replacement is bounded by construction, so it never needs
         # replacing itself.
         if len(body) > MAX_COMMENT:
             body = (f"I could not answer that here: the answer would be longer "
