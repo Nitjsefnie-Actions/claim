@@ -20,9 +20,11 @@ name: actionlint
 #   every checkout left the job token in .git/config, and no workflow
 #   declared permissions at all.
 #
-# Both tools are pinned. actionlint is verified by checksum rather than
-# trusted from the release page, because a linter that runs before every
-# other gate is a supply-chain position worth defending.
+# Both tools are pinned by hash, not version alone: actionlint is verified
+# against its release checksum before it runs, and zizmor installs through
+# the hash-pinned requirements.txt beside this workflow, because a linter
+# that runs before every other gate is a supply-chain position worth
+# defending.
 #
 # Suppressions belong at the offending line as a `# zizmor: ignore[rule]`
 # comment WITH a justification, never as a raised
@@ -90,9 +92,14 @@ jobs:
 
       - name: Install zizmor
         id: install_zizmor
+        # --require-hashes verifies every artifact against the sha256 in
+        # requirements.txt: a version pin alone still installs whatever
+        # artifact the index serves for that version. The `--upgrade pip`
+        # line is gone for the same reason -- it installed whatever bytes
+        # the index served, unpinned, and the runner's preinstalled pip is
+        # far newer than --require-hashes needs.
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install zizmor==1.29.0 PyYAML==6.0.3
+          python3 -m pip install --require-hashes -r .github/workflows/requirements.txt
 
       - name: actionlint
         id: actionlint
