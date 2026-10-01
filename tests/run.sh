@@ -84,20 +84,13 @@ run_claim() {
   return "$failed"
 }
 
-# The character count of the comment body the last recorded call posted: the
-# reply as it went out, not as the case expected it to. A call that posted no
-# body has no length, so this prints `unmeasured` — a word, not a number, so
-# the caller cannot compare or count it by accident and pass.
+# The character count of the comment body the LAST recorded call posted: the
+# reply as it went out, not as the case expected it to. It reads that call's
+# own line, so a run whose final call posted no comment measures nothing and
+# says so rather than reporting an earlier reply's length — `unmeasured` is a
+# word, not a number, so a caller cannot compare or count it by accident.
 posted_comment_length() {
-  python3 -c '
-import json, sys
-body = None
-for line in open(sys.argv[1]):
-    for arg in json.loads(line):
-        if arg.startswith("body="):
-            body = arg[len("body="):]
-print(len(body) if body is not None else "unmeasured")
-' "$GH_CASE/calls.jsonl"
+  recorded_body_size "$GH_CASE/calls.jsonl"
 }
 
 sentence() {
