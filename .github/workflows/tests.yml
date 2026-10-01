@@ -63,6 +63,26 @@ jobs:
           # .git/config lets any later step reuse it.
           persist-credentials: false
 
+      - name: Check no tracked file carries a merge-conflict marker
+        # a3363ac landed on main with `<<<<<<< HEAD` and the `>>>>>>> 0d9bffc`
+        # line still in README.md, and three review rounds and every gate in
+        # this repository read straight past them: a conflict marker is text
+        # that looks like prose in a Markdown file, so only a mechanical check
+        # can see it. git grep reads the index, so this covers the files the
+        # repository ships rather than whatever happens to be in the working
+        # tree, and -I skips a binary rather than reporting a match inside one.
+        # The three markers are matched in the shapes git writes them:
+        # `<<<<<<< ` and `>>>>>>> ` carry the label after seven characters,
+        # and the separator is exactly seven `=`. This job rather than the
+        # actionlint one because this workflow's push trigger is unfiltered,
+        # so it runs for the documentation-only commit that carries the marker
+        # as well as for the code change.
+        run: |
+          if git grep -nI -E '^(<{7}( |$)|>{7}( |$)|={7}$)' -- .; then
+            echo "A merge-conflict marker is committed. Resolve the conflict, rebase onto the target branch and push again."
+            exit 1
+          fi
+
       - name: Compile the claim script
         run: python3 -m py_compile claim.py
 
