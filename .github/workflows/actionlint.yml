@@ -86,12 +86,16 @@ jobs:
         # red here until the README pin is moved to the same release SHA, so
         # the drift this workflow exists to catch cannot ship silently either.
         run: |
-          readme_pin=$(grep -m1 'uses: Nitjsefnie-Actions/claim@' README.md | sed 's/.*@//' | cut -d' ' -f1)
-          workflow_pin=$(grep -m1 'uses: Nitjsefnie-Actions/claim@' .github/workflows/claim.yml | sed 's/.*@//' | cut -d' ' -f1)
-          if [ -z "$readme_pin" ] || [ -z "$workflow_pin" ]; then
-            echo "Could not read a Nitjsefnie-Actions/claim pin from README.md and .github/workflows/claim.yml."
-            exit 1
-          fi
+          # Exactly one pin line per file: a second 'uses:' line would make
+          # the comparison below read whichever grep happens to list first.
+          for file in README.md .github/workflows/claim.yml; do
+            if [ "$(grep -c 'uses: Nitjsefnie-Actions/claim@' "$file")" -ne 1 ]; then
+              echo "Expected exactly one 'uses: Nitjsefnie-Actions/claim@' line in $file."
+              exit 1
+            fi
+          done
+          readme_pin=$(grep 'uses: Nitjsefnie-Actions/claim@' README.md | sed 's/.*@//' | cut -d' ' -f1)
+          workflow_pin=$(grep 'uses: Nitjsefnie-Actions/claim@' .github/workflows/claim.yml | sed 's/.*@//' | cut -d' ' -f1)
           if [ "$readme_pin" != "$workflow_pin" ]; then
             echo "README.md pins $readme_pin but .github/workflows/claim.yml pins $workflow_pin."
             echo "Move the README pin to the same release SHA, with its # vX.Y.Z comment; Dependabot keeps claim.yml current."
