@@ -94,21 +94,21 @@ sentence() {
   body='please /claim this when you can'
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `please /claim this when you can`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `please /claim this when you can`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: please /claim this when you can\n'
 }
 
 multiline() {
   body=$'/claim\nthis is a second line'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: /claim\n'
 }
 
 interior_cr() {
   body=$'hello there\r\nsecond line'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `hello there`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `hello there`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: hello there\n'
 }
 
@@ -120,7 +120,7 @@ metacharacters() {
   body+=$'\nsecond line'
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments \
-    -f 'body=Not a command: `$(touch /tmp/pwned) $(touch pwned) \`touch backtick-pwned\` '\''single'\'' "double"`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' \
+    --input - 'body=Not a command: `$(touch /tmp/pwned) $(touch pwned) \`touch backtick-pwned\` '\''single'\'' "double"`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' \
     --silent
   (cd "$GH_CASE" && run_claim 1 $'not a command: $(touch /tmp/pwned) $(touch pwned) `touch backtick-pwned` '\''single'\'' "double"'$'\n') || result=$?
   if [[ -e $GH_CASE/pwned || -e $GH_CASE/backtick-pwned || -e /tmp/pwned ]]; then
@@ -133,28 +133,28 @@ metacharacters() {
 already_assigned() {
   body=/claim
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
 trimmed_command() {
   body=$' \t/claim \t\r'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
 blank_lines_around_command() {
   body=$'\n \t\r\n/claim\n \t\r\n'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
 whitespace_only() {
   body=$' \t\r\n '
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: ``. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: ``. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: \n'
 }
 
@@ -163,7 +163,7 @@ claimed_by_others() {
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
   run_claim 0
 }
 
@@ -171,7 +171,7 @@ claimed_by_three() {
   body=/claim
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"},{"login":"carol"}]}' api repos/owner/project/issues/7
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is already claimed by @alice, @bob, @carol. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob, @carol. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
   run_claim 0
 }
 
@@ -180,7 +180,7 @@ claim_accepted() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
 }
 
@@ -492,7 +492,7 @@ claim_accepted_elsewhere() {
   expect_gh '{"state":"open","assignees":[]}' api repos/other-team/widget.tools/issues/42
   expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api -X POST repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper'
   expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
-  expect_gh '' api repos/other-team/widget.tools/issues/42/comments -f 'body=Assigned to @river-helper.' --silent
+  expect_gh '' api repos/other-team/widget.tools/issues/42/comments --input - 'body=Assigned to @river-helper.' --silent
   run_claim 0
 }
 
@@ -502,7 +502,7 @@ claim_rejected() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
   run_claim 1
 }
 
@@ -511,7 +511,7 @@ claim_with_number() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
 }
 
@@ -520,7 +520,7 @@ claim_with_hash_number() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Assigned to @octo-claimant.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
   run_claim 0
 }
 
@@ -528,7 +528,7 @@ unclaim_with_number() {
   body='/unclaim 7'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Unassigned @octo-claimant.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Unassigned @octo-claimant.' --silent
   run_claim 0
 }
 
@@ -536,7 +536,7 @@ claim_number_mismatch() {
   body='/claim 8'
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=`/claim 8` names issue 8, but this comment is on issue 7. Comment `/claim` (or `/claim 7`) to act on this issue.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=`/claim 8` names issue 8, but this comment is on issue 7. Comment `/claim` (or `/claim 7`) to act on this issue.' --silent
   run_claim 1
 }
 
@@ -567,7 +567,7 @@ comment_payload() {
 expect_number_reply() {
   local count=$1
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f \
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
     "body=\`/claim\` names a number ${count} digits long, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
     --silent
 }
@@ -590,7 +590,7 @@ claim_number_bound_edge() {
   carried=$(digits_of 32)
   body="/claim ${carried}"
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f \
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
     "body=\`/claim ${carried}\` names issue ${carried}, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
     --silent
   run_claim 1 || result=$?
@@ -632,28 +632,28 @@ claim_number_reply_length_bounded() {
 claim_number_trailing_prose() {
   body='/claim 526 extra prose'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim 526 extra prose`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim 526 extra prose`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: /claim 526 extra prose\n'
 }
 
 claim_number_next_line() {
   body=$'/claim\n526'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: /claim\n'
 }
 
 claim_uppercase_noncommand() {
   body='/CLAIM 7'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/CLAIM 7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/CLAIM 7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: /CLAIM 7\n'
 }
 
 claim_number_attached() {
   body='/claim7'
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Not a command: `/claim7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim7`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: /claim7\n'
 }
 
@@ -680,14 +680,14 @@ comment_forbidden() {
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
-    api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+    api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already have this one.' --silent
   run_claim 1
 }
 
 unclaim_not_assigned() {
   body=/unclaim
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you are not assigned to this issue, so there is nothing to give up.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you are not assigned to this issue, so there is nothing to give up.' --silent
   run_claim 0
 }
 
@@ -695,7 +695,7 @@ unclaim_one_of_two() {
   body=/unclaim
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=Unassigned @octo-claimant.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Unassigned @octo-claimant.' --silent
   run_claim 0
 }
 
@@ -706,7 +706,7 @@ release_one_of_two() {
   ISSUE=42
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
   expect_gh '' api -X DELETE repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
-  expect_gh '' api repos/other-team/widget.tools/issues/42/comments -f 'body=Unassigned @river-helper.' --silent
+  expect_gh '' api repos/other-team/widget.tools/issues/42/comments --input - 'body=Unassigned @river-helper.' --silent
   run_claim 0
 }
 
@@ -714,7 +714,7 @@ closed_issue() {
   body=/claim
   expect_gh '{"state":"closed","assignees":[]}' api repos/owner/project/issues/7
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is not open, so `/claim` cannot act on it.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is not open, so `/claim` cannot act on it.' --silent
   run_claim 1
 }
 
@@ -736,7 +736,7 @@ pull_request() {
   body=/unclaim
   expect_gh '{"state":"open","pull_request":{"url":"https://api.github.com/repos/owner/project/pulls/7"},"assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This is a pull request, so `/unclaim` has no effect here.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This is a pull request, so `/unclaim` has no effect here.' --silent
   run_claim 1
 }
 
@@ -982,7 +982,7 @@ unknown_state() {
   body=/claim
   expect_gh '{"state":"unknown","assignees":[]}' api repos/owner/project/issues/7
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=This issue is not open, so `/claim` cannot act on it.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is not open, so `/claim` cannot act on it.' --silent
   run_claim 1
 }
 
@@ -1036,20 +1036,20 @@ repository_query() {
 
 nbsp_noncommand() {
   body=$'\302\240/claim\302\240'
-  expect_gh '' api repos/owner/project/issues/7/comments -f $'body=Not a command: `\302\240/claim\302\240`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - $'body=Not a command: `\302\240/claim\302\240`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: \302\240/claim\302\240\n'
 }
 
 em_space_noncommand() {
   body=$'\342\200\203/claim\342\200\203'
-  expect_gh '' api repos/owner/project/issues/7/comments -f $'body=Not a command: `\342\200\203/claim\342\200\203`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - $'body=Not a command: `\342\200\203/claim\342\200\203`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: \342\200\203/claim\342\200\203\n'
 }
 
 ascii_control_trim() {
   body=$'\v\f/claim\v\f'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments -f 'body=@octo-claimant you already have this one.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already have this one.' --silent
   run_claim 0
 }
 
@@ -1059,7 +1059,7 @@ ascii_control_trim() {
 # restoring it makes a body the specification rejects into a valid command.
 unit_separator_noncommand() {
   body=$'\037/claim\037'
-  expect_gh '' api repos/owner/project/issues/7/comments -f $'body=Not a command: `\037/claim\037`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - $'body=Not a command: `\037/claim\037`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
   run_claim 1 $'not a command: \037/claim\037\n'
 }
 
