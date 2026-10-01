@@ -77,7 +77,8 @@ run_claim() {
 }
 
 # The character count of the comment body the last recorded call posted: the
-# reply as it went out, not as the case expected it to.
+# reply as it went out, not as the case expected it to. A call that posted no
+# body has no length, so this prints -1.
 posted_comment_length() {
   python3 -c '
 import json, sys
@@ -540,8 +541,8 @@ claim_number_mismatch() {
   run_claim 1
 }
 
-# A carried number of N digits. The reply names such a number by its length,
-# so the cases below need the count and never the number itself.
+# A carried number of N digits, for a case that needs a body whose number is
+# far longer than any issue has.
 digits_of() {
   local count=$1 digits
   printf -v digits '%*s' "$count" ''
@@ -562,31 +563,32 @@ comment_payload() {
   python3 -c 'import json, sys; print(json.dumps({"body": sys.stdin.read()}))'
 }
 
-# The reply owed a `/claim` whose N-digit number is too long to be quoted,
-# commented on issue 7: one comment, one refusal, the command to type instead.
-expect_number_reply() {
-  local count=$1
+# The ceiling's own reply, on this issue: one comment, the sentence that says
+# why the real one could not be posted, and the commands to type instead.
+expect_over_length_reply() {
+  local issue=${1-7}
   # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - \
-    "body=\`/claim\` names a number ${count} digits long, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
+  expect_gh '' api "repos/owner/project/issues/${issue}/comments" --input - \
+    "body=I could not answer that here: the answer would be longer than GitHub allows in a comment (65536 characters). Comment \`/claim\`, \`/unclaim\` or \`/release\` on its own, optionally followed by the issue number, for example \`/claim ${issue}\` or \`/claim #${issue}\`." \
     --silent
 }
 
 claim_number_over_long() {
   local digits
-  # 33,000 digits is the size the issue reports: unbounded, it built a
+  # 33,000 digits is the size #45 reports: unbounded, it built a
   # 66,111-character reply that GitHub refused to post, so the commenter was
   # answered with nothing at all. It must still be answered, and briefly.
   digits=$(digits_of 33000)
   body="/claim #${digits}"
-  expect_number_reply 33000
+  expect_over_length_reply
   run_claim 1
 }
 
-claim_number_bound_edge() {
+# Any carried number that fits in a reply is quoted in full, and the ceiling
+# in say() is the only thing that decides where that stops: nothing here counts
+# digits, so a number one digit longer is quoted exactly as one digit shorter.
+claim_number_quoted_in_full() {
   local carried result=0
-  # The bound must bite on a pathological number and nowhere near one: a
-  # 32-digit number is quoted in full, a 33-digit one is named by its length.
   carried=$(digits_of 32)
   body="/claim ${carried}"
   # shellcheck disable=SC2016
@@ -596,7 +598,10 @@ claim_number_bound_edge() {
   run_claim 1 || result=$?
   carried=$(digits_of 33)
   body="/claim ${carried}"
-  expect_number_reply 33
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - \
+    "body=\`/claim ${carried}\` names issue ${carried}, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
+    --silent
   run_claim 1 || result=$?
   return "$result"
 }
@@ -609,12 +614,12 @@ claim_number_reply_length_bounded() {
   local short long short_len long_len result=0
   short=$(digits_of 40000)
   body="/claim ${short}"
-  expect_number_reply 40000
+  expect_over_length_reply
   run_claim 1 || result=$?
   short_len=$(posted_comment_length)
   long=$(digits_of 60000)
   body="/claim ${long}"
-  expect_number_reply 60000
+  expect_over_length_reply
   run_claim 1 || result=$?
   long_len=$(posted_comment_length)
   if [[ $short_len != "$long_len" ]]; then
@@ -1328,7 +1333,7 @@ cases=(sentence multiline interior_cr metacharacters already_assigned trimmed_co
   contested_claim_winner_of_three contested_claim_loser_among_three
   contested_removal_forbidden
   claim_accepted_elsewhere claim_with_number claim_with_hash_number unclaim_with_number
-  claim_number_mismatch claim_number_over_long claim_number_bound_edge
+  claim_number_mismatch claim_number_over_long claim_number_quoted_in_full
   claim_number_reply_length_bounded
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached claim_rejected

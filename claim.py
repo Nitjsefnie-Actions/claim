@@ -8,11 +8,13 @@ import subprocess
 import sys
 
 
-# No GitHub issue number is anywhere near this long, so a carried number past
-# it is named by its length instead of being quoted: the reply quotes the
-# comment's own body, and a body can carry more digits than a comment is
-# allowed to hold.
-MAX_NAMED_DIGITS = 32
+# GitHub refuses a comment body over 65,536 characters. Every reply in this
+# file passes through say(), which replaces one this long rather than posting
+# it: the defect this closes is a reply that quotes an unbounded slice of the
+# commenter's body, which makes the reply a thing the commenter sizes, and
+# bound at the helper all replies reach it is closed for every reply that
+# exists — and for any added later.
+MAX_COMMENT = 65536
 
 
 def gh(*args, stdin=None):
@@ -193,12 +195,24 @@ def main():
     endpoint = f"repos/{repo}/issues/{issue}"
 
     def say(body):
+        # A reply too long for GitHub to accept is replaced by one the
+        # commenter can act on rather than by its first MAX_COMMENT
+        # characters: a reply cut where it lands says less than no reply. The
+        # replacement is worded for every reply that can reach here — a
+        # command too long to be quoted back is too long to act on as it
+        # stands — and it is bounded by construction, so it never needs
+        # replacing itself.
+        if len(body) > MAX_COMMENT:
+            body = (f"I could not answer that here: the answer would be longer "
+                    f"than GitHub allows in a comment ({MAX_COMMENT} "
+                    f"characters). Comment `/claim`, `/unclaim` or `/release` "
+                    f"on its own, optionally followed by the issue number, for "
+                    f"example `/claim {issue}` or `/claim #{issue}`.")
         # The body travels on stdin: a maximum-size comment does not fit in an
         # argument list, and an argv that cannot hold it takes the whole run
-        # down with E2BIG before any API call is made. GitHub's limit on the
-        # length of a comment is not what this avoids — the limit is on the
-        # body, wherever it arrives from — but moving it here is what stops
-        # that class of failure from being reachable at all.
+        # down with E2BIG before any API call is made. This is a different
+        # failure from the ceiling above, which is about the body's length and
+        # not about how it is carried; neither fix replaces the other.
         gh(f"{endpoint}/comments", "--input", "-", "--silent",
            stdin=json.dumps({"body": body}))
 
@@ -223,20 +237,9 @@ def main():
     # more digits than int() will convert, and the mismatch reply below is
     # the answer such a comment must still get.
     if match.group(2) is not None and match.group(2).lstrip("0") != issue.lstrip("0"):
-        # GitHub refuses a comment body over 65,536 characters, so quoting a
-        # carried number without a bound is a way to make this action answer
-        # nobody: the POST is refused and the run fails with the commenter's
-        # command unanswered. A number too long to be an issue number is
-        # named by its length, which bounds the reply without hiding from the
-        # commenter that the number they carried is not this issue's.
-        if len(match.group(2)) > MAX_NAMED_DIGITS:
-            named = (f"`{match.group(1)}` names a number "
-                     f"{len(match.group(2))} digits long")
-        else:
-            named = f"`{command}` names issue {match.group(2)}"
-        say(f"{named}, but this comment is on issue {issue}. Comment "
-            f"`{match.group(1)}` (or `{match.group(1)} {issue}`) to act on "
-            "this issue.")
+        say(f"`{command}` names issue {match.group(2)}, but this comment is on "
+            f"issue {issue}. Comment `{match.group(1)}` (or "
+            f"`{match.group(1)} {issue}`) to act on this issue.")
         return 1
     command = match.group(1)
 
