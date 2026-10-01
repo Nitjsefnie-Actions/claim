@@ -67,6 +67,16 @@ def event_actor(event):
     return actor["login"]
 
 
+def event_actor_type(event):
+    """The account type of an assignment event's actor, or None if untyped."""
+    if not isinstance(event, dict):
+        return None
+    actor = event.get("actor")
+    if not isinstance(actor, dict) or not isinstance(actor.get("type"), str):
+        return None
+    return actor["type"]
+
+
 def assignment_timeline(pages, relevant):
     """Map each of `relevant` that is assigned to the event that assigned it.
 
@@ -270,10 +280,12 @@ def main():
     # derived from which login is running: a partition that depends on that is
     # not one the other run shares, and the two runs then take opposite
     # branches of the same state. If every confirmed assignee's current
-    # assignment was made by the same identity they were all made by one
-    # caller — this action — and the earliest of them wins; if not, somebody
-    # else's write is among them and the action cannot say which, so it does
-    # nothing. The earliest assignment is the one no run removes, so the first
+    # assignment was made by the same identity, and that identity is this
+    # action's own — the account the token writes as, or, for an installation
+    # token, its Bot account — the earliest of them wins; if not, a write
+    # this action cannot claim is among them and the action cannot say
+    # which, so it does nothing. The earliest assignment is the one no run
+    # removes, so the first
     # claimant is permanent; every later one is removed by a run that read it
     # beside an earlier claim, or by its own run, and a run that never reaches
     # its own re-read is removed by whichever run does reach one while the
@@ -282,15 +294,32 @@ def main():
         gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")),
         confirmed)
     # The comprehension's guard and the re-check below are one predicate, not
-    # two: `len(actors) != 1` also catches the empty set, so if the guard stops
-    # skipping logins it does not have, a missing login stops bailing and the
-    # settle runs on an event that was never established.
-    actors = {event_actor(current[login]) for login in confirmed
-              if login in current}
-    if any(login not in current for login in confirmed) or len(actors) != 1:
-        # A login with no readable current event, or two identities among the
-        # assignments: the order cannot be established, and changing nothing is
-        # the only answer that cannot destroy a write the action did not make.
+    # two: `len(identities) != 1` also catches the empty set, so if the guard
+    # stops skipping logins it does not have, a missing login stops bailing
+    # and the settle runs on an event that was never established.
+    identities = {(event_actor(current[login]), event_actor_type(current[login]))
+                  for login in confirmed if login in current}
+    # One shared identity is still not attribution: it has to be THIS
+    # token's own write. With a user identity the events' actor login must
+    # be it, in either letter case; with no user identity the token is an
+    # App installation, whose writes are exactly its Bot-typed account. A
+    # maintainer who hand-assigned every holder inside the window shares one
+    # identity that is neither, and nothing is removed — their assignment is
+    # not the action's to take away.
+    if any(login not in current for login in confirmed) or len(identities) != 1:
+        ours = False
+    else:
+        ((event_login, event_type),) = identities
+        if identity is not None:
+            ours = event_login.casefold() == identity.casefold()
+        else:
+            ours = event_type == "Bot"
+    if not ours:
+        # A login with no readable current event, identities that do not all
+        # agree, or an agreement that names somebody else: the writes on this
+        # issue cannot be attributed to this action, and changing nothing is
+        # the only answer that cannot destroy an assignment the action did
+        # not make.
         others = [login for login in confirmed if login != actor]
         if actor in confirmed:
             advice = ("Comment `/unclaim` (or `/release`) if you are giving up "
@@ -300,8 +329,8 @@ def main():
             # is the one thing this commenter does not need to be told twice.
             advice = "You are not assigned to this issue."
         say(f"@{actor} this issue is assigned to {mention(others)}. This run "
-            f"could not attribute every assignment on it to one identity, so "
-            f"no assignment was changed. {advice}")
+            f"could not prove every assignment on it was made by this "
+            f"action, so no assignment was changed. {advice}")
         return 1
     # (id, login) is a total order, so two events sharing an id settle the same
     # way in every run rather than leaving a pair behind.
