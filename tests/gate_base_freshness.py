@@ -21,6 +21,25 @@ repository. Every name there must still be FOUND in a workflow below or the
 run refuses: a job renamed out of every workflow would otherwise shrink the
 set in silence, and a narrower set reports green over a wider gate.
 
+WHAT IT CANNOT SEE. The derivation reads text, so a file a required check
+reads without any `run:` block naming it is outside it. Named here rather than
+left for a reader to infer, because each of these makes the gate NARROWER and
+a narrower gate looks the same as a correct one:
+
+  - A tool reading a configuration file no `run:` names. shellcheck reads a
+    `.shellcheckrc` from each linted file's directory and every parent;
+    actionlint reads `.github/actionlint.yaml`; zizmor reads `zizmor.yml` at
+    the root of the path it is given and under `.github/`.
+  - The whole-tree spelling. `git grep ... -- .` in the `suites` job reads
+    EVERY tracked file, and `.` resolves to nothing here, so that step
+    contributes no paths at all. Giving `resolve()` a whole-tree arm would be
+    correct and would make this "rebase before you merge" on any change
+    whatsoever — which is `strict_required_status_checks_policy: true` reached
+    through the back door, against a ruleset the maintainer set to false on
+    purpose. That is the maintainer's decision to make, so the limit is named
+    and the answer stays visible rather than taken here.
+  - What a gate script reaches from inside itself, past the `run:` block.
+
 Runs on the standard library alone. The workflows are read with a parser for
 the block layout this repository uses rather than a YAML dependency, for the
 reason action_contract gives: nothing installs one here, and a parser that
@@ -32,7 +51,6 @@ refuses a shape it does not model is better than a silent misreading.
 pins the derivation.
 """
 
-import fnmatch
 import re
 import subprocess
 import sys
@@ -145,17 +163,24 @@ def block_scalar(lines, start, key_indent, limit):
 def workflow_steps(text, workflow):
     """{job name: [step, ...]} for one workflow, each step its `run` and `uses`."""
     lines = text.splitlines()
-    top = None
-    for index, line in enumerate(lines):
-        if skippable(line):
-            continue
-        match = MAPPING.match(line)
-        if match and indent_of(line) == 0 and match["key"] == "jobs" \
-                and match["value"] is None:
-            top = index
-            break
-    if top is None:
-        raise WorkflowError(f"{workflow} has no top-level `jobs:` mapping")
+    # Every top-level `jobs:` is collected rather than the first one taken: a
+    # document with two of them says which jobs this workflow defines only if
+    # you know which half won, and a workflow whose jobs are a flow mapping
+    # (`jobs: {build: ...}`) says nothing this reader can read at all. Both are
+    # refusals, because the alternative is a smaller set with nothing said.
+    tops = [index for index, line in enumerate(lines)
+            if not skippable(line) and indent_of(line) == 0
+            and MAPPING.match(line) and MAPPING.match(line)["key"] == "jobs"]
+    if len(tops) != 1:
+        raise WorkflowError(
+            f"{workflow} has {len(tops)} top-level `jobs:` mappings; this "
+            f"reader models exactly one, so which jobs it defines cannot be "
+            f"established")
+    top = tops[0]
+    if MAPPING.match(lines[top])["value"] is not None:
+        raise WorkflowError(
+            f"{workflow} writes `jobs:` as a flow mapping; this reader models "
+            f"only the block form")
 
     jobs = {}
     index = top + 1
@@ -199,7 +224,15 @@ def job_steps(lines, name, span, workflow):
         if not match:
             raise WorkflowError(
                 f"{workflow}: expected a job key in job `{name}`, found {line!r}")
-        if match["key"] != "steps" or match["value"] is not None:
+        if match["key"] == "steps" and match["value"] is not None:
+            # `steps: [{run: ...}]` is a real spelling, and reading the key's
+            # block and finding no entries in it yields an empty step list — a
+            # plausible answer rather than a refusal, for a job whose steps are
+            # right there.
+            raise WorkflowError(
+                f"{workflow}: `steps:` carries a value in job `{name}`; this "
+                f"reader models only the block form")
+        if match["key"] != "steps":
             # Every other job key — runs-on, strategy, env, permissions — is a
             # mapping or a scalar that never names a file this check reads, and
             # its children sit at an indent a step's own keys also use. Skipping
@@ -218,19 +251,61 @@ def step_entries(lines, name, start, end, workflow, steps):
         if skippable(line):
             index += 1
             continue
-        if indent_of(line) != 6 or not SEQUENCE.match(line.strip()):
+        entry = SEQUENCE.match(line.strip()) if indent_of(line) == 6 else None
+        if entry is None:
             raise WorkflowError(
                 f"{workflow}: expected a step entry in job `{name}`, found {line!r}")
         stop = block_end(lines, index, 6)
-        steps.append(step_fields(lines, name, index + 1, stop, workflow))
+        steps.append(step_fields(lines, name, index + 1, stop, workflow,
+                                 entry["rest"]))
         index = stop
     return index
 
 
-def step_fields(lines, name, start, end, workflow):
-    """One step's `run:` text and its `uses:` value."""
+def apply_field(lines, end, key, value, at, step):
+    """Fold one `key: value` of a step into `step`, and return the next line.
+
+    `at` is the line the key was written on, which for a key sitting on a
+    step's own `- ` line is that dash line rather than the one after it.
+    """
+    if key == "run":
+        if not value or BLOCK_SCALAR.match(value):
+            step["run"], after = block_scalar(lines, at, 8, end)
+            return after
+        step["run"] = value
+    elif key == "uses":
+        # The value is the reference alone; the `# v7.0.1` after it is a
+        # comment, and an action reference never contains a space.
+        step["uses"] = value.split()[0] if value else None
+    elif not value or BLOCK_SCALAR.match(value):
+        # A `with:`/`env:` mapping or a block scalar the step carries but does
+        # not execute. Its text is an input to a step, not a file a step reads,
+        # and reading one is how an expression's spelling would be mistaken for
+        # a path. Its lines are stepped over rather than read as step keys.
+        return block_end(lines, at, 8)
+    return at + 1
+
+
+def step_fields(lines, name, start, end, workflow, dash):
+    """One step's `run:` text and its `uses:` value.
+
+    `dash` is the text following the `- ` on the step's own line, and it is the
+    FIRST key the step has. A step written on one line — `- uses:
+    actions/checkout@…`, the spelling every checkout step in this repository
+    uses — carries no key on the following lines at all, so a walk that starts
+    after the dash line reads a step with no keys in it: a `uses:` that never
+    reaches the local-action branch, and a `run:` that contributes no path.
+    """
     step = {"run": None, "uses": None}
     index = start
+    if dash:
+        match = MAPPING.match(dash)
+        if not match:
+            raise WorkflowError(
+                f"{workflow}: expected a key on the step entry in job `{name}`, "
+                f"found {dash!r}")
+        index = apply_field(lines, end, match["key"],
+                            (match["value"] or "").strip(), start - 1, step)
     while index < end:
         line = lines[index]
         if skippable(line):
@@ -243,24 +318,8 @@ def step_fields(lines, name, start, end, workflow):
         if not match:
             raise WorkflowError(
                 f"{workflow}: expected a key in a step of job `{name}`, found {line!r}")
-        key, value = match["key"], (match["value"] or "").strip()
-        if key == "run":
-            if not value or BLOCK_SCALAR.match(value):
-                step["run"], index = block_scalar(lines, index, 8, end)
-                continue
-            step["run"] = value
-        elif key == "uses":
-            # The value is the reference alone; the `# v4.38.2` after it is a
-            # comment, and an action reference never contains a space.
-            step["uses"] = value.split()[0] if value else None
-        elif not value or BLOCK_SCALAR.match(value):
-            # A `with:`/`env:` mapping or a block scalar the step carries but
-            # does not execute. Its text is an input to a step, not a file a
-            # step reads, and reading one is how an expression's spelling would
-            # be mistaken for a path.
-            index = block_end(lines, index, 8)
-            continue
-        index += 1
+        index = apply_field(lines, end, match["key"],
+                            (match["value"] or "").strip(), index, step)
     return step
 
 
@@ -286,13 +345,23 @@ def resolve(candidate, files):
     directory is one. There is no shape rule on top of that, because a shape
     rule is a second remembered list — it is what left `tests/identity.response`
     out of a hand-written enumeration in the first place.
+
+    There is no glob arm, and its absence is deliberate: `candidates()` cannot
+    produce a glob metacharacter, so an arm reading one would be a branch that
+    looks like coverage and reaches nothing. The spelling it would have served
+    is already covered — `.github/workflows/*.yml` breaks at the `*` and the
+    `.github/workflows/` that precedes it is a directory, so every workflow is
+    taken whole, which is what that glob meant.
+
+    `.` resolves to nothing, and that is a named reach limit rather than an
+    oversight: `.` and `--` are how these tools spell "every tracked file", so
+    the `suites` job's merge-marker step really does read all of them. See the
+    module docstring for why the whole-tree arm is the maintainer's call.
     """
     candidate = candidate[2:] if candidate.startswith("./") else candidate
     candidate = candidate.rstrip("/")
     if not candidate:
         return ()
-    if any(glob in candidate for glob in "*?["):
-        return tuple(f for f in files if fnmatch.fnmatchcase(f, candidate))
     if candidate in files:
         return (candidate,)
     prefix = candidate + "/"
@@ -329,26 +398,36 @@ def gate_paths(root):
                 what=f"read {workflow}"), workflow)
     derived = set()
     for job in REQUIRED_JOBS:
-        source = next((steps for steps in parsed.values() if job in steps), None)
-        if source is None:
+        # Every workflow defining the name, unioned. A job name is unique within
+        # a workflow, not across the repository: a second workflow may define
+        # `suites:` — a matrix leg split into its own file, a Windows runner,
+        # nothing renamed — and taking the first match silently drops the other
+        # one's steps, so a file one required check compiles leaves the gate with
+        # no message and exit 0. A refusal on a second definition would be
+        # defensible too, and it would block that ordinary change until a
+        # maintainer answered for it; the union cannot narrow and cannot block.
+        defining = sorted(name for name, jobs in parsed.items() if job in jobs)
+        if not defining:
             raise GateError(
                 f"no workflow under {WORKFLOW_DIR}/ defines the required job "
                 f"`{job}`, so the files the required checks read cannot be built: "
                 f"put the job back, or update REQUIRED_JOBS if it was renamed")
-        for step in source[job]:
-            uses = step["uses"] or ""
-            if uses.startswith("./"):
-                # A step running a composite action out of THIS repository reads
-                # that action's files as its own parameters, and they are not
-                # text in this workflow. The directory is taken whole rather
-                # than its `action.yml` alone: what the action reaches from
-                # inside is the same question this matcher cannot answer, and a
-                # partial answer would be a narrower gate than it looks.
-                derived.update(files if uses == "./" else resolve(uses, files))
-            if not step["run"]:
-                continue
-            for candidate in candidates(step["run"]):
-                derived.update(resolve(candidate, files))
+        for name in defining:
+            for step in parsed[name][job]:
+                uses = step["uses"] or ""
+                if uses.startswith("./"):
+                    # A step running a composite action out of THIS repository
+                    # reads that action's files as its own parameters, and they
+                    # are not text in this workflow. The directory is taken whole
+                    # rather than its `action.yml` alone: what the action reaches
+                    # from inside is the same question this matcher cannot
+                    # answer, and a partial answer would be a narrower gate than
+                    # it looks.
+                    derived.update(files if uses == "./" else resolve(uses, files))
+                if not step["run"]:
+                    continue
+                for candidate in candidates(step["run"]):
+                    derived.update(resolve(candidate, files))
     if not derived:
         raise GateError(
             "the required checks name no file in this tree, so there is nothing "
@@ -428,11 +507,17 @@ def check(root):
               f"the {len(paths)} file(s) the required checks read.")
         return 0
     plural = "s" if len(stale) != 1 else ""
-    each = "each changes" if len(stale) == 1 else "each change"
-    print(f"{BASE_BRANCH} holds {len(stale)} commit{plural} this head does not, "
-          f"and {each} a file the required checks read:")
+    print(f"{BASE_BRANCH} holds {len(stale)} commit{plural} this head does not:")
     for sha, subject, touched in stale:
         print(f"  {sha} {subject}")
+        if not touched:
+            # `git log --name-only` reports no file for a merge commit, and the
+            # commits it brought in are in the list as themselves. Saying so is
+            # the whole point: a header claiming each entry names a file, over
+            # an entry that names none, is a sentence the reader cannot check.
+            print("    (a merge commit, which git names no file for; the "
+                  "commits it brought in are listed as themselves)")
+            continue
         for path in touched:
             print(f"    {path}")
     print(f"Rebase onto {BASE_BRANCH} and push again, so this run's checks read "
