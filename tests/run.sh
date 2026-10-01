@@ -68,7 +68,14 @@ run_claim() {
     printf '  exit status: expected %s, got %s\n' "$expected_status" "$status"
     failed=1
   fi
-  printf '%s' "$expected_output" > "$GH_CASE/expected.stdout"
+  # With an expected line passed, it is written here as it always was. Without
+  # one, an expectation the case wrote itself — a quarter-megabyte reply, which
+  # is python3's to build — is left alone; and an empty file if there is none.
+  if [[ $# -ge 2 ]]; then
+    printf '%s' "$expected_output" > "$GH_CASE/expected.stdout"
+  elif [[ ! -f $GH_CASE/expected.stdout ]]; then
+    : > "$GH_CASE/expected.stdout"
+  fi
   if ! diff -u "$GH_CASE/expected.stdout" "$GH_CASE/stdout"; then failed=1; fi
   if ! diff -u "$GH_CASE/expected.jsonl" <(ordinary_calls "$GH_CASE/calls.jsonl"); then failed=1; fi
   if [[ -n $expected_error ]]; then
@@ -139,11 +146,12 @@ metacharacters() {
 # commenter got nothing at all — which is what #50 reports, and it was the same
 # defect as #45 one branch above.
 not_a_command_over_long() {
-  local expected_stdout
   body=$(chars_of 65536)
-  printf -v expected_stdout 'not a command: %s\n' "$body"
+  # The ceiling's own reply replaces this one, so the only large expectation is
+  # the line claim.py prints, and expect_not_a_command writes it.
+  expect_not_a_command 65536 chars stdout
   expect_over_length_reply
-  run_claim 1 "$expected_stdout"
+  run_claim 1
 }
 
 # The input class #51 was about, and the only case that pins it. A comment of
@@ -175,16 +183,11 @@ not_a_command_over_long() {
 # which is why it and not claim_number_body_too_long_to_quote is the case that
 # proves the transport.
 not_a_command_bigger_than_an_argument() {
-  local filler expected_body expected_stdout posted result=0
-  filler=$(emoji_of 32740)
-  body="$filler"
-  # Backticks here are Markdown in the expected comment, not shell substitutions.
-  # shellcheck disable=SC2016
-  printf -v expected_body 'Not a command: `%s`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' "$filler"
-  expect_gh '' api repos/owner/project/issues/7/comments --input - \
-    "body=$expected_body" --silent
-  printf -v expected_stdout 'not a command: %s\n' "$filler"
-  run_claim 1 "$expected_stdout" || result=$?
+  local posted result=0
+  body=$(emoji_of 32740)
+  # Both expectations here are the size of the payload, so python3 writes them.
+  expect_not_a_command 32740 emoji
+  run_claim 1 || result=$?
   posted=$(recorded_body_size "$GH_CASE/calls.jsonl" bytes)
   if [[ ! $posted =~ ^[0-9]+$ ]]; then
     printf '  could not measure the posted reply: %s\n' "$posted"
@@ -607,28 +610,81 @@ claim_number_mismatch() {
   run_claim 1
 }
 
-# A carried number of N digits, for a case that needs a body whose number is
-# far longer than any issue has.
-digits_of() {
-  local count=$1 digits
-  printf -v digits '%*s' "$count" ''
-  printf '%s' "${digits//' '/1}"
+# The suite's long fixtures, built in python3 rather than in bash. Building one
+# of these in bash is a `${var//x/y}` over every character, and bash 3.2 — which
+# is what a macOS runner's `env bash` resolves to — takes seconds to do a
+# 32,768-character one. This suite makes enough of them to time a job out, on a
+# platform nobody here can reproduce. The enumeration belongs in the process
+# that does it linearly, and this suite already depends on python3 for
+# everything else. Bytes, not text: the suite sets no locale.
+filler_of() {
+  python3 -c '
+import sys
+count = int(sys.argv[1])
+unit = {"digits": "1", "chars": "x", "emoji": "\U0001F600"}[sys.argv[2]]
+sys.stdout.buffer.write((unit * count).encode("utf-8"))
+' "$1" "$2"
 }
 
+# A carried number of N digits, for a case that needs a body whose number is
+# far longer than any issue has.
+digits_of() { filler_of "$1" digits; }
+
 # N characters of filler, for a comment body of a length the stub has to judge.
-chars_of() {
-  local count=$1 text
-  printf -v text '%*s' "$count" ''
-  printf '%s' "${text//' '/x}"
-}
+chars_of() { filler_of "$1" chars; }
 
 # N copies of a four-byte character. A body of these is short in characters and
 # long in bytes, which is the only way to drive a reply that GitHub accepts and
 # an argument list cannot hold — the input class #51 was about.
-emoji_of() {
-  local count=$1 text
-  printf -v text '%*s' "$count" ''
-  printf '%s' "${text//' '/😀}"
+emoji_of() { filler_of "$1" emoji; }
+
+# What a `Not a command` case expects of a body of a given size, written by
+# python3 rather than assembled in the shell: the line claim.py prints and the
+# reply it posts are each a quarter of a megabyte, and a case that pins a
+# property should not pay for it in bash. The case names a size, a unit, and
+# which of the two it wants — a body over the ceiling gets the line but not the
+# reply, because the reply it posts is the ceiling's sentence instead.
+expect_not_a_command() {
+  python3 - "$1" "$2" "${3-both}" "$GH_CASE" <<'PYEXPECT'
+import json, sys
+count, unit, what, case = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+fill = {"digits": "1", "chars": "x", "emoji": "\U0001F600"}[unit] * count
+if what in ("stdout", "both"):
+    with open(f"{case}/expected.stdout", "wb") as out:
+        out.write(f"not a command: {fill}\n".encode("utf-8"))
+if what in ("reply", "both"):
+    call = ["api", "repos/owner/project/issues/7/comments", "--input", "-",
+            f"body=Not a command: `{fill}`. Comment one of `/claim`, "
+            f"`/unclaim` or `/release` on its own, optionally followed by the "
+            f"issue number, for example `/claim 7` or `/claim #7`.", "--silent"]
+    with open(f"{case}/expected.jsonl", "ab") as out:
+        out.write((json.dumps(call, separators=(",", ":")) + "\n").encode("utf-8"))
+    # The stub answers call N from response.N, and expect_gh creates that file
+    # as it records the call; a call written here needs the same bookkeeping.
+    ordinal = sum(1 for _ in open(f"{case}/expected.jsonl", "rb"))
+    open(f"{case}/response.{ordinal}", "wb").close()
+PYEXPECT
+}
+
+# What a mismatch at a given carried number owes as a reply, written by
+# python3 for the same reason expect_not_a_command writes its expectations: at
+# the ceiling's edge the reply is 65,535 characters, and a case that pins the
+# edge should not assemble that in bash. Small numbers are cheaper to write out
+# here and are left to expect_gh.
+expect_mismatch_reply() {
+  python3 - "$1" "$2" "$3" "$GH_CASE" <<'PYMISMATCH'
+import json, sys
+count, command, issue, case = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+carried = "1" * count
+call = ["api", f"repos/owner/project/issues/{issue}/comments", "--input", "-",
+        f"body=`{command} #{carried}` names issue {carried}, but this comment "
+        f"is on issue {issue}. Comment `{command}` (or `{command} {issue}`) to "
+        f"act on this issue.", "--silent"]
+with open(f"{case}/expected.jsonl", "ab") as out:
+    out.write((json.dumps(call, separators=(",", ":")) + "\n").encode("utf-8"))
+ordinal = sum(1 for _ in open(f"{case}/expected.jsonl", "rb"))
+open(f"{case}/response.{ordinal}", "wb").close()
+PYMISMATCH
 }
 
 # The size of the body the LAST recorded call carried, read back off the calls
@@ -771,10 +827,7 @@ claim_number_ceiling_edge() {
   local carried result=0
   carried=$(digits_of 32712)
   body="/claim #${carried}"
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - \
-    "body=\`/claim #${carried}\` names issue ${carried}, but this comment is on issue 7. Comment \`/claim\` (or \`/claim 7\`) to act on this issue." \
-    --silent
+  expect_mismatch_reply 32712 /claim 7
   run_claim 1 || result=$?
   carried=$(digits_of 32713)
   body="/claim #${carried}"
@@ -782,10 +835,7 @@ claim_number_ceiling_edge() {
   run_claim 1 || result=$?
   carried=$(digits_of 32709)
   body="/release #${carried}"
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - \
-    "body=\`/release #${carried}\` names issue ${carried}, but this comment is on issue 7. Comment \`/release\` (or \`/release 7\`) to act on this issue." \
-    --silent
+  expect_mismatch_reply 32709 /release 7
   run_claim 1 || result=$?
   carried=$(digits_of 32710)
   body="/release #${carried}"
