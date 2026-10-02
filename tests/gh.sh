@@ -92,15 +92,23 @@ fi
 # are read from identity.response.status and identity.response.stderr in the
 # case directory, whichever of the two body paths won, so a case can say what
 # the answer looked like without having to write a body for it. They used to be
-# read beside whichever body path won instead, which put them out of reach of a
-# case pointing GH_IDENTITY at an absent path — and a probe that failed without
-# writing a word is exactly the answer no case could state (#88).
+# read beside whichever body path won instead, and a probe that failed without
+# writing a word could not be stated under that without also writing an empty
+# body file to hang them on (#88).
 #
-# A case that states a status or a stderr with no body is modelling a probe
-# that failed and wrote nothing to stdout, so its stdout is empty here and its
-# exit status is the one stated, or 0 when the case stated none. With no body
-# and no status and no stderr there is no answer at all, and like the sequence
-# path below the stub fails loudly instead of inventing one.
+# A companion anywhere else is not read now: a case pointing GH_IDENTITY at a
+# body carrying its own .status or .stderr gets a bare exit 0, where the old
+# resolution found it beside the answer that was served. No case uses that, and
+# keeping it would be a branch no case pins.
+#
+# A status with no body is a probe that failed and wrote nothing to stdout, so
+# stdout is empty here and the exit status is the one stated. A stderr with no
+# status beside it is NOT that shape: the stub exits 0, claim.py reads the empty
+# stdout as a 200 it cannot parse, and the run reports a parse error instead of
+# the identity refusal — not a shape gh produces, so state a status whenever you
+# state a stderr. With no body and no status and no stderr there is no answer at
+# all, and like the sequence path below the stub fails loudly instead of
+# inventing one.
 if [[ $# -eq 2 && $1 == api && $2 == user ]]; then
   answer=$GH_CASE/identity.response
   answer_status=$answer.status
