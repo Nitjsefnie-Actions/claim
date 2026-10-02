@@ -13,12 +13,14 @@ tests/*
 !tests/codeql_matrix.py
 !tests/gate_base_freshness.py
 !tests/identity.response
+!.coveragerc
 !README.md
 !SECURITY.md
 !.github/
 .github/*
 !.github/PULL_REQUEST_TEMPLATE.md
 !.github/dependabot.yml
+!.github/ci-thresholds.json
 !.github/ISSUE_TEMPLATE/
 .github/ISSUE_TEMPLATE/*
 !.github/ISSUE_TEMPLATE/issue.md
