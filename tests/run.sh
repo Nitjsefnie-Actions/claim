@@ -2528,6 +2528,32 @@ gate_commit_to_main() {
   git -C "$fixture/tree" checkout --quiet "$was"
 }
 
+# The plant sits where the commit-scope check reads it: an ancestor of HEAD
+# and not of origin/main, carrying exactly this subject. A red verdict is the
+# mutant's only when the mutant provably landed in the examined range -- a
+# green run sitting beside a plant that never landed is the clean tree
+# speaking, and nothing but the readback here can tell the two apart.
+gate_commit_in_range() {
+  local tree=$1 subject=$2 subjects
+  git -C "$tree" merge-base --is-ancestor origin/main HEAD || {
+    printf '  the branch has diverged from the fetched base, so the range the check reads is not the one the states describe\n'
+    return 1
+  }
+  if [[ $(git -C "$tree" rev-list --count origin/main..HEAD) -eq 0 ]]; then
+    printf '  the outgoing range is empty; the plant never landed\n'
+    return 1
+  fi
+  # The subjects are captured before the match: piped into grep they die of
+  # SIGPIPE the moment grep reads its match, and set -o pipefail would read
+  # the writer's death as the match's absence -- a plant that provably
+  # landed, reported as never having landed, seen here before it was fixed.
+  subjects=$(git -C "$tree" log --format=%s origin/main..HEAD)
+  if ! grep -Fqx "$subject" <<< "$subjects"; then
+    printf '  %s is not a subject in origin/main..HEAD; the plant never landed\n' "$subject"
+    return 1
+  fi
+}
+
 # Run the extracted step against the fixture and put its two streams and its
 # status where the caller reads them. `set -e` would stop the case at the first
 # non-zero status, and most of the states under test ARE non-zero.
@@ -3327,6 +3353,402 @@ for workflow in carrying:
 if "  pull_request:" not in lines:
     fail("tests.yml must keep its unfiltered `pull_request:` trigger")
 PYWIRE
+}
+
+# The commit-scope check's own wiring pin. The rehearsal beside this case
+# extracts whatever the run block says and executes it, so the body's text is
+# the one thing that case cannot hold: a body naming a different script would
+# be rehearsed happily and pinned green. Placement is pinned with the body --
+# the check must read the rebased head, which is what sitting after the
+# freshness step buys -- and the step must stay unconditional, because an
+# `if:` here would skip the check on the very pull requests it exists to
+# gate.
+commit_scope_step_is_wired() {
+  python3 - "$ROOT" <<'PYWIRE'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1]) / ".github/workflows/tests.yml"
+lines = path.read_text().splitlines()
+STEP = "Refuse a commit whose scope names a workflow outside the ci type"
+SCRIPT = "python3 tests/commit_scopes.py"
+FRESHNESS = "Require this head to carry main's gate-defining commits"
+LINT = "Check every shell file"
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+# The job's KEY is the required context's name, so it is pinned as well as
+# the steps: renaming the job would leave this step in a context the
+# ruleset has never heard of.
+if lines.count("  shellcheck:") != 1:
+    fail("tests.yml must keep exactly one `shellcheck:` job")
+start = lines.index("  shellcheck:") + 1
+end = len(lines)
+for index in range(start, len(lines)):
+    line = lines[index]
+    if line.strip() and not line.lstrip().startswith("#") \
+            and len(line) - len(line.lstrip(" ")) <= 2:
+        end = index
+        break
+job = lines[start:end]
+
+steps = []
+index = 0
+while index < len(job):
+    line = job[index]
+    if line.strip().startswith("- "):
+        steps.append((line.strip()[2:], index))
+    index += 1
+if not steps:
+    fail("the shellcheck job has no steps")
+
+
+def step_end(at):
+    for offset in range(at + 1, len(job)):
+        if job[offset].strip().startswith("- "):
+            return offset
+    return len(job)
+
+
+named = [at for entry, at in steps if entry == f"name: {STEP}"]
+if len(named) != 1:
+    fail(f"expected exactly one step named {STEP!r}, found {len(named)}")
+at = named[0]
+body = job[at + 1:step_end(at)]
+runs = [line.strip() for line in body if line.strip().startswith("run:")]
+if runs != [f"run: {SCRIPT}"]:
+    fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
+if any(line.strip().startswith("uses:") for line in body):
+    fail("the step must be a run step, not a uses step")
+if any(line.strip().startswith("if:") for line in body):
+    fail("the step must stay unconditional: an `if:` here could skip the "
+         "check on the very pull requests it exists to gate")
+
+freshness = [at for entry, at in steps if entry == f"name: {FRESHNESS}"]
+lint = [at for entry, at in steps if entry == f"name: {LINT}"]
+checkout = [at for entry, at in steps if entry.startswith("uses: actions/checkout@")]
+if len(freshness) != 1 or len(lint) != 1 or len(checkout) != 1:
+    fail("expected exactly one checkout step, one freshness step and one "
+         "lint step in the shellcheck job")
+if not checkout[0] < freshness[0] < at < lint[0]:
+    fail("the commit-scope step must sit after the freshness step and before "
+         "the lint step: both compare the head against freshly fetched main, "
+         "and both must read the rebased head")
+PYWIRE
+}
+
+# The states the commit-scope check has to tell apart, rehearsed by executing
+# the step's own run block against a real fixture: the planted defect is red
+# and names the subject, the scope and the type; the same summary with a scope
+# that is not a workflow name, with the ci type on a workflow-name scope, and
+# with the exempt claim scope in both directions is green; a plant already
+# merged into main is never named; the derivation reads the workflow's NAME
+# and never its filename or a job-level name; and the two ways it must refuse
+# rather than answer -- a workflow with no name, and a base it cannot resolve
+# -- refuse.
+#
+# Every green here is evidence only because the same fixture went red first:
+# the plant in the second state is the liveness proof for the greens that
+# follow it, and each state asserts a distinguishing string, so a red that
+# names neither the subject nor the scope cannot pass for this check's red,
+# and a green that has stopped examining cannot pass for this check's green.
+commit_scope_states() {
+  local fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
+  local tree=$fixture/tree status result=0 planted subject
+  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Refuse a commit whose scope names a workflow outside the ci type" "$script"; then
+    printf '  the commit-scope step could not be extracted from tests.yml\n'
+    return 1
+  fi
+  gate_fixture "$fixture"
+
+  # Fresh: the head IS main, so the outgoing range is empty, and the green
+  # line has to say what it examined rather than a bare OK.
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  fresh head: expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 0' "$GH_CASE/stdout"; then
+    printf '  the fresh green does not state what it examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # The plant: fix(tests) on a change that touches no workflow. The commit is
+  # asserted into the range the check examines before its verdict is read,
+  # and the red has to name the subject, the scope and the type -- a red that
+  # named none of them would leave the reader to find the defect.
+  git -C "$tree" checkout --quiet head-branch
+  printf 'the plant\n' >> "$tree/NOTES.md"
+  gate_commit_all "$tree" 'fix(tests): pin the third refusal, again'
+  planted=$(git -C "$tree" rev-parse HEAD)
+  subject='fix(tests): pin the third refusal, again'
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  planted fix(tests): expected a non-zero exit, got 0\n'
+    result=1
+  fi
+  if ! grep -Fq "$planted" "$GH_CASE/stdout" \
+    || ! grep -Fq "$subject" "$GH_CASE/stdout"; then
+    printf '  the red did not name the planted commit and its subject:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # Backticks are literal in these patterns; they are message punctuation.
+  # shellcheck disable=SC2016
+  if ! grep -Fq 'scope `tests`' "$GH_CASE/stdout" \
+    || ! grep -Fq 'type `fix` is not `ci`' "$GH_CASE/stdout"; then
+    printf '  the red did not name the scope and the type that broke the rule:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # The same summary with a scope that is not a workflow name: type test on
+  # scope harness is the shape CONTRIBUTING gives the test machinery, and the
+  # workflow-name rule must not reach it. The green is evidence because the
+  # identical fixture went red one state ago over the identical summary.
+  git -C "$tree" commit --quiet --amend -m 'test(harness): pin the third refusal, again'
+  subject='test(harness): pin the third refusal, again'
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  amended to test(harness): expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 1' "$GH_CASE/stdout"; then
+    printf '  the green after the amend does not say the subject was examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # A workflow change in the shape the scope table asks for: the workflow's
+  # name with the ci type. The rule flags the type, never the scope, so this
+  # must stay green with the name in the set.
+  printf 'the tests pin moved\n' >> "$tree/tests/run.sh"
+  gate_commit_all "$tree" 'ci(tests): move the tests pin'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  ci(tests): expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 2' "$GH_CASE/stdout"; then
+    printf '  the green after the ci(tests) commit does not say both subjects were examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # The claim exemption, in both directions: fix(claim) is exempt because
+  # CONTRIBUTING's own sentence makes claim both a workflow name and the
+  # script's scope, and ci(claim) is green through the type rule and not
+  # through the exemption. A refactor that drops the exemption reds this on
+  # the first commit; one that drops the type check reds the ci(tests) state
+  # before this one.
+  printf 'the script decides\n' >> "$tree/claim.py"
+  gate_commit_all "$tree" "fix(claim): the script's own decision"
+  printf 'the claim pin moved\n' >> "$tree/README.md"
+  gate_commit_all "$tree" 'ci(claim): move the claim pin'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  fix(claim) beside ci(claim): expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 4' "$GH_CASE/stdout"; then
+    printf '  the green over the exempt scope does not say all four subjects were examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # Merged-history immunity: the same defect as the plant, already merged
+  # into main -- the shape of the two fix(tests) commits from issue #78. The
+  # merged subject is asserted onto main and out of the outgoing range, so
+  # the green that follows is about the range and not about a subject the
+  # check never saw; the red from the second state is what makes this green
+  # mean "the range narrowed", not "the oracle is dead".
+  gate_commit_to_main "$fixture" CONTRIBUTING.md 'fix(tests): already on main'
+  git -C "$tree" rev-parse --verify --quiet 'origin/main^{commit}' >/dev/null \
+    || {
+      printf '  the merged commit never reached the fixture origin; the fixture is not in the state this state describes\n'
+      return 1
+    }
+  # A failed rebase must be loud: a rebase that stopped mid-replay leaves a
+  # range the state is not about, and a case that carries on would pin its
+  # green over a fixture it did not build.
+  if ! git -C "$tree" rebase --quiet origin/main; then
+    printf '  the rebase onto the advanced main failed; the fixture is not in the state this state describes\n'
+    git -C "$tree" rebase --abort >/dev/null 2>&1 || true
+    return 1
+  fi
+  # Subjects captured, not piped: the SIGPIPE read as an absent match is
+  # recorded on the helper above.
+  if ! grep -Fqx 'fix(tests): already on main' \
+    <<< "$(git -C "$tree" log --format=%s origin/main)"; then
+    printf '  the merged subject is not on main (origin/main is at %s), so the immunity green would measure nothing\n' \
+      "$(git -C "$tree" rev-parse --short origin/main)"
+    return 1
+  fi
+  if grep -Fqx 'fix(tests): already on main' \
+    <<< "$(git -C "$tree" log --format=%s origin/main..HEAD)"; then
+    printf '  the merged subject is still in the outgoing range, so this state is not merged immunity\n'
+    return 1
+  fi
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  rebased onto main holding the merged plant: expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if grep -Fq 'already on main' "$GH_CASE/stdout"; then
+    printf '  the green named the merged subject:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 4' "$GH_CASE/stdout"; then
+    printf '  the green after the rebase does not say the four replayed subjects were examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # The NAME drives the set, not the filename: scorecard.yml leaves the
+  # fixture and zzz.yml naming itself scorecard takes its place, so the scope
+  # scorecard survives in the set only through the name: value -- the file
+  # named scorecard is gone. The control is the old filename: fix(zzz) with
+  # zzz.yml present is green, because a filename is not a name.
+  rm "$tree/.github/workflows/scorecard.yml"
+  cat > "$tree/.github/workflows/zzz.yml" <<'YAML'
+name: scorecard
+on:
+  pull_request:
+jobs:
+  zzz:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YAML
+  gate_commit_all "$tree" 'rename the scorecard workflow'
+  printf 'a change under the old filename\n' >> "$tree/NOTES.md"
+  gate_commit_all "$tree" 'fix(zzz): rename a job'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  fix(zzz) beside a workflow named scorecard: expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'No commit pairs' "$GH_CASE/stdout"; then
+    printf '  the filename control did not come back green:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  printf 'a change naming the new workflow\n' >> "$tree/NOTES.md"
+  gate_commit_all "$tree" 'fix(scorecard): rename a job'
+  gate_run_step "$fixture" "$script"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  fix(scorecard) with scorecard.yml gone: expected a non-zero exit, got 0\n'
+    result=1
+  fi
+  # shellcheck disable=SC2016
+  if ! grep -Fq 'scope `scorecard`' "$GH_CASE/stdout" \
+    || ! grep -Fq 'fix(scorecard): rename a job' "$GH_CASE/stdout"; then
+    printf '  the red did not name the scope the name: value put in the set:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # Repair the range for the states that follow: the same summary with a
+  # scope that is neither a workflow name nor exempt.
+  git -C "$tree" commit --quiet --amend -m 'docs(readme): rename a job'
+  subject='docs(readme): rename a job'
+  gate_commit_in_range "$tree" "$subject" || return 1
+
+  # A job-level name is not a workflow name: hhh.yml's job displays as
+  # `check`, and fix(check) must stay green -- only column 0 is collected.
+  # The range now also carries the rename commit, whose subject has no type,
+  # so this run doubles as the pin that a subject the check cannot parse is
+  # listed and the run stays green: never silent, never a failure.
+  cat > "$tree/.github/workflows/hhh.yml" <<'YAML'
+name: hhh
+on:
+  push:
+jobs:
+  hhh:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YAML
+  gate_commit_all "$tree" 'add a workflow whose job carries a name'
+  printf 'a change naming the job\n' >> "$tree/NOTES.md"
+  gate_commit_all "$tree" 'fix(check): indented'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  fix(check) on an indented name: expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'No commit pairs' "$GH_CASE/stdout"; then
+    printf '  a job-level name reached the rule:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if ! grep -Fq 'not examined' "$GH_CASE/stdout" \
+    || ! grep -Fq 'rename the scorecard workflow' "$GH_CASE/stdout"; then
+    printf '  the green did not list the subject it skipped:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # An unnamed workflow refuses rather than shrinking the set: yyy.yml starts
+  # with on:, and the file whose name cannot be read is the file the refusal
+  # names.
+  printf 'on:\n  push:\njobs:\n  yyy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' \
+    > "$tree/.github/workflows/yyy.yml"
+  gate_commit_all "$tree" 'add a workflow with no name'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  an unnamed workflow: expected a non-zero exit, got 0\n'
+    result=1
+  elif ! grep -Fq 'yyy.yml' "$GH_CASE/stderr"; then
+    printf '  the refusal did not name the workflow it cannot read:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+
+  # A base the check cannot resolve is a refusal, not a green: first an
+  # origin that does not exist, then one that exists and has no main on it.
+  # Both halves are the same failure to the reader -- the check cannot say
+  # what main holds -- and both say so instead of comparing nothing.
+  git -C "$tree" remote set-url origin "$fixture/absent.git"
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  an unreachable base: expected a non-zero exit, got 0\n'
+    result=1
+  elif ! grep -Fq 'cannot fetch origin/main' "$GH_CASE/stderr"; then
+    printf '  an unreachable base was not reported as one:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  git init --quiet --bare "$fixture/empty.git"
+  git -C "$tree" remote set-url origin "$fixture/empty.git"
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  a base with no main on it: expected a non-zero exit, got 0\n'
+    result=1
+  elif ! grep -Fq 'origin/main' "$GH_CASE/stderr"; then
+    printf '  a base with no main on it was not named:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  return "$result"
 }
 
 action_contract() {
@@ -4542,7 +4964,12 @@ action_contract pr_gate_contract readme_quoted_replies
   gate_derivation_handles_every_spelling
   gate_derivation_refuses_each_unmodelled_shape
   gate_merge_commit_is_reported_honestly
-  gate_base_freshness_states)
+  gate_base_freshness_states
+  # Issue 90: a workflow's name is a scope only with the ci type. The wiring
+  # is the primary pin -- the rehearsal beside it extracts whatever the step
+  # body says -- and the states are rehearsed by executing the step the way
+  # the runner hands it to bash, against a real fixture.
+  commit_scope_step_is_wired commit_scope_states)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
