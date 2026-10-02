@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Handle exact issue-assignment commands, using gh for transport."""
 
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -108,6 +109,30 @@ def actor_role(repo, actor):
     return base
 
 
+def cap_reply(repo, actor, caps):
+    """The cap refusal reply for this actor, or None when under every cap.
+
+    Both /claim paths — fresh and takeover — read their limit here, so the
+    two cannot drift: the same role lookup runs, the same search counts, the
+    same two refusals leave the issue untouched. A cap of 0 refuses before
+    the search call; a finite cap searches first.
+    """
+    role = actor_role(repo, actor)
+    cap = caps.get(role)
+    if cap == 0:
+        return (f"@{actor} claiming is disabled for your role ({role}) in "
+                "this repository. A maintainer can still assign you by hand.")
+    if cap is not None and cap > 0:
+        total = open_claims(repo, actor)
+        if total >= cap:
+            claims = "claim" if total == 1 else "claims"
+            return (f"@{actor} you already hold {total} open {claims} in "
+                    f"this repository, and the cap for your role ({role}) is "
+                    f"{cap}. Comment `/unclaim` (or `/release`) on one you "
+                    "are giving up, then `/claim` again.")
+    return None
+
+
 def event_actor(event):
     """The login that performed an assignment event, or None if it names none."""
     if not isinstance(event, dict):
@@ -126,6 +151,97 @@ def event_actor_type(event):
     if not isinstance(actor, dict) or not isinstance(actor.get("type"), str):
         return None
     return actor["type"]
+
+
+def claim_age_days(event):
+    """The age in days of an assignment event, or None when unreadable.
+
+    GitHub's created_at is ISO-8601 and may end in Z. A value that is
+    missing, not a string, timezone-less or unparseable means the age was
+    never established; the caller treats None as NOT expired — an unreadable
+    age removes nothing and says so in the run log.
+    """
+    text = event.get("created_at") if isinstance(event, dict) else None
+    if not isinstance(text, str):
+        return None
+    if text.endswith("Z"):
+        # fromisoformat() reads a trailing Z only from Python 3.11, and a
+        # runner can be older; "+00:00" parses everywhere.
+        text = text[:-1] + "+00:00"
+    try:
+        created = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        return None
+    return (datetime.now(timezone.utc) - created).total_seconds() / 86400
+
+
+def expired_of(current, holders, limit):
+    """Split holders into expired (login, whole days) and unreadable-age logins.
+
+    Expiry is STRICTLY older than `limit` days: exactly limit days old is
+    not expired. A holder whose age cannot be read is not expired — the age
+    was never established, so no claim is removed on it.
+    """
+    expired = []
+    unreadable = []
+    for login in sorted(holders):
+        age = claim_age_days(current.get(login))
+        if age is None:
+            unreadable.append(login)
+        elif age > limit:
+            expired.append((login, int(age)))
+    return expired, unreadable
+
+
+def assignments_are_ours(current, assignees, identity):
+    """True when every current assignment is provably a write this token made.
+
+    Every holder needs a readable current `assigned` event, all those events
+    must share one actor identity, and that identity must be the token's own:
+    the login own_identity() returns, or, for an installation token with no
+    user account, its Bot-typed account. Anything less — a holder with no
+    readable event, identities that disagree, or one identity that is not
+    ours — leaves the writes on the issue unattributable, and only writes the
+    action itself made are ever removed. The tie-break and both expiry paths
+    share this proof through this helper.
+    """
+    identities = {(event_actor(current[login]), event_actor_type(current[login]))
+                  for login in assignees if login in current}
+    if any(login not in current for login in assignees) or len(identities) != 1:
+        return False
+    ((event_login, event_type),) = identities
+    if identity is not None:
+        return event_login.casefold() == identity.casefold()
+    return event_type == "Bot"
+
+
+def holders_text(expired):
+    """The `@login (held N day(s))` list the replies name, in login order."""
+    return " and ".join(
+        f"@{login} (held {days} day(s))" for login, days in expired)
+
+
+def holders_log(expired):
+    """The same list without mentions, for the run log."""
+    return ", ".join(f"{login} (held {days} day(s))" for login, days in expired)
+
+
+def takeover_reply(expired, actor):
+    """The takeover reply: who held how long, and who took over."""
+    claim = "claim" if len(expired) == 1 else "claims"
+    verb = "has" if len(expired) == 1 else "have"
+    return (f"The expired {claim} of {holders_text(expired)} "
+            f"{verb} been taken over by @{actor}.")
+
+
+def release_reply(expired, actor):
+    """The privileged-release reply: who acted, who held, how long."""
+    return (f"@{actor} has released "
+            + " and ".join(f"@{login}'s expired claim (held {days} day(s))"
+                           for login, days in expired)
+            + ".")
 
 
 def assignment_timeline(pages, relevant):
@@ -259,6 +375,23 @@ def main():
                 raise ValueError(malformed)
             caps[role] = None if cap == -1 else cap
 
+    raw_expire = os.environ["EXPIRE"]
+    # The same grammar as max-claims: the single token -1 is the disabled
+    # default, so with nothing configured no expiry code runs at all. The
+    # unit is days. A 0 would expire every claim the moment it is made, so
+    # it is refused as loudly as every other value this run cannot read —
+    # an empty value or a unit suffix fails the same way the max-claims map
+    # fails its unparseable entries.
+    malformed_expire = "invalid expire: expected -1 or a positive integer of days"
+    if raw_expire == "-1":
+        expire_days = None
+    else:
+        if not re.fullmatch(r"[0-9]+", raw_expire):
+            raise ValueError(malformed_expire)
+        expire_days = int(raw_expire)
+        if expire_days == 0:
+            raise ValueError(malformed_expire)
+
     endpoint = f"repos/{repo}/issues/{issue}"
 
     def say(body):
@@ -352,6 +485,34 @@ def main():
 
     if command in ("/unclaim", "/release"):
         if actor not in assignees:
+            if expire_days is not None and assignees:
+                # Privileged release of an expired claim: role first (the
+                # same lookup the cap path does), then timeline → proof →
+                # expiry → act. Anyone below write gets today's refusal with
+                # no timeline call at all; so does an issue holding nothing,
+                # which cannot have anything expired on it.
+                role = actor_role(repo, actor)
+                if role in ("write", "maintain", "admin"):
+                    current = assignment_timeline(json.loads(
+                        gh("--paginate", "--slurp",
+                           f"{endpoint}/events?per_page=100")),
+                        assignees)
+                    if assignments_are_ours(current, assignees, identity):
+                        expired, unreadable = expired_of(
+                            current, assignees, expire_days)
+                        if unreadable:
+                            print("no readable age for: "
+                                  + ", ".join(unreadable))
+                        if expired:
+                            for login, _ in expired:
+                                # DELETE names exactly one login so every
+                                # other assignee stays.
+                                gh("-X", "DELETE", f"{endpoint}/assignees",
+                                   "-f", f"assignees[]={login}", "--silent")
+                            print("released expired claim of "
+                                  + holders_log(expired))
+                            say(release_reply(expired, actor))
+                            return 0
             say(f"@{actor} you are not assigned to this issue, "
                 "so there is nothing to give up.")
             return 0
@@ -364,30 +525,64 @@ def main():
     if assignees:
         if actor in assignees:
             say(f"@{actor} you already have this one.")
-        else:
+            return 0
+        # Takeover of an expired claim: proof → expiry → cap → act. The
+        # proof runs first so an unattributable issue is never touched, the
+        # expiry second so an in-window claim costs no role or search call,
+        # the cap third so a takeover obeys the same limits a fresh claim
+        # would — and whenever nothing proves expired, the refusal is
+        # exactly the one today's code posts.
+        expired = []
+        if expire_days is not None:
+            current = assignment_timeline(json.loads(
+                gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")),
+                assignees)
+            if assignments_are_ours(current, assignees, identity):
+                expired, unreadable = expired_of(current, assignees,
+                                                 expire_days)
+                if unreadable:
+                    print("no readable age for: " + ", ".join(unreadable))
+        if not expired:
             say(f"This issue is already claimed by {mention(assignees)}. "
                 "Comment `/unclaim` (or `/release`) if you are giving it up.")
+            return 0
+        refusal = cap_reply(repo, actor, caps) if caps is not None else None
+        if refusal is not None:
+            say(refusal)
+            return 0
+        for login, _ in expired:
+            # DELETE names exactly one login so every other assignee stays.
+            gh("-X", "DELETE", f"{endpoint}/assignees",
+               "-f", f"assignees[]={login}", "--silent")
+        # The POST's own response is the only place this run can learn
+        # whether ITS assignment was accepted — the same decline
+        # discriminator the fresh-claim path below relies on.
+        assigned = assignee_logins(json.loads(
+            gh("-X", "POST", f"{endpoint}/assignees", "-f",
+               f"assignees[]={actor}")))
+        if actor not in assigned:
+            say(f"GitHub would not accept @{actor} as an assignee here. "
+                "That usually means the account needs to have commented on or been "
+                "granted access to this repository.")
+            return 1
+        confirmed = assignee_logins(snapshot(endpoint))
+        if actor not in confirmed:
+            say(f"GitHub would not accept @{actor} as an assignee here. "
+                "That usually means the account needs to have commented on or been "
+                "granted access to this repository.")
+            return 1
+        print("took over expired claim of " + holders_log(expired))
+        say(takeover_reply(expired, actor))
         return 0
 
     # An unnamed role and an explicit -1 both fall through: unlimited, no
-    # search call. The cap governs only this /claim path — it never counts
-    # against, blocks or removes a manual assignment.
-    if caps is not None:
-        role = actor_role(repo, actor)
-        cap = caps.get(role)
-        if cap == 0:
-            say(f"@{actor} claiming is disabled for your role ({role}) in "
-                "this repository. A maintainer can still assign you by hand.")
-            return 0
-        if cap is not None and cap > 0:
-            total = open_claims(repo, actor)
-            if total >= cap:
-                claims = "claim" if total == 1 else "claims"
-                say(f"@{actor} you already hold {total} open {claims} in "
-                    f"this repository, and the cap for your role ({role}) is "
-                    f"{cap}. Comment `/unclaim` (or `/release`) on one you "
-                    "are giving up, then `/claim` again.")
-                return 0
+    # search call. The cap governs only the /claim paths — fresh and
+    # takeover alike — it never counts against, blocks or removes a manual
+    # assignment.
+    refusal = cap_reply(repo, actor, caps) if caps is not None else None
+    if refusal is not None:
+        say(refusal)
+        return 0
 
     # Assigning is additive: a second claimant is added beside the first rather
     # than refused, so two runs that both read an empty assignee list can both
@@ -439,28 +634,15 @@ def main():
     current = assignment_timeline(json.loads(
         gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")),
         confirmed)
-    # The comprehension's guard and the re-check below are one predicate, not
-    # two: `len(identities) != 1` also catches the empty set, so if the guard
-    # stops skipping logins it does not have, a missing login stops bailing
-    # and the settle runs on an event that was never established.
-    identities = {(event_actor(current[login]), event_actor_type(current[login]))
-                  for login in confirmed if login in current}
     # One shared identity is still not attribution: it has to be THIS
     # token's own write. With a user identity the events' actor login must
     # be it, in either letter case; with no user identity the token is an
     # App installation, whose writes are exactly its Bot-typed account. A
     # maintainer who hand-assigned every holder inside the window shares one
     # identity that is neither, and nothing is removed — their assignment is
-    # not the action's to take away.
-    if any(login not in current for login in confirmed) or len(identities) != 1:
-        ours = False
-    else:
-        ((event_login, event_type),) = identities
-        if identity is not None:
-            ours = event_login.casefold() == identity.casefold()
-        else:
-            ours = event_type == "Bot"
-    if not ours:
+    # not the action's to take away. The tie-break and the expiry paths
+    # prove this through the same helper, so the three can never drift.
+    if not assignments_are_ours(current, confirmed, identity):
         # A login with no readable current event, identities that do not all
         # agree, or an agreement that names somebody else: the writes on this
         # issue cannot be attributed to this action, and changing nothing is
