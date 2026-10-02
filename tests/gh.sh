@@ -83,26 +83,43 @@ fi
 
 # `gh api user` asks who the configured token posts as, and claim.py calls it
 # in every run that gets past the User check. Numbering its answer into the
-# response sequence would renumber every later call of every existing case,
-# so it is answered outside the sequence from its own fixture — the case's
-# identity.response, else the suite-wide default GH_IDENTITY — while still
-# being recorded above like any other call. Like the sequence path below, a
-# missing answer fails loudly instead of inventing one.
+# response sequence would renumber every later call of every existing case, so
+# it is answered outside the sequence while still being recorded above like
+# any other call.
+#
+# The BODY comes from the case's identity.response, else from the suite-wide
+# default GH_IDENTITY. The STATUS and STDERR are the case's alone to state: they
+# are read from identity.response.status and identity.response.stderr in the
+# case directory, whichever of the two body paths won, so a case can say what
+# the answer looked like without having to write a body for it. They used to be
+# read beside whichever body path won instead, which put them out of reach of a
+# case pointing GH_IDENTITY at an absent path — and a probe that failed without
+# writing a word is exactly the answer no case could state (#88).
+#
+# A case that states a status or a stderr with no body is modelling a probe
+# that failed and wrote nothing to stdout, so its stdout is empty here and its
+# exit status is the one stated, or 0 when the case stated none. With no body
+# and no status and no stderr there is no answer at all, and like the sequence
+# path below the stub fails loudly instead of inventing one.
 if [[ $# -eq 2 && $1 == api && $2 == user ]]; then
-  response=$GH_CASE/identity.response
-  if [[ ! -f $response ]]; then
-    response=$GH_IDENTITY
+  answer=$GH_CASE/identity.response
+  answer_status=$answer.status
+  answer_stderr=$answer.stderr
+  if [[ ! -f $answer ]]; then
+    answer=$GH_IDENTITY
   fi
-  if [[ ! -f $response ]]; then
+  if [[ ! -f $answer && ! -f $answer_status && ! -f $answer_stderr ]]; then
     printf 'unexpected gh invocation: %s\n' "$(cat "$GH_CASE/calls.jsonl")" >&2
     exit 91
   fi
-  cat "$response"
-  if [[ -f $response.stderr ]]; then
-    cat "$response.stderr" >&2
+  if [[ -f $answer ]]; then
+    cat "$answer"
   fi
-  if [[ -f $response.status ]]; then
-    exit "$(cat "$response.status")"
+  if [[ -f $answer_stderr ]]; then
+    cat "$answer_stderr" >&2
+  fi
+  if [[ -f $answer_status ]]; then
+    exit "$(cat "$answer_status")"
   fi
   exit 0
 fi
