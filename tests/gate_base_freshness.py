@@ -503,8 +503,18 @@ def check(root):
     paths = gate_paths(root)
     stale = stale_commits(root, head, base, paths)
     if not stale:
+        # "reads", not "reads" with no limit attached. The suites job's merge-
+        # marker step reads EVERY tracked file through the `.` spelling, and this
+        # derivation resolves that to nothing, so the count below is the files a
+        # required check names — not every file one touches. A green line is the
+        # one sentence a maintainer reads on this check, and a sentence that
+        # over-claims here is the same defect as an over-claiming report: it
+        # looks like the set is complete.
         print(f"This head carries every commit on {BASE_BRANCH} that touches "
-              f"the {len(paths)} file(s) the required checks read.")
+              f"the {len(paths)} file(s) a required check reads BY NAME.")
+        print("  A step reading every tracked file — the `.` spelling, which the "
+              "suites\n  job's merge-marker step uses — is a named reach limit "
+              "and is not\n  counted above; see the module docstring.")
         return 0
     plural = "s" if len(stale) != 1 else ""
     print(f"{BASE_BRANCH} holds {len(stale)} commit{plural} this head does not:")
