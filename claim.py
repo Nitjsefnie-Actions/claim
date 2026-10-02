@@ -17,6 +17,19 @@ import sys
 # exists — and for any added later.
 MAX_COMMENT = 65536
 
+# The one message that means "this token has no user account behind it": an
+# App installation token — which the default `${{ github.token }}` is — is
+# refused by `GET /user` with HTTP 403 "Resource not accessible by
+# integration" (verified on an Actions runner 2026-10-01), while a user token
+# answers 200 with its account. Every other refusal is news about the run
+# rather than about the token's shape: a rate limit, a network error, a 5xx, a
+# 401, a 403 saying something else, and folding those into the same answer
+# would silently switch the caller's self-account guard off. gh prints that
+# message on stderr, and only on stderr — the 403 body is JSON carrying the
+# same text, so a matcher that read the body would call a healthy 200 a
+# refusal.
+INSTALLATION_REFUSAL = "Resource not accessible by integration"
+
 
 def gh(*args, stdin=None):
     """Leave authentication, HTTP errors, and rate limits to the CLI."""
@@ -29,23 +42,32 @@ def gh(*args, stdin=None):
 def own_identity():
     """The login this token writes as, or None when it has no user account.
 
-    Best effort on purpose. The default `${{ github.token }}` is an App
-    installation token, and `GET /user` refuses it with HTTP 403 "Resource
-    not accessible by integration" (verified on an Actions runner
-    2026-10-01), while a user token answers 200 with its account. Any
-    non-zero exit therefore means "no user identity available", not a run
-    failure: an unconditional refusal here would have killed every
-    default-token caller at the first line. The callers below each have an
-    answer for a token whose identity cannot be established. A 200 whose
-    body is unreadable is still an error, because proceeding would compare
-    the commenter against an identity that was never established.
+    None is earned by exactly one answer: the nonzero exit whose stderr
+    carries INSTALLATION_REFUSAL, the documented `/user` refusal of an App
+    installation token, which is what the default `${{ github.token }}` is.
+    Every other failure raises, because the caller skips the self-account
+    guard on a None, and an action that cannot say which account its own
+    token writes as must not go on to answer a comment from that account.
+    A 200 whose body is unreadable is an error for the same reason: it too
+    would compare the commenter against an identity never established.
     """
     probe = subprocess.run(
         ["gh", "api", "user"], check=False, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True,
+        stderr=subprocess.PIPE, text=True,
     )
     if probe.returncode != 0:
-        return None
+        if INSTALLATION_REFUSAL in probe.stderr:
+            return None
+        # gh's own words, first line: the run log is where a maintainer reads
+        # why this run stopped, and stderr was captured rather than passed
+        # through, so nothing else would put the reason anywhere.
+        detail = probe.stderr.strip().splitlines()
+        raise ValueError(
+            "cannot establish which account this token posts as: the /user "
+            "lookup failed for a reason other than the documented "
+            "installation-token refusal, and reported: "
+            + (detail[0] if detail else f"nothing, exit status {probe.returncode}")
+        )
     identity = json.loads(probe.stdout)
     if not isinstance(identity, dict) or not isinstance(identity.get("login"), str):
         raise ValueError("identity snapshot must contain a login string")
@@ -364,11 +386,15 @@ def main():
     # the decline is silent because a posted refusal would itself be the
     # next turn.
     identity = own_identity()
-    # identity is None when the token has no user account behind it — the
-    # default `${{ github.token }}` is an App installation token, whose own
-    # comments are Bot-typed, so the User check above has already refused
-    # the only account those replies could come from and the loop is
-    # impossible without this comparison.
+    # identity is None for one answer only: the token has no user account
+    # behind it, because `/user` refused it with the documented
+    # installation-token message — the default `${{ github.token }}` is an
+    # App installation token, whose own comments are Bot-typed, so the User
+    # check above has already refused the only account those replies could
+    # come from and the loop is impossible without this comparison. Every
+    # other `/user` failure ends the run inside own_identity, before
+    # anything is posted or assigned, so reaching this comparison at all
+    # already means an identity was established rather than assumed.
     #
     # GitHub logins are case-insensitive, and the comment event and /user
     # can spell one account with different letter cases; the comparison
