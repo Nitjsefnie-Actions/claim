@@ -2766,6 +2766,7 @@ gate_paths_derived_from_workflows() {
 README.md
 action.yml
 claim.py
+tests/commit_scopes.py
 tests/gate_base_freshness.py
 tests/gh.sh
 tests/identity.response
