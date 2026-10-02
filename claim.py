@@ -302,6 +302,23 @@ def mention(logins):
     return ", ".join("@" + login for login in logins)
 
 
+def control_escape(text):
+    """Escape every C0/C1 control character in text as its \\xNN spelling.
+
+    C0 is U+0000-U+001F and C1 is U+0080-U+009F, and ESC (U+001B) is the
+    motivating one: the Actions run log renders ANSI sequences, so a raw
+    control character in a declined line recolours or swallows the log's
+    own diagnosis instead of being shown, and the reply carries the same
+    character into the posted comment. Text with no control character is
+    returned unchanged, so a plain decline reads exactly as it always did.
+    """
+    return re.sub(
+        "[\x00-\x1f\x80-\x9f]",
+        lambda found: f"\\x{ord(found.group()):02x}",
+        text,
+    )
+
+
 def main():
     # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
     command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
@@ -449,10 +466,15 @@ def main():
             if started is None:
                 continue
             word = started.group(1)
-            print(f"not a command: {word} on line {number}: {line}")
+            # The line reaches two sinks that render control characters
+            # instead of showing them: the Actions run log executes ANSI
+            # escapes, and the reply carries the line into the posted
+            # comment. Both take the \xNN spellings.
+            escaped = control_escape(line)
+            print(f"not a command: {word} on line {number}: {escaped}")
             # The line's own backticks are escaped so they cannot end the code
             # span the reply quotes it in.
-            quoted = line.replace("`", "\\`")
+            quoted = escaped.replace("`", "\\`")
             say(f"Not a command: `{word}` on line {number}: `{quoted}`. "
                 "Comment one of `/claim`, `/unclaim` or `/release` on its "
                 "own, optionally followed by the issue number, for example "
