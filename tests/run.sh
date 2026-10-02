@@ -3323,8 +3323,10 @@ if not checkout[0] < at < lint[0]:
 # the other direction: a `paths:` allow-list stops the gate running on main
 # after any unrelated change, and no pull request ever blocks to say so, while
 # a `paths-ignore:` deny-list merely skips a documentation-only push. So a
-# `paths-ignore:` key -- or no path filter at all -- is fine on push, and only
-# a `paths:` key is refused.
+# `paths-ignore:` key -- or no path filter at all -- is fine on push, and a
+# `paths:` key is refused -- as is any key spelling this line-level reader
+# cannot decode, because an undecodable filter cannot be told from an
+# allow-list.
 sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
 from gate_base_freshness import REQUIRED_JOBS
 
