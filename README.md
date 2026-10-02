@@ -87,6 +87,16 @@ in first-in, first-out order — GitHub's documented cap — and cancels any
 further run once the queue is full. The ordering follows when each run
 started waiting, and GitHub notes it is not guaranteed. It cannot be
 combined with `cancel-in-progress: true`, which this block never sets.
+Stock actionlint 1.7.12 — the current upstream release, which many
+repositories run as a required gate — does not know this key and rejects
+the workflow with `unexpected key "queue" for "concurrency" section`. If
+that gate is yours, the ways out are an `ignore` pattern scoped to that one
+finding (the `-ignore` flag, or the `ignore` list under `paths:` in the
+actionlint config file — the inline `# actionlint: ignore` comment does not
+silence this one) or a patched build: Nitjsefnie-OSC/actionlint carries
+upstream rhysd/actionlint#654 as v1.7.12-queue.1, which accepts the block.
+Dropping `queue:` also passes, returning the block to the default
+single-pending-run queue described above.
 
 That group is per repository and per workflow, though, so a caller without
 that exact group — or with it under another name — gets no protection from it.
