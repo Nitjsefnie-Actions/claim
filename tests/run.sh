@@ -3751,6 +3751,166 @@ YAML
   return "$result"
 }
 
+# The name reader refuses a shape it cannot read rather than guessing a name
+# out of it, and a refusal branch no case holds dies silently: deleting one
+# branch would shrink the set on exactly the workflows that shape spells, and
+# every suite would stay green. Each shape's case is its own function so one
+# broken branch reds exactly its own case, and each is a pin over the reader
+# directly: the discriminating power is the branch and the file the refusal
+# names, and the plumbing -- a refusal arriving through the step as a run
+# verdict -- is already rehearsed by the unnamed-workflow state in
+# commit_scope_states. The healthy reader needs no control here: every green
+# state in that case derives real workflow names through it.
+
+# Five shapes, one reader call each. The fixtures are text: the reader reads
+# blobs, and a checkout of a workflow carrying the shape is content the unit
+# pin already holds as text.
+
+commit_scope_refuses_a_quoted_name() {
+  python3 - "$ROOT" <<'PYNAME'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "commit_scopes", Path(sys.argv[1]) / "tests" / "commit_scopes.py")
+commit_scopes = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(commit_scopes)
+FILE = "workflow.yml"
+TEXT = 'name: "tests"\non:\n  push:\n'
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+try:
+    commit_scopes.workflow_name(FILE, TEXT)
+except commit_scopes.GateError as refusal:
+    if FILE not in str(refusal):
+        fail(f"the refusal did not name {FILE}: {refusal}")
+    raise SystemExit(0)
+fail("a quoted `name:` value was read instead of refused")
+PYNAME
+}
+
+commit_scope_refuses_a_valueless_name() {
+  python3 - "$ROOT" <<'PYNAME'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "commit_scopes", Path(sys.argv[1]) / "tests" / "commit_scopes.py")
+commit_scopes = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(commit_scopes)
+FILE = "workflow.yml"
+TEXT = "name:\non:\n  push:\n"
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+try:
+    commit_scopes.workflow_name(FILE, TEXT)
+except commit_scopes.GateError as refusal:
+    if FILE not in str(refusal):
+        fail(f"the refusal did not name {FILE}: {refusal}")
+    raise SystemExit(0)
+fail("a valueless `name:` was read instead of refused")
+PYNAME
+}
+
+commit_scope_refuses_a_commented_name() {
+  python3 - "$ROOT" <<'PYNAME'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "commit_scopes", Path(sys.argv[1]) / "tests" / "commit_scopes.py")
+commit_scopes = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(commit_scopes)
+FILE = "workflow.yml"
+TEXT = "name: tests # renamed\non:\n  push:\n"
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+try:
+    commit_scopes.workflow_name(FILE, TEXT)
+except commit_scopes.GateError as refusal:
+    if FILE not in str(refusal):
+        fail(f"the refusal did not name {FILE}: {refusal}")
+    raise SystemExit(0)
+fail("a `name:` carrying a trailing comment was read instead of refused")
+PYNAME
+}
+
+commit_scope_refuses_a_continued_name() {
+  python3 - "$ROOT" <<'PYNAME'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "commit_scopes", Path(sys.argv[1]) / "tests" / "commit_scopes.py")
+commit_scopes = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(commit_scopes)
+FILE = "workflow.yml"
+TEXT = "name: tests\n  continued\non:\n  push:\n"
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+try:
+    commit_scopes.workflow_name(FILE, TEXT)
+except commit_scopes.GateError as refusal:
+    if FILE not in str(refusal):
+        fail(f"the refusal did not name {FILE}: {refusal}")
+    raise SystemExit(0)
+fail("a `name:` continued onto an indented line was read as one line")
+PYNAME
+}
+
+commit_scope_refuses_a_duplicated_name() {
+  python3 - "$ROOT" <<'PYNAME'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    "commit_scopes", Path(sys.argv[1]) / "tests" / "commit_scopes.py")
+commit_scopes = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(commit_scopes)
+FILE = "workflow.yml"
+TEXT = "name: tests\nname: other\non:\n  push:\n"
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+try:
+    commit_scopes.workflow_name(FILE, TEXT)
+except commit_scopes.GateError as refusal:
+    if FILE not in str(refusal):
+        fail(f"the refusal did not name {FILE}: {refusal}")
+    raise SystemExit(0)
+fail("a second top-level `name:` was tolerated instead of refused")
+PYNAME
+}
+
 action_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -4969,7 +5129,12 @@ action_contract pr_gate_contract readme_quoted_replies
   # is the primary pin -- the rehearsal beside it extracts whatever the step
   # body says -- and the states are rehearsed by executing the step the way
   # the runner hands it to bash, against a real fixture.
-  commit_scope_step_is_wired commit_scope_states)
+  commit_scope_step_is_wired commit_scope_states
+  # The name reader's refusal shapes, one case per branch so a broken branch
+  # reds exactly its own case.
+  commit_scope_refuses_a_quoted_name commit_scope_refuses_a_valueless_name
+  commit_scope_refuses_a_commented_name commit_scope_refuses_a_continued_name
+  commit_scope_refuses_a_duplicated_name)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"
