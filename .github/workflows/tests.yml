@@ -3,10 +3,21 @@ name: tests
 # Linux-only checks cannot establish macOS portability. Both platforms run
 # the same real-subprocess behavioral suite, including the bash API stub.
 #
-# The suite stays install-free by design: everything it runs ships with
-# the images -- bash, python3, and shellcheck -- and tests/gh.sh supplies
-# the API stub. The file's one package install is the lint step's
-# hash-pinned ruff into a throwaway venv, which no image preinstalls.
+# The suite stays install-free by design (#87): everything it runs ships with
+# the images -- bash, python3, and shellcheck -- and tests/gh.sh supplies the
+# API stub. The file's only package installs are the workflow's own: the lint
+# step's hash-pinned ruff and the coverage cell's hash-pinned coverage, each
+# lifted out of the manifest into a throwaway venv, which no image preinstalls.
+#
+# Coverage is measured on exactly one cell so the reported number names a
+# single reproducible environment. claim.py runs as a SUBPROCESS of the suite
+# (the gh stub is a bash script), so `coverage run tests/run.sh` measures
+# nothing of it: the measurer must start inside every python3 the suite
+# starts. The Install coverage tooling step writes coverage's startup hook
+# into that venv and arms COVERAGE_PROCESS_START, so that is where it starts
+# -- and on every other cell the step is skipped, and the suite runs exactly
+# as it always has. The floor lives in .github/ci-thresholds.json and is
+# never restated here; the summary renders whether or not the gate fails.
 
 on:
   push:
@@ -131,7 +142,7 @@ jobs:
           persist-credentials: false
 
       - name: Check no tracked file carries a merge-conflict marker
-        # a3363ac landed on main with `<<<<<<< HEAD` and the `>>>>>>> 0d9bffc`
+        # a3363ac landed on main with ` and the `>>>>>>> 0d9bffc`
         # line still in README.md, and three review rounds and every gate in
         # this repository read straight past them: a conflict marker is text
         # that looks like prose in a Markdown file, so only a mechanical check
@@ -187,7 +198,50 @@ jobs:
           awk '/^ruff==/{f=1} f{print; if ($0 !~ /\\$/) exit}' .github/workflows/requirements.txt > "$RUNNER_TEMP/ruff.txt"
           "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/ruff.txt"
           "$RUNNER_TEMP/lint-venv/bin/ruff" check --select E9,F63,F7,F82 claim.py
+      # One install step, on the measured cell only: it lifts the coverage
+      # block out of the hash-pinned manifest into a venv (PEP 668 marks both
+      # hosted images' system python externally managed, so a plain pip
+      # install fails), writes coverage's startup hook into that venv, and
+      # arms the three env vars the rest of the job inherits through
+      # GITHUB_ENV -- PATH first, so the suite's run step and the coverage
+      # commands below resolve the venv's python3. The run step stays
+      # byte-for-byte what it was, and on every other cell the step is
+      # skipped, and the suite runs exactly as before.
+      - name: Install coverage tooling
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/coverage-venv"
+          awk '/^coverage==/{f=1} f{print; if ($0 !~ /\\$/) exit}' .github/workflows/requirements.txt > "$RUNNER_TEMP/coverage.txt"
+          "$RUNNER_TEMP/coverage-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/coverage.txt"
+          site_dir="$("$RUNNER_TEMP/coverage-venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          printf 'import coverage; coverage.process_startup()\n' > "$site_dir/00-claim-coverage-subprocess.pth"
+          mkdir -p "$RUNNER_TEMP/claim-coverage"
+          {
+            echo "PATH=$RUNNER_TEMP/coverage-venv/bin:$PATH"
+            echo "COVERAGE_PROCESS_START=$PWD/.coveragerc"
+            echo "COVERAGE_FILE=$RUNNER_TEMP/claim-coverage/.coverage"
+          } >> "$GITHUB_ENV"
 
       - name: Run the behavioral suite
         shell: bash
         run: tests/run.sh
+
+      # The suite's python3 processes each wrote their own data file (parallel
+      # mode in .coveragerc), so they are combined before anything reads a
+      # total; the summary renders whether or not the gate fails. Every
+      # coverage command names its config with --rcfile so the steps do not
+      # lean on coverage's working-directory discovery.
+      - name: Record the coverage summary
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 -m coverage combine --rcfile=.coveragerc
+          python3 -m coverage report --format=markdown --precision=1 --rcfile=.coveragerc >> "$GITHUB_STEP_SUMMARY"
+
+      # The floor is read from the committed file rather than restated here, so
+      # a floor change is a diff to the file a reviewer sees, not a buried
+      # literal in the step.
+      - name: Coverage gate
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          floor="$(python3 -c 'import json; print(json.load(open(".github/ci-thresholds.json"))["coverage"]["python"]["floor"])')"
+          python3 -m coverage report --fail-under="$floor" --precision=1 --rcfile=.coveragerc
