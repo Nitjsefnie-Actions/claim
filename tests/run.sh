@@ -4440,7 +4440,7 @@ expected = {
     "jobs/pr-gate/runs-on": "ubuntu-latest",
     "jobs/pr-gate/timeout-minutes": 5,
     "jobs/pr-gate/steps/0/uses":
-        "Nitjsefnie-Actions/pr-gate@39b1b91ed861dbb070629e34bf63fe25b916e54d",
+        "Nitjsefnie-Actions/pr-gate@bd6aa28fa8a82ef12c1afb61a46f41f23742f26a",
     "jobs/pr-gate/steps/0/with/github-token": "${{ github.token }}",
     "jobs/pr-gate/steps/0/with/repository": "${{ github.repository }}",
     "jobs/pr-gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
