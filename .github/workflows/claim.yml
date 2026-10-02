@@ -23,3 +23,4 @@ jobs:
       - uses: Nitjsefnie-Actions/claim@ceaadaa096fd249cdeecc137342158ec17347cb9
         with:
           max-claims: 'read=2, triage=4, write=6, maintain=10, admin=-1'
+          expire: '7'
