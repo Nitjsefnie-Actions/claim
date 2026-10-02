@@ -9,6 +9,7 @@
 tests/*
 !tests/run.sh
 !tests/gh.sh
+!tests/commit_scopes.py
 !tests/gate_base_freshness.py
 !tests/identity.response
 !README.md
