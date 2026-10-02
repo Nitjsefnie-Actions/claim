@@ -3534,6 +3534,210 @@ for node, value in expected.items():
 PY
 }
 
+# The CodeQL matrix, read by structure: the languages it names, whether every
+# entry is complete, and whether anything reads the value they are named by.
+#
+# The third limb is what a pin on the file's text cannot give. A matrix entry
+# nothing consumes analyses nothing — GitHub still runs the job, `init`
+# extracts its default language set, and the SARIF lands with no category the
+# run can be found by. So this reads the init step's `languages:` and the
+# analyze step's `category:` and requires both to interpolate `matrix.language`.
+#
+# `python` is the one membership requirement held by hand, and it is held by
+# hand for a checkable reason: the offline oracle for "which languages does
+# CodeQL offer this repository" is the live `code-scanning/default-setup` API —
+# `gh api repos/Nitjsefnie-Actions/claim/code-scanning/default-setup --jq
+# .languages` answers ["actions","python"] — and a test cannot call it, so the
+# matrix is where that answer is recorded. It is deliberately a membership test
+# and not an equality, so a third language a maintainer adds legitimately does
+# not have to rewrite this pin to go green.
+#
+# The reader accepts this workflow's explicit block layout without a YAML
+# dependency — tests/run.sh imports no yaml and the job installs no packages —
+# and refuses on anything it does not model rather than guessing.
+codeql_matrix_covers_python() {
+  python3 - "$ROOT" <<'PYCODEQL'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1]) / ".github/workflows/codeql.yml"
+
+
+def refuse(reason):
+    print(f"codeql_matrix_covers_python: {reason}", file=sys.stderr)
+    raise SystemExit(3)
+
+
+def strip_comment(raw):
+    # The line without its trailing comment. `#` inside quotes, or with no
+    # space before it, is a value character; `#` outside quotes after a space
+    # opens a comment, as it does in YAML.
+    quote = None
+    for index, char in enumerate(raw):
+        if quote is not None:
+            if char == quote:
+                quote = None
+        elif char in "'\"":
+            quote = char
+        elif char == "#" and (index == 0 or raw[index - 1] == " "):
+            return raw[:index].rstrip()
+    return raw.rstrip()
+
+
+def quoted_scalar(text):
+    if text.startswith("'"):
+        if not re.fullmatch(r"'(?:[^']|'')*'", text):
+            refuse(f"unsupported single-quoted YAML scalar: {text}")
+        return text[1:-1].replace("''", "'")
+    if text.startswith('"'):
+        if not re.fullmatch(r'"[^"\\]*"', text):
+            refuse(f"unsupported double-quoted YAML escape: {text}")
+        return text[1:-1]
+    return text
+
+
+if not path.is_file():
+    refuse("the codeql workflow must exist")
+
+# The block layout, walked line by line: every node's path is its own path plus
+# its key, and a `- ` entry is keyed by its position under its parent.
+nodes = {}
+parents = [(-1, ())]
+sequences = {}
+for raw in path.read_text().splitlines():
+    line = strip_comment(raw)
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    indent = len(line) - len(line.lstrip(" "))
+    while parents[-1][0] >= indent:
+        parents.pop()
+    parent = parents[-1][1]
+    entry = line.strip()
+    if entry.startswith("- "):
+        index = sequences.get(parent, 0)
+        sequences[parent] = index + 1
+        parent += (str(index),)
+        nodes[parent] = None
+        parents.append((indent, parent))
+        indent += 2
+        entry = entry[2:]
+        # A block sequence usually holds mappings, but `paths-ignore:` and
+        # `cron:` hold plain scalars. An entry is read as a scalar only when
+        # it cannot be a mapping; an ambiguous one is refused, not guessed.
+        if entry[:1] in ("'", '"') or ":" not in entry:
+            nodes[parent] = quoted_scalar(entry)
+            parents.pop()
+            continue
+    pair = re.fullmatch(r"([^:]+):(?:\s+(.*))?", entry)
+    if not pair:
+        refuse(f"expected explicit workflow mapping: {raw}")
+    key, value = quoted_scalar(pair[1].strip()), pair[2]
+    if value is not None:
+        value = value.strip()
+        if value[:1] in ("'", '"'):
+            value = quoted_scalar(value)
+        elif value in ("true", "false"):
+            value = value == "true"
+        elif value.isdecimal():
+            value = int(value)
+        elif value[:1] in ("{", "["):
+            # A flow collection. `{}` is an empty mapping and contributes no
+            # keys, so `permissions: {}` is read exactly as a leaf; any other
+            # one hides structure this reader cannot walk.
+            if value != "{}":
+                refuse(f"refusing a flow collection this reader does not model: {key}: {value}")
+        elif re.search(r":(\s|$)", value):
+            # Two mappings on one line. Read as one mapping it would answer a
+            # question the document does not answer — `language: python:3` a
+            # line-at-a-time reader takes for a language called `python:3`.
+            refuse(f"two mappings on one line, which this reader refuses to "
+                   f"choose between: {raw}")
+        if isinstance(value, str) and value.startswith("${{") and value.endswith("}}"):
+            value = "${{ " + value[3:-2].strip() + " }}"
+    node = parent + (key,)
+    if node in nodes:
+        refuse(f"duplicate workflow key: {node}")
+    nodes[node] = value
+    if value is None:
+        parents.append((indent, node))
+
+
+def block(*parts):
+    # A path that must be a block, because what this case reads lives under it.
+    node = ()
+    for key in parts:
+        node += (key,)
+        if node not in nodes:
+            refuse(f"the codeql workflow declares no {'.'.join(node)}")
+        if nodes[node] is not None:
+            refuse(f"{'.'.join(node)} is written inline, not as a block")
+    return node
+
+
+def want(node, expected, why):
+    actual = nodes.get(node, "<absent>")
+    assert actual == expected, f"{'.'.join(node)} is {actual!r}, not {expected!r}: {why}"
+
+
+# 1. include is a non-empty sequence and every entry is complete. Walked, not
+# hard-coded: the matrix is expected to grow, and an entry that grows into
+# itself incomplete is the regression this is here for.
+include = block("jobs", "analyze", "strategy", "matrix", "include")
+entries = sorted({node[len(include)] for node in nodes
+                  if node[:len(include)] == include and len(node) == len(include) + 1})
+assert entries, (
+    "jobs.analyze.strategy.matrix.include declares no entries, so the job "
+    f"analyses no language at all: {sorted(nodes)}")
+for index in entries:
+    held = sorted(node[len(include) + 1] for node in nodes
+                  if node[:len(include) + 1] == include + (index,)
+                  and len(node) == len(include) + 2)
+    for key in ("language", "build-mode"):
+        assert key in held, (
+            f"matrix entry {index} declares no {key}: it holds {held}, and init "
+            f"is handed an empty {key} for it")
+
+
+# 2. python is one of the languages the entries name. The hand-held membership,
+# for the reason the comment above records.
+languages = {nodes[include + (index, "language")] for index in entries}
+assert "python" in languages, (
+    "no matrix entry declares `language: python`, so claim.py — the program "
+    "that parses the untrusted comment body — is never analysed: the matrix "
+    f"names {sorted(map(str, languages))}")
+
+
+# 3. The value is consumed, not merely declared: the init step analyses
+# matrix.language, and the analyze step files it under that language's category.
+steps = block("jobs", "analyze", "steps")
+step_names = sorted({node[len(steps)] for node in nodes
+                     if node[:len(steps)] == steps and len(node) == len(steps) + 1})
+
+
+def step_using(action):
+    found = [index for index in step_names
+             if str(nodes.get(steps + (index, "uses"), "")).startswith(
+                 f"github/codeql-action/{action}@")]
+    if len(found) != 1:
+        refuse(f"expected exactly one github/codeql-action/{action} step, "
+               f"found {len(found)}: the job would analyse or file nothing")
+    return found[0]
+
+
+init_with = block("jobs", "analyze", "steps", step_using("init"), "with")
+analyze_with = block("jobs", "analyze", "steps", step_using("analyze"), "with")
+want(init_with + ("languages",),
+     "${{ matrix.language }}",
+     "each matrix entry would otherwise reach the analysis of some default "
+     "language set rather than its own")
+want(analyze_with + ("category",),
+     "/language:${{ matrix.language }}",
+     "the SARIF would land with no category naming the language, so a run "
+     "could not be found by the language it analysed")
+PYCODEQL
+}
+
 # The suite, grouped by what it is about. #45, #50 and #51 are the branch;
 # everything else predates it. The three long-body groups are the ones whose
 # size arithmetic is worth knowing before changing: a reply crosses GitHub's
@@ -3635,7 +3839,7 @@ cases=(
   expire_release_integration_token expire_release_multiple_expired
   expire_release_no_assignees
   # The manifests this action is.
-  action_contract pr_gate_contract readme_quoted_replies
+action_contract pr_gate_contract readme_quoted_replies codeql_matrix_covers_python
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
   gate_derivation_handles_every_spelling
