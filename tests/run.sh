@@ -462,11 +462,42 @@ cap_custom_role_folds_to_base() {
   run_claim 0
 }
 
-# Five malformed values, five cases, one refusal: a negative below -1, a
+# Whitespace around an entry is stripped with the entry, never parsed:
+# leading/trailing whitespace on the whole value and around a comma both
+# land, and the accepted run is byte-for-byte the read=2, write=6 case
+# the plain spelling runs.
+cap_whitespace_around_entries_accepted() {
+  body=/claim
+  MAX_CLAIMS=' read=2 , write=6 '
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":5,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# A tab strips like a space — strip() takes all whitespace, not just
+# spaces — so the entry grammar sees write=6 clean. Same proceed case.
+cap_tab_after_comma_accepted() {
+  body=/claim
+  MAX_CLAIMS=$'read=2,\twrite=6'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":5,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# Six malformed values, six cases, one refusal: a negative below -1, a
 # role the map cannot name, a duplicate key whose winner would depend on
-# entry order, a cap that is not an integer, and an entry that strips to
-# nothing. Each fails the run before any API call beyond the identity
-# lookup — the empty expected/recorded diff pins that.
+# entry order, a cap that is not an integer, an entry that strips to
+# nothing, and whitespace inside an entry, which stripping cannot reach.
+# Each fails the run before any API call beyond the identity lookup —
+# the empty expected/recorded diff pins that.
 cap_malformed_value_negative_cap() {
   body=/claim
   MAX_CLAIMS='read=-2'
@@ -503,6 +534,16 @@ cap_malformed_value_non_integer() {
 cap_malformed_value_empty_entry() {
   body=/claim
   MAX_CLAIMS='read=2,'
+  expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
+  run_claim 1
+}
+
+# Whitespace inside an entry is the one place stripping does not reach:
+# read =2 keeps its space and fails the grammar like any other value
+# the run cannot read.
+cap_space_inside_entry_refused() {
+  body=/claim
+  MAX_CLAIMS='read =2'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
@@ -3525,9 +3566,11 @@ cases=(
   cap_disabled_no_search_call cap_unlimited_role_skips_counting cap_under_limit_proceeds
   cap_refuses_at_limit cap_zero_forbids_role cap_minus_one_entry_is_unlimited
   cap_triage_role cap_custom_role_folds_to_base
+  cap_whitespace_around_entries_accepted cap_tab_after_comma_accepted
   cap_malformed_value_negative_cap cap_malformed_value_unknown_role
   cap_malformed_value_duplicate_key cap_malformed_value_non_integer
-  cap_malformed_value_empty_entry cap_malformed_role_snapshot
+  cap_malformed_value_empty_entry cap_space_inside_entry_refused
+  cap_malformed_role_snapshot
   cap_role_snapshot_not_an_object cap_custom_role_base_unreadable
   cap_role_lookup_failure cap_malformed_search_response cap_search_transport_failure
   # Claim expiry: the input grammar, the lazy default, and both expiry
