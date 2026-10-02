@@ -132,7 +132,11 @@ def no_block_scalar(lines):
         text = entry[2].strip()
         if text.startswith("- "):
             text = text[2:]
-        _, colon, value = text.partition(":")
+        # The header is line-final, so the LAST colon separates it: a plain
+        # key may carry a colon that no space follows (`ru:n: |` is real
+        # YAML), and partitioning on the first would read the key for the
+        # value and let the scalar through.
+        _, colon, value = text.rpartition(":")
         head = value.strip()[:1]
         if colon and head in ("|", ">"):
             refuse(entry[2], "a block scalar this pin does not model")
