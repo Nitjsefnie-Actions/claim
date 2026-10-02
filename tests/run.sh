@@ -3386,6 +3386,192 @@ for marker, render in (("taken over by", claim.takeover_reply),
 PY
 }
 
+# The Install block's `if:` and claim.yml's `if:` are two hand-kept copies of
+# one literal, and the only gate that reads both files — actionlint.yml's
+# "Check the README pin matches claim.yml" step — compares the action pins and
+# nothing else. Editing either copy alone therefore shipped green. This case
+# reads the condition out of BOTH files, each through its own parse of its own
+# text, with a reader that models only the shapes these two files use — a
+# block-scalar body (whose `#`-initial lines are content there and refuse
+# rather than strip), an on-key-line plain or quoted scalar (whose
+# deeper-indented continuation lines refuse rather than join), and the wrapper
+# forms around those — and refuses every shape outside that set, so a
+# condition it cannot read is a red refusal and never a guessed one. The two
+# sides are compared with whitespace folded: the folded `>-` scalar's line
+# breaks and the more-indented `||` continuation lines compare equal, so only
+# a difference in the condition's tokens reddens.
+readme_install_condition_matches_claim_yml() {
+  python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+
+
+def refuse(path, why):
+    raise AssertionError(f"{path}: {why}")
+
+
+def quoted_scalar(path, text):
+    if text.startswith("'"):
+        assert re.fullmatch(r"'(?:[^']|'')*'", text), \
+            f"{path}: unsupported single-quoted YAML scalar: {text!r}"
+        return text[1:-1].replace("''", "'")
+    if text.startswith('"'):
+        assert re.fullmatch(r'"[^"\\]*"', text), \
+            f"{path}: unsupported double-quoted YAML escape: {text!r}"
+        return text[1:-1]
+    return text
+
+
+def condition_of(path, text):
+    """jobs.claim.if read out of one manifest, refusing every shape outside
+    the set modelled below."""
+    significant = []
+    for line in text.splitlines():
+        lead = line[: len(line) - len(line.lstrip(" "))]
+        if "\t" in lead:
+            refuse(path, f"tab-indented line, which YAML forbids: {line!r}")
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # A full-line comment rides along flagged, not dropped: inside a
+        # block-scalar body a `#`-initial line is CONTENT per YAML, and only
+        # the body collector below may decide what one means.
+        significant.append((len(lead), stripped, stripped.startswith("#")))
+
+    # Exactly one top-level `jobs:` block. A flow mapping (`jobs: {…}`) or any
+    # other inline value is refused, never read.
+    inline = [s for indent, s, comment in significant
+              if indent == 0 and not comment
+              and s.startswith("jobs:") and s != "jobs:"]
+    assert not inline, (
+        f"{path}: `jobs:` carries an inline value this reader does not model: "
+        f"{inline[0]!r}")
+    jobs_at = [i for i, (indent, s, comment) in enumerate(significant)
+               if indent == 0 and not comment and s == "jobs:"]
+    assert len(jobs_at) == 1, (
+        f"{path}: expected exactly one top-level `jobs:` block mapping, "
+        f"found {len(jobs_at)}")
+
+    start = jobs_at[0] + 1
+    stop = next((i for i in range(start, len(significant))
+                 if significant[i][0] == 0 and not significant[i][2]),
+                len(significant))
+    jobs_block = significant[start:stop]
+
+    inline = [s for indent, s, comment in jobs_block
+              if indent == 2 and not comment
+              and s.startswith("claim:") and s != "claim:"]
+    assert not inline, (
+        f"{path}: `claim:` carries an inline value this reader does not model: "
+        f"{inline[0]!r}")
+    claims_at = [i for i, (indent, s, comment) in enumerate(jobs_block)
+                 if indent == 2 and not comment and s == "claim:"]
+    assert len(claims_at) == 1, (
+        f"{path}: expected exactly one `claim:` job at indent 2 under jobs:, "
+        f"found {len(claims_at)}")
+
+    start = claims_at[0] + 1
+    stop = next((i for i in range(start, len(jobs_block))
+                 if jobs_block[i][0] <= 2 and not jobs_block[i][2]),
+                len(jobs_block))
+    job_block = jobs_block[start:stop]
+
+    # Only a key at indent 4 is the job's own condition: a step's `if:` sits
+    # at indent 6 and deeper, inside `steps:`, and must not be picked up.
+    ifs_at = [i for i, (indent, s, comment) in enumerate(job_block)
+              if indent == 4 and not comment and s.startswith("if:")]
+    assert len(ifs_at) == 1, (
+        f"{path}: expected exactly one job-level `if:` at indent 4 in the "
+        f"claim job, found {len(ifs_at)}")
+    rest = job_block[ifs_at[0]][1][len("if:"):].strip()
+    assert rest, (
+        f"{path}: `if:` carries no value on its key line and no block scalar "
+        f"header; an `if:` value on a following line is a shape this reader "
+        f"does not model")
+
+    if rest[0] in "|>":
+        # The shape both files use: a block scalar. Its header is `|` or `>`
+        # with an optional indentation indicator and an optional chomping
+        # indicator in either order; anything else is not read. The body is
+        # the lines more indented than the key, joined — the caller folds
+        # whitespace, so the join owes nothing to YAML's folding rules. A
+        # `#`-initial line among them is body content per YAML, never a
+        # comment, so it is refused rather than stripped: dropping it would
+        # let an edit to the condition hide inside the scalar and read green.
+        assert re.fullmatch(r"[|>](?:[1-9][+-]?|[+-][1-9]?)?", rest), \
+            f"{path}: unrecognized block scalar header: {rest!r}"
+        body = []
+        for indent, s, comment in job_block[ifs_at[0] + 1:]:
+            if comment:
+                if indent > 4:
+                    refuse(path, f"a `#`-initial line inside a block scalar "
+                                 f"body, which is content there and not a "
+                                 f"comment: {s!r}")
+                break
+            if indent <= 4:
+                break
+            body.append(s)
+        return " ".join(body)
+
+    if rest[:1] in ("'", '"'):
+        value = quoted_scalar(path, rest)
+    else:
+        assert " #" not in rest, (
+            f"{path}: trailing comment in a plain scalar, which this reader "
+            f"does not model: {rest!r}")
+        assert rest[0] not in "&*!?%@`{[", (
+            f"{path}: a value opening with the indicator {rest[0]!r} is a "
+            f"shape this reader does not model: {rest!r}")
+        value = rest
+    if value.startswith("${{") and value.endswith("}}"):
+        value = value[3:-2].strip()
+    assert "${{" not in value and "}}" not in value, (
+        f"{path}: embedded expression this reader does not model: {rest!r}")
+    # An on-key-line scalar ends at its own line: per YAML a deeper-indented
+    # line after one CONTINUES the scalar, so an extra conjunct indented past
+    # the key would silently join a condition this reader never reads. It is
+    # refused, never skipped. A `#` line is a real comment outside a block
+    # scalar, and stays skipped, as everywhere above.
+    followers = [(indent, s) for indent, s, comment
+                 in job_block[ifs_at[0] + 1:] if not comment]
+    if followers and followers[0][0] > 4:
+        refuse(path, f"a continuation line after an on-key-line `if:` value "
+                     f"is a shape this reader does not model: "
+                     f"{followers[0][1]!r}")
+    return value
+
+
+readme = (root / "README.md").read_text(encoding="utf-8")
+workflow = (root / ".github/workflows/claim.yml").read_text(encoding="utf-8")
+
+# The Install block's fence is the one yaml fence whose content carries a
+# top-level `jobs:` key line: the README's other yaml fence quotes a `with:`
+# block, and must not match. Zero or two candidates is a README this case
+# cannot read, not a comparison it guesses at.
+fences = re.findall(r"^```yaml\n(.*?)\n```", readme, re.M | re.S)
+installs = [fence for fence in fences if re.search(r"^jobs:\s*$", fence, re.M)]
+assert len(installs) == 1, (
+    f"expected exactly one ```yaml fence in README.md whose content carries a "
+    f"top-level `jobs:` key line, found {len(installs)} among {len(fences)} "
+    f"yaml fence(s)")
+
+
+def fold(text):
+    return " ".join(text.split())
+
+
+readme_condition = fold(condition_of("README.md install block", installs[0]))
+workflow_condition = fold(condition_of(".github/workflows/claim.yml", workflow))
+assert readme_condition == workflow_condition, (
+    "the README install block's job condition drifted from claim.yml's:"
+    f"\n  README.md: {readme_condition!r}"
+    f"\n  claim.yml: {workflow_condition!r}")
+PY
+}
+
 # The tripwire for the tripwire. The stub's refusal is what lets a case tell
 # an answered command from an unanswered one, and its stdin handling is what
 # lets a case see the comment body at all, so both doors need a case of their
@@ -4303,8 +4489,12 @@ cases=(
   expire_release_write_role_inside_window expire_release_proof_fails
   expire_release_integration_token expire_release_multiple_expired
   expire_release_no_assignees
-  # The manifests this action is.
-action_contract pr_gate_contract readme_quoted_replies codeql_matrix_covers_python
+  # The manifests this action is, and the literals it keeps in more than one
+  # file: the replies the README quotes (held against claim.py) and the
+  # install block's job condition (held against claim.yml — actionlint.yml's
+  # pin step compares the pins alone, so no other gate sees this pair drift).
+action_contract pr_gate_contract readme_quoted_replies
+  readme_install_condition_matches_claim_yml codeql_matrix_covers_python
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
   gate_derivation_handles_every_spelling
