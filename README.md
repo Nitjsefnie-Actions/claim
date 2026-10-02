@@ -228,8 +228,10 @@ Ages in replies are whole days, rounded down.
   which starts with a command word — a URL or a sentence that merely
   mentions one — gets no reply and a green run. Every declined attempt is
   answered on the issue, and the run fails.
-- Claim an issue somebody already holds — while every claim on it is
-  still inside its `expire` window. If the commenter already holds it, the
+- Claim an issue where nothing is provably expired: while every claim on
+  it is still inside its `expire` window, when the assignments cannot be
+  proven to be the action's own, and when a holder's age cannot be read —
+  whatever the claim's age. If the commenter already holds it, the
   action says so without changing assignments. Two claims landing in the
   same instant, and the takeover of an expired claim (above), are the only
   cases that remove somebody else's assignment; a `/unclaim` removes only
