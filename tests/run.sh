@@ -2009,15 +2009,21 @@ identity_answer_unrelated_refusal_fails() {
 # to reach the API at all. There is no message to quote then, so the refusal
 # reports the status it did get; the run still stops before any write.
 #
-# This is the ONLY row that reaches the status, because it is the only one
-# whose stderr is empty, so the status it writes is what holds that limb. It
-# is 2 rather than 1 on purpose: what the row holds is that the refusal
-# carries the status gh exited with, and a hardcoded 1 in the refusal would
-# satisfy every other fixture in this table.
+# The answer is stated rather than staged: GH_IDENTITY points at a path with
+# nothing behind it and this case writes no body at all, so the status alone is
+# the whole answer and the stub reads it from the case directory (#88). A stub
+# that still looked for it beside whichever body path won would answer exit 91
+# and the run would report the stub's invocation instead of gh's status.
+#
+# It is also the only row here whose probe wrote nothing on stderr and reached
+# the refusal anyway: every other identity row states a message the refusal can
+# quote, and identity_answer_missing_fails never gets a modelled answer at all.
+# The status is 2 rather than 1 on purpose: what the row holds is that the
+# refusal carries the status gh exited with, and a hardcoded 1 in the refusal
+# would satisfy every other fixture in this table.
 identity_answer_silent_failure_fails() {
   body=/claim
-  # An empty body and no stderr file, so the stub answers a bare nonzero exit.
-  : > "$GH_CASE/identity.response"
+  GH_IDENTITY=$GH_CASE/response.absent
   printf '2\n' > "$GH_CASE/identity.response.status"
   expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: nothing, exit status 2'
   local result=0
@@ -2034,13 +2040,43 @@ identity_answer_silent_failure_fails() {
 # instructions in, so both halves matter: quoting only the first line reads
 # like a different failure, and reporting status 1 would be a number gh never
 # returned.
+#
+# Stated rather than staged, like the silent row above: GH_IDENTITY points at
+# nothing and no body file is written, so the stderr and the status are stated
+# in the case directory (#88). It is the only row in this table whose stderr
+# runs to more than one line, and so the only one that holds all of gh's words
+# rather than the first of them.
 identity_answer_unauthenticated_fails() {
   body=/claim
-  : > "$GH_CASE/identity.response"
+  GH_IDENTITY=$GH_CASE/response.absent
   printf '%s\n' 'To get started with GitHub CLI, please run:  gh auth login' 'Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.' > "$GH_CASE/identity.response.stderr"
   printf '4\n' > "$GH_CASE/identity.response.status"
   expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: To get started with GitHub CLI, please run:  gh auth login
 Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.'
+  local result=0
+  run_claim 1 || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# The other half of what an identity answer is: a body supplied by GH_IDENTITY
+# with the status and stderr stated by the case, which is the mixture the two
+# rows above cannot reach — they state no body at all. It is also what pins
+# where the companions resolve: with GH_IDENTITY winning the body here and
+# carrying no companion beside it, a stub that read them beside the path that
+# supplied the body (#88) answers exit 0 and hands the run the login below.
+# That login is not the commenter's, so the run does not decline there — it
+# reads the issue, which this case writes no fixture for, and the case fails
+# on a call this shape must never make. No other row separates the two halves
+# of an answer.
+identity_answer_body_fallback_status_from_case_fails() {
+  body=/claim
+  printf '%s\n' '{"login":"gh-app-installation","type":"User"}' > "$GH_CASE/answer.body"
+  GH_IDENTITY=$GH_CASE/answer.body
+  printf '7\n' > "$GH_CASE/identity.response.status"
+  printf '%s\n' 'gh: could not resolve the API host' > "$GH_CASE/identity.response.stderr"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: gh: could not resolve the API host'
   local result=0
   run_claim 1 || result=1
   printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
@@ -4446,6 +4482,7 @@ cases=(
   identity_answer_rate_limited_fails identity_answer_other_403_fails
   identity_answer_unrelated_refusal_fails identity_answer_silent_failure_fails
   identity_answer_unauthenticated_fails
+  identity_answer_body_fallback_status_from_case_fails
   bot_commenter_no_identity_call
   # A hand assignment, which this action did not make and must not settle.
   contested_hand_assignment_bails
