@@ -58,7 +58,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: Nitjsefnie-Actions/claim@6ae0d102c79d2feec867520795b318b7ca33904a # v2.0.0
+      - uses: Nitjsefnie-Actions/claim@8abff4f2f27d59b984528cb736f64b9391952a25 # v2.0.1
 ```
 
 `issue_comment` with `types: [created]` handles newly posted comments; editing
