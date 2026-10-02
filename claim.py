@@ -319,6 +319,23 @@ def control_escape(text):
     )
 
 
+def quote_attempt(text):
+    """Quote text in a CommonMark code span the text cannot close.
+
+    Backslash escapes do not work inside a code span, so the opening
+    delimiter is a backtick run one longer than the longest run in the
+    text: a span closes only at a run of exactly equal length, so no
+    backtick in the text can end it, and the reply's fixed guidance stays
+    outside the span. A text with no backtick is quoted as `text`, the
+    shape every existing decline reply pins.
+    """
+    longest = max(map(len, re.findall(r"`+", text)), default=0)
+    if longest == 0:
+        return f"`{text}`"
+    run = "`" * (longest + 1)
+    return f"{run} {text} {run}"
+
+
 def main():
     # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
     command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
@@ -472,10 +489,12 @@ def main():
             # comment. Both take the \xNN spellings.
             escaped = control_escape(line)
             print(f"not a command: {word} on line {number}: {escaped}")
-            # The line's own backticks are escaped so they cannot end the code
-            # span the reply quotes it in.
-            quoted = escaped.replace("`", "\\`")
-            say(f"Not a command: `{word}` on line {number}: `{quoted}`. "
+            # A backslash escape does not work inside a code span, so the
+            # span's delimiter is a backtick run one longer than the longest
+            # run in the line: a span closes only at a run of exactly equal
+            # length, so nothing in the line can end it.
+            quoted = quote_attempt(escaped)
+            say(f"Not a command: `{word}` on line {number}: {quoted}. "
                 "Comment one of `/claim`, `/unclaim` or `/release` on its "
                 "own, optionally followed by the issue number, for example "
                 f"`/claim {issue}` or `/claim #{issue}`.")

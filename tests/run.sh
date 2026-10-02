@@ -184,6 +184,22 @@ control_chars_escaped_before_both_sinks() {
   run_claim 1 $'not a command: /claim on line 1: /claim \\x1b[31m\\x85x\n'
 }
 
+backtick_line_quoted_in_an_unclosable_span() {
+  # #74: backslash escapes do not work inside a CommonMark code span, so the
+  # old reply closed the span at the line's first backtick and the fixed
+  # guidance after it rendered as attacker-shaped fragments. The span must
+  # open with a backtick run strictly longer than any run in the line -- here
+  # 2 over the line's runs of 1 -- with one space of padding on both sides,
+  # so no run in the line can close it and the guidance stays outside.
+  # The body's backticks are content, not shell substitutions.
+  # shellcheck disable=SC2016
+  body='/claim `x`'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 1: `` /claim `x` ``. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 1: /claim `x`\n'
+}
+
 multiline() {
   body=$'/claim\nthis is a second line'
   # shellcheck disable=SC2016
@@ -3451,8 +3467,9 @@ cases=(
   command_word_needs_a_boundary cr_stripped_before_the_line_scan
   # The attempt line reaches two sinks -- the run log and the reply body --
   # and each sink's defect has its own pin: #73 neutralises the control
-  # characters before both.
-  control_chars_escaped_before_both_sinks
+  # characters before both, #74 quotes the line in a code span the line
+  # cannot close.
+  control_chars_escaped_before_both_sinks backtick_line_quoted_in_an_unclosable_span
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached
   # #50 and #51: the two replies a maximum-size body reaches.
