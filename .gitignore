@@ -29,4 +29,5 @@ tests/*
 !.github/workflows/claim.yml
 !.github/workflows/pr-gate.yml
 !.github/workflows/scorecard.yml
+!.github/workflows/secrets.yml
 !.github/workflows/requirements.txt
