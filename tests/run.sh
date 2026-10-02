@@ -3223,6 +3223,50 @@ assert set(specs) == expected_inputs, "inputs must match the environment binding
 PY
 }
 
+# The two reply examples the README quotes in the Claim expiry section are
+# restatements of claim.py's takeover_reply/release_reply templates, and
+# nothing else holds the pair together: reword either side alone and the
+# other drifts while every suite stays green. Both sides are derived live —
+# the section's backtick spans on one, the real functions on the other — so
+# this case fails on whichever side moved.
+readme_quoted_replies() {
+  python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import importlib.util
+import re
+import sys
+
+root = Path(sys.argv[1])
+readme = (root / "README.md").read_text()
+heading = readme.index("### Claim expiry")
+section = readme[heading:readme.index("\n## ", heading)]
+# The examples wrap across source lines, so normalize each span's
+# whitespace, then keep the spans that read as complete reply sentences:
+# they name an account and end in a full stop. Exactly two is the sweep
+# marker — a third reply the section quotes must not slip past untested.
+spans = [" ".join(span.split()) for span in re.findall(r"`([^`]*)`", section)]
+replies = [span for span in spans if "@" in span and span.endswith(".")]
+assert len(replies) == 2, (
+    "expected exactly two quoted reply sentences in the Claim expiry"
+    f" section, found {len(replies)}: {replies!r}")
+
+spec = importlib.util.spec_from_file_location("claim", root / "claim.py")
+claim = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(claim)
+expired, actor = [("alice", 8)], "bob"
+
+for marker, render in (("taken over by", claim.takeover_reply),
+                       ("has released", claim.release_reply)):
+    found = [span for span in replies if marker in span]
+    assert len(found) == 1, (
+        f"expected one {marker!r} span, found {len(found)} among {replies!r}")
+    quoted, rendered = found[0], render(expired, actor)
+    assert quoted == rendered, (
+        f"the reply the README quotes for {marker!r} drifted from claim.py:"
+        f"\n  README quotes: {quoted!r}\n  claim.py renders: {rendered!r}")
+PY
+}
+
 # The tripwire for the tripwire. The stub's refusal is what lets a case tell
 # an answered command from an unanswered one, and its stdin handling is what
 # lets a case see the comment body at all, so both doors need a case of their
@@ -3591,7 +3635,7 @@ cases=(
   expire_release_integration_token expire_release_multiple_expired
   expire_release_no_assignees
   # The manifests this action is.
-  action_contract pr_gate_contract
+  action_contract pr_gate_contract readme_quoted_replies
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
   gate_derivation_handles_every_spelling
