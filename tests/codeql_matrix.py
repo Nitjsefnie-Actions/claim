@@ -36,17 +36,20 @@ python among the languages, the value consumed at three places -- are
 assertions, red the ordinary way.
 
 The admitted VALUE shape is a plain scalar only: no quotes, no tag, no
-anchor, no alias, no merge key, no flow collection, no block-scalar
-indicator, no `: ` inside the value, no tab in the indentation of a read
-line. A value a maintainer wants to spell another way is a deliberate edit
-to this pin, not a parser arm.
+anchor, no alias, no merge key, no flow collection, no `: ` inside the
+value, no trailing comment. Two file-wide refusals close what the narrow
+reading cannot: no block scalar anywhere in the workflow, and no tab in any
+line's indentation. A value or layout a maintainer wants to spell another
+way is a deliberate edit to this pin, not a parser arm.
 
-Why the narrow shapes close the swallowed-structure false greens that killed
-the reader: a block scalar's body is more indented than its key, so no body
-line can impersonate a bare anchor at the anchor's exact column -- a
-swallowing key above a region hides that region's anchors (count zero,
-refused), and a swallowing key AT an anchor makes the anchor carry a value
-(refused). A flow collection can span lines at any column, but every line
+Why the file-wide refusals are what close the swallowed-structure false
+greens that killed the reader: a block scalar's body carries no flow
+punctuation and spans every column below its key, so nothing about a line
+proves where YAML ends and the scalar begins -- a body can host a copy of a
+pinned line (`run: |` in a guarded step hosting `languages:` at the with
+indent) and the pin reading only its own lines cannot tell the copy from
+the original. Refusing the construct outright is the one arm that cannot be
+out-spelled. A flow collection can span lines at any column, but every line
 inside it carries flow punctuation, which no bare anchor and no
 `- key: value` entry line does, so the shapes the pin reads cannot be
 reproduced inside one. The remaining limits, stated rather than assumed:
@@ -56,7 +59,9 @@ reproduced inside one. The remaining limits, stated rather than assumed:
     `matrix.language` -- that direction reddens, never greens.
   - An anchor is never resolved and an alias never followed; both refuse at
     a read line.
-  - It reads no trigger. `on:` is outside this pin's scope.
+  - It reads no trigger, but no trigger key may carry a block scalar
+    (nothing in the file may): an `on: |` hosting the job tree as inert
+    text is refused by the file-wide arm.
 """
 
 from pathlib import Path
@@ -95,10 +100,54 @@ def normalise(value):
 
 
 def structural(lines):
-    """The (index, indent, text) of every non-blank, non-comment line."""
-    return [(index, len(line) - len(line.lstrip(" ")), line)
-            for index, line in enumerate(lines)
-            if line.strip() and not line.lstrip().startswith("#")]
+    """The (index, indent, text) of every non-blank, non-comment line.
+
+    A tab leading a line counts as no indentation to `lstrip(" ")` arithmetic
+    while YAML forbids it outright, so a tab-led line is refused rather than
+    read at the wrong column.
+    """
+    kept = []
+    for index, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#"):
+            lead = line[:len(line) - len(line.lstrip())]
+            if "\t" in lead:
+                refuse(line, "a tab in a line's indentation, which YAML forbids")
+            kept.append((index, len(line) - len(line.lstrip(" ")), line))
+    return kept
+
+
+def no_block_scalar(lines):
+    """Refuse every block-scalar value in the file, at any key.
+
+    The pin reads only its own lines, so a block scalar is the one construct
+    that can host a copy of a pinned line as inert text: its body carries no
+    flow punctuation and spans every column below its key, so nothing about
+    a line proves where YAML ends and the scalar begins. The reviewer's
+    plants for this class were two valid-YAML false greens. No workflow in
+    this repository needs one -- the current file carries none -- so the
+    admitted subset is simply: no block scalar anywhere. A maintainer who
+    writes one updates this pin deliberately.
+    """
+    for entry in lines:
+        text = entry[2].strip()
+        if text.startswith("- "):
+            text = text[2:]
+        _, colon, value = text.partition(":")
+        head = value.strip()[:1]
+        if colon and head in ("|", ">"):
+            refuse(entry[2], "a block scalar this pin does not model")
+
+
+def plain(line, value, key):
+    """The value as a plain scalar, refusing every other spelling."""
+    value = value.strip()
+    if value[:1] in INDICATORS:
+        refuse(line, f"`{key}` carries a value this pin does not model")
+    if ": " in value:
+        refuse(line, f"`{key}` carries two mappings on one line")
+    if " #" in value:
+        refuse(line, f"`{key}` carries a trailing comment this pin does not read")
+    return normalise(value)
 
 
 def exactly_one(lines, indent, pattern, what):
@@ -133,18 +182,6 @@ def bare(lines, indent, key):
     return entry
 
 
-def plain(line, value, key):
-    """The value as a plain scalar, refusing every other spelling."""
-    value = value.strip()
-    if not value:
-        refuse(line, f"`{key}` must carry a value")
-    if value[:1] in INDICATORS:
-        refuse(line, f"`{key}` carries a value this pin does not model")
-    if ": " in value:
-        refuse(line, f"`{key}` carries two mappings on one line")
-    return normalise(value)
-
-
 def entry_pairing(lines, include, steps):
     """The matrix entries as dicts, read dash line by continuation line.
 
@@ -158,8 +195,6 @@ def entry_pairing(lines, include, steps):
     for index, indent, line in lines:
         if not (include[0] < index < steps[0]):
             continue
-        if "\t" in line[:len(line) - len(line.lstrip())]:
-            refuse(line, "a tab-indented line, which YAML forbids")
         text = line.strip()
         if indent == ENTRY and text.startswith("- "):
             current = {}
@@ -178,15 +213,18 @@ def entry_pairing(lines, include, steps):
     return entries
 
 
-def guarded_step(lines, action):
+def guarded_step(lines, steps, action):
     """The span of the one step whose `uses:` names github/codeql-action's
     `action`, plus its bare `with:` line.
 
     The step is located by its `        uses:` line -- the codeql steps are
     named first (`- name:` on the dash line), so the uses line sits at
     STEP_KEY, and only the checkout step carries `uses:` on its dash. The
-    span runs from the dash line that opens the step to the next dash at
-    step indent or the region dedenting below it; only the span is read.
+    step's own dash is the last `- ` at step indent BETWEEN the `steps:`
+    anchor and the uses line -- elsewhere in the file indent-6 dashes are
+    `paths-ignore:` and `cron:` entries, not steps -- and the span runs from
+    that dash to the next dash at step indent or the region dedenting below
+    it; only the span is read.
     """
     prefix = f"github/codeql-action/{action}@"
     uses = [entry for entry in lines
@@ -198,7 +236,7 @@ def guarded_step(lines, action):
                f"expected exactly one github/codeql-action/{action} step, "
                f"found {len(uses)}: the job would analyse or file nothing")
     dash = [entry for entry in lines
-            if entry[0] < uses[0][0] and entry[1] == STEP
+            if steps[0] < entry[0] < uses[0][0] and entry[1] == STEP
             and entry[2].strip().startswith("- ")]
     if not dash:
         refuse(uses[0][2], f"the {action} step's `uses:` sits under no step")
@@ -254,6 +292,12 @@ def covers_python(text):
         "matrix.language, so every matrix entry would answer to one check "
         "name and none of them would land as its own check")
 
+    # No block scalar anywhere: the one construct that can host a copy of a
+    # pinned line as inert text while the pin reads it as structure. Checked
+    # here, after the anchors the pin walks by, so a valued anchor keeps its
+    # own refusal naming the key.
+    no_block_scalar(lines)
+
     entries = entry_pairing(lines, include, steps)
     assert entries, (
         "jobs.analyze.strategy.matrix.include declares no entries, so the "
@@ -269,14 +313,14 @@ def covers_python(text):
         "program that parses the untrusted comment body -- is never "
         f"analysed: the matrix names {sorted(languages)}")
 
-    span, withs = guarded_step(lines, "init")
+    span, withs = guarded_step(lines, steps, "init")
     read = with_value(span, withs, "languages")
     assert read == "${{ matrix.language }}", (
         f"the init step's languages is {read!r}, not "
         "'${{ matrix.language }}': each matrix entry would otherwise reach "
         "the analysis of some default language set rather than its own")
 
-    span, withs = guarded_step(lines, "analyze")
+    span, withs = guarded_step(lines, steps, "analyze")
     read = with_value(span, withs, "category")
     assert read == "/language:${{ matrix.language }}", (
         f"the analyze step's category is {read!r}, not "
