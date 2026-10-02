@@ -169,6 +169,21 @@ cr_stripped_before_the_line_scan() {
   run_claim 1 $'not a command: /claim on line 1: /claim\n'
 }
 
+control_chars_escaped_before_both_sinks() {
+  # #73: the attempt line reaches two sinks, and both render control
+  # characters instead of showing them -- the Actions run log executes ANSI
+  # escapes, and the reply carries the line verbatim into a posted comment.
+  # ESC (U+001B) and the C1 NEL (U+0085) must leave both sinks as \xNN
+  # spellings. U+0085 is spelled as its two UTF-8 bytes the way the NBSP case
+  # below spells \302\240: bash emits the characters of $'\u0085' literally
+  # under LC_ALL=C. The escapes in the expected strings are literal text.
+  body=$'/claim \x1b[31m\xc2\x85x'
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Not a command: `/claim` on line 1: `/claim \x1b[31m\x85x`. Comment one of `/claim`, `/unclaim` or `/release` on its own, optionally followed by the issue number, for example `/claim 7` or `/claim #7`.' --silent
+  run_claim 1 $'not a command: /claim on line 1: /claim \\x1b[31m\\x85x\n'
+}
+
 multiline() {
   body=$'/claim\nthis is a second line'
   # shellcheck disable=SC2016
@@ -3434,6 +3449,10 @@ cases=(
   em_space_noncommand unit_separator_noncommand ascii_control_trim
   word_start_on_later_line_declines_that_line topmost_command_word_wins
   command_word_needs_a_boundary cr_stripped_before_the_line_scan
+  # The attempt line reaches two sinks -- the run log and the reply body --
+  # and each sink's defect has its own pin: #73 neutralises the control
+  # characters before both.
+  control_chars_escaped_before_both_sinks
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached
   # #50 and #51: the two replies a maximum-size body reaches.
