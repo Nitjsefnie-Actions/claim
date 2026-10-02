@@ -4427,17 +4427,18 @@ for raw in path.read_text().splitlines():
 
 expected = {
     "name": "pr-gate",
-    "on/pull_request_target/types": "[opened, edited, reopened]",
+    "on/pull_request_target/types": "[opened, edited, reopened, ready_for_review]",
     "permissions/contents": "read",
     "permissions/issues": "read",
     "permissions/pull-requests": "write",
     "concurrency/group": "pr-gate-${{ github.event.pull_request.number }}",
     "concurrency/cancel-in-progress": False,
-    "jobs/pr-gate/if": "github.event.pull_request.user.type != 'Bot'",
+    "jobs/pr-gate/if":
+        "github.event.pull_request.user.type != 'Bot' && github.event.pull_request.draft == false",
     "jobs/pr-gate/runs-on": "ubuntu-latest",
     "jobs/pr-gate/timeout-minutes": 5,
     "jobs/pr-gate/steps/0/uses":
-        "Nitjsefnie-Actions/pr-gate@44437212f1b931f53433b16455bb05aff67ad21e",
+        "Nitjsefnie-Actions/pr-gate@39b1b91ed861dbb070629e34bf63fe25b916e54d",
     "jobs/pr-gate/steps/0/with/github-token": "${{ github.token }}",
     "jobs/pr-gate/steps/0/with/repository": "${{ github.repository }}",
     "jobs/pr-gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
