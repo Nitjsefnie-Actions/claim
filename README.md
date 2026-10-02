@@ -303,6 +303,38 @@ settles, so keep `cancel-in-progress: false` in the concurrency group above.
 Like every decline, a declined assignment also fails the run. Check that your
 login actually appears in the issue's assignees.
 
+## If nothing happens
+
+You posted a command and nothing happened. Work down this list.
+
+- **Find the run for your comment.** The workflow listens for newly created
+  comments, so every newly created comment starts a run; a comment with no
+  command word shows a skipped run. No run at all means the workflow is not
+  running — disabling a workflow stops it being triggered — so check in the
+  Actions tab that the workflow is enabled (its page offers Enable workflow
+  when it is not) and that the workflow file sits on the default branch.
+- **The run sits in Queued.** That is normal under load: the per-issue
+  concurrency group serializes competing claims, `queue: max` keeps up to
+  100 pending runs in first-in, first-out order, and each run is bounded
+  by a five-minute timeout, so the queue drains.
+- **The run failed.** Read its log. Every declined attempt fails the run
+  and posts a reply on the issue; an API failure posts no reply at all. A
+  red run with no reply on the issue died before it could post one, and
+  the log names where. The log line
+  `gh: Resource not accessible by integration (HTTP 403)` is the
+  token-permission signature: check the job's `permissions:` block grants
+  `issues: write` (the default `github.token` is sufficient).
+- **The run succeeded and posted no reply.** By design, in three cases: the
+  comment never started a line with a command word (a prose mention), the
+  commenter is the token's own account, or the commenter's account type is
+  not `User`. The last two are declined in the run log only, and a bot's
+  comment never even starts the job.
+- **The run succeeded and a reply was posted.** The reply names the
+  outcome — a tie lost to another commenter, a cap refusal, an issue
+  already held — and what proves the claim is the standing check: your
+  login in the issue's assignees. [What it will not do](#what-it-will-not-do)
+  carries the standing guidance.
+
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the suite and contribution process,
