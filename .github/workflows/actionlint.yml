@@ -38,10 +38,16 @@ on:
     # the same commit a second time under a different ref, which the
     # `concurrency` group cannot collapse.
     branches: [main]
-    paths:
-      - '.github/workflows/**'
-      - '.github/dependabot.yml'
-      - 'action.yml'
+    # Deny-list, not an allow-list: under an allow-list, a new path this gate
+    # should read silently stops triggering it. The job reads README.md and
+    # .github/workflows/claim.yml for the pin-sync check, every
+    # .github/workflows/*.yml, .github/workflows/requirements.txt (the
+    # hash-pinned zizmor install), and action.yml (linted and zizmor-audited
+    # via the generated workflow), so none of those belongs in a skip list.
+    # The four names below are documentation nothing in this job reads.
+    # README.md is deliberately ABSENT: the pin-sync step reads it, so a
+    # README-only push to main must run this gate.
+    paths-ignore: [CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, LICENSE]
   # Deliberately unfiltered by path. This job is a REQUIRED status check on
   # main, and GitHub never reports a required check whose workflow did not
   # run -- it waits for it forever. A path filter here therefore does not
