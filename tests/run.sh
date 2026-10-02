@@ -4430,23 +4430,23 @@ for raw in path.read_text().splitlines():
         parents.append((indent, node))
 
 expected = {
-    "name": "pr-gate",
+    "name": "pr gate",
     "on/pull_request_target/types": "[opened, edited, reopened, ready_for_review]",
     "permissions/contents": "read",
     "permissions/issues": "read",
     "permissions/pull-requests": "write",
     "concurrency/group": "pr-gate-${{ github.event.pull_request.number }}",
     "concurrency/cancel-in-progress": False,
-    "jobs/pr-gate/if":
+    "jobs/gate/if":
         "github.event.pull_request.user.type != 'Bot' && github.event.pull_request.draft == false",
-    "jobs/pr-gate/runs-on": "ubuntu-latest",
-    "jobs/pr-gate/timeout-minutes": 5,
-    "jobs/pr-gate/steps/0/uses":
+    "jobs/gate/runs-on": "ubuntu-latest",
+    "jobs/gate/timeout-minutes": 5,
+    "jobs/gate/steps/0/uses":
         "Nitjsefnie-Actions/pr-gate@bd6aa28fa8a82ef12c1afb61a46f41f23742f26a",
-    "jobs/pr-gate/steps/0/with/github-token": "${{ github.token }}",
-    "jobs/pr-gate/steps/0/with/repository": "${{ github.repository }}",
-    "jobs/pr-gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
-    "jobs/pr-gate/steps/0/with/pull-request-author": "${{ github.event.pull_request.user.login }}",
+    "jobs/gate/steps/0/with/github-token": "${{ github.token }}",
+    "jobs/gate/steps/0/with/repository": "${{ github.repository }}",
+    "jobs/gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
+    "jobs/gate/steps/0/with/pull-request-author": "${{ github.event.pull_request.user.login }}",
 }
 expected = {tuple(key.split("/")): value for key, value in expected.items()}
 for node in list(expected):
@@ -4459,7 +4459,7 @@ for node, value in expected.items():
     if node == ("on", "pull_request_target", "types"):
         assert actual.startswith("[") and actual.endswith("]"), "expected explicit activity list"
         actual = "[" + ", ".join(quoted_scalar(part.strip()) for part in actual[1:-1].split(",")) + "]"
-    if node == ("jobs", "pr-gate", "if"):
+    if node == ("jobs", "gate", "if"):
         if actual.startswith("${{") and actual.endswith("}}"):
             actual = actual[3:-2].strip()
         actual = re.sub(r"\s*!=\s*", " != ", actual)
