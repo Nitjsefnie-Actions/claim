@@ -3324,9 +3324,9 @@ if not checkout[0] < at < lint[0]:
 # after any unrelated change, and no pull request ever blocks to say so, while
 # a `paths-ignore:` deny-list merely skips a documentation-only push. So a
 # `paths-ignore:` key -- or no path filter at all -- is fine on push, and a
-# `paths:` key is refused -- as is any key spelling this line-level reader
-# cannot decode, because an undecodable filter cannot be told from an
-# allow-list.
+# `paths:` key is refused -- as is a quoted `paths` key, which this
+# line-level reader refuses rather than decodes, because a filter it cannot
+# decode cannot be told from an allow-list.
 sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
 from gate_base_freshness import REQUIRED_JOBS
 
@@ -3358,7 +3358,7 @@ for workflow in carrying:
             # Opposite polarity from the arms above, and the verdict reads
             # the key as the whole decoded token rather than a substring, so
             # a comment or a value's prose can neither satisfy nor evade it.
-            # A line this reader cannot classify -- a quoted `paths` key --
+            # A quoted `paths` key -- a line this reader cannot classify --
             # is refused rather than passed.
             filters = set()
             for line in body[starts[0]:stop]:
