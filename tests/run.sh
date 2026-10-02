@@ -4477,12 +4477,11 @@ codeql_matrix_covers_python() {
 }
 
 codeql_matrix_refuses_each_unmodelled_shape() {
-  # One plant per refusal branch, each planted on the real workflow's own
-  # text, so a refusal arm that stops firing reds exactly its own row. A
-  # plant whose anchor is missing fails the case rather than passing
-  # vacuously, and every refusal must carry its row's distinguishing
-  # substring, so a refusal from some other branch cannot pass for this
-  # one's.
+  # One plant per refusal site of tests/codeql_matrix.py, each planted on the
+  # real workflow's own text, so a refusal arm that stops firing reds exactly
+  # its own row. A plant whose anchor is missing fails the case rather than
+  # passing vacuously, and every refusal must carry its row's distinguishing
+  # substring, so a refusal from some other site cannot pass for this one's.
   python3 - "$ROOT" <<'PYREFUSE'
 from pathlib import Path
 import importlib.util
@@ -4556,7 +4555,7 @@ REFUSALS = [
      "duplicate `language`"),
     ("a tab in an entry's indentation",
      lambda t: planted(t, ENTRY_PYTHON, "\t" + ENTRY_PYTHON),
-     "tab-indented"),
+     "tab in a line's indentation"),
     ("a block scalar swallowing a with value",
      lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
                        "          languages: |\n"),
@@ -4573,6 +4572,62 @@ REFUSALS = [
     ("no init step",
      lambda t: planted(t, "/init@", "/unmodelled@"),
      "expected exactly one github/codeql-action/init step, found 0"),
+    ("a tab in an anchor's indentation",
+     lambda t: planted(t, "jobs:\n", "\tjobs:\n"),
+     "tab in a line's indentation"),
+    ("a block scalar hosting a pinned line in a guarded step",
+     lambda t: planted(t, "          queries: security-extended\n",
+                       "          queries: security-extended\n"
+                       "        run: |\n          inert: text\n"),
+     "does not model"),
+    ("a top-level block scalar",
+     lambda t: planted(t, "on:\n", "on: |\n"),
+     "does not model"),
+    ("a trailing comment on a read value",
+     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
+                       "          languages: ${{ matrix.language }} # note\n"),
+     "trailing comment"),
+    ("two mappings on one entry line",
+     lambda t: planted(t, "          - language: actions",
+                       "          - language: a: b"),
+     "two mappings on one line"),
+    ("the anchor chain out of order",
+     lambda t: planted(t, "    strategy:\n", "").replace(
+         "    steps:\n", "    steps:\n    strategy:\n"),
+     "out of order"),
+    ("a guarded step under no dash",
+     lambda t: planted(t, "      - uses: actions/checkout@",
+                       "        uses: actions/checkout@").replace(
+         "      - name: Initialize CodeQL\n", ""),
+     "sits under no step"),
+    ("a second bare with: in one guarded step",
+     lambda t: planted(t, "          queries: security-extended\n",
+                       "          queries: security-extended\n        with:\n"),
+     "exactly one bare `with:`"),
+    ("a duplicated job name line",
+     lambda t: planted(t, "    name: analyze (${{ matrix.language }})\n",
+                       "    name: analyze (${{ matrix.language }})\n"
+                       "    name: analyze (${{ matrix.language }})\n"),
+     "expected exactly one job `name:` line"),
+    ("a duplicated with value in the init step",
+     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
+                       "          languages: ${{ matrix.language }}\n"
+                       "          languages: ${{ matrix.language }}\n"),
+     "expected exactly one `languages:`"),
+    ("the job name below the steps block",
+     lambda t: planted(t, "    name: analyze (${{ matrix.language }})\n", "").replace(
+         "      - uses: actions/checkout@",
+         "    name: analyze (${{ matrix.language }})\n"
+         "      - uses: actions/checkout@"),
+     "must sit under the analyze job"),
+    ("a continuation line before the first entry",
+     lambda t: planted(t, "        include:\n",
+                       "        include:\n            straggler: x\n"),
+     "before the first entry"),
+    ("an unmodelled line inside the include block",
+     lambda t: planted(t, "        include:\n",
+                       "        include:\n           straggler: x\n"),
+     "not an entry"),
 ]
 
 for name, plant, expected in REFUSALS:
