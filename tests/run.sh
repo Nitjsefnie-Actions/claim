@@ -1935,6 +1935,19 @@ gate_base_freshness_states() {
     cat "$GH_CASE/stderr"
     result=1
   fi
+  # The green line is the one sentence a maintainer reads on this check, so its
+  # completeness claim is pinned the way the derivation's is. The suites job
+  # reads every tracked file through `.`, which the derivation resolves to
+  # nothing, so the count it prints is the files a required check names BY
+  # NAME — and the line has to say so. A green line claiming the whole set is
+  # the same over-claim the report once made, moved into the emitted string.
+  if ! grep -Fqi 'every tracked file' "$GH_CASE/stdout"; then
+    printf '  the green line does not carry its own limit. It reports how many\n'
+    printf '  files a required check reads, and the suites job reads every\n'
+    printf '  tracked file through the . spelling, which the count excludes:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
 
   # Main advanced, but only on a file no required check reads. The head is left
   # behind main rather than diverged from it, which is the state a pull request
@@ -2203,10 +2216,6 @@ gate_derivation_handles_every_spelling() {
   # correct and would make this "rebase before you merge" on any change at all,
   # which is `strict_required_status_checks_policy: true` reached through the
   # back door against a ruleset the maintainer set to false on purpose.
-  #
-  # If this ever goes red, the arm was added on purpose: the gate now watches
-  # every file in the repository, and CONTRIBUTING.md is the first of them it
-  # starts naming.
   before=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused on the repository as it stands\n'
     return 1
@@ -2216,6 +2225,50 @@ gate_derivation_handles_every_spelling() {
     printf '  resolves now; every tracked file is watched and this pin is stale\n'
     result=1
   fi
+
+  # And the OTHER way it can stop being a limit: a required job comes to name
+  # CONTRIBUTING.md directly, with the arm absent — which is the state this
+  # fixture is in, since the shipped code has no arm. The pin fires either way,
+  # and the derivation cannot tell which cause it is looking at, so the message
+  # must name BOTH. A message naming one is a red blaming a change nobody made:
+  # under this fixture the arm was not added, and saying so would be false.
+  # (the second way the limit can end, with the arm still absent)
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYNAMED'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+anchor = "          find tests -type f -name '*.sh' -exec shellcheck {} +"
+if anchor not in text:
+    print("the fixture's tests.yml has no shellcheck step to extend", file=sys.stderr)
+    raise SystemExit(1)
+open(path, "w", encoding="utf-8").write(
+    text.replace(anchor, anchor + "\n          cat CONTRIBUTING.md > /dev/null", 1))
+PYNAMED
+  gate_commit_all "$tree" 'a required job names CONTRIBUTING.md'
+  after=$(gate_derived_paths "$tree") || {
+    printf '  the derivation refused once a required job named CONTRIBUTING.md\n'
+    return 1
+  }
+  if ! grep -Fxq 'CONTRIBUTING.md' <<< "$after"; then
+    printf '  a required job now names CONTRIBUTING.md and it is not in the set\n'
+    result=1
+  fi
+  printf '  CONTRIBUTING.md is now in the derived set, so it is watched. Either\n  the whole-tree arm was added, or a required job now names\n  CONTRIBUTING.md directly; this disclosure pin is stale until the\n  module docstring says which.\n' > "$GH_CASE/message"
+  if ! grep -Eiq 'whole.tree' "$GH_CASE/message"; then
+    printf '  the disclosure fired without naming the whole-tree arm as one of\n'
+    printf '  the two ways it can end\n'
+    result=1
+  fi
+  if ! grep -Eiq 'directly' "$GH_CASE/message"; then
+    printf '  the disclosure fired naming ONE cause. Under this fixture the arm is\n'
+    printf '  absent, so a message blaming it is a red naming a change nobody made.\n'
+    result=1
+  fi
+  # Back to as it stands for the spellings below, which must not inherit a
+  # CONTRIBUTING.md from a reference that was only here to fire the pin. The
+  # fixture's own history is stepped back rather than the file patched: a
+  # derived set is read at HEAD, so a working-tree edit would not be undone.
+  git -C "$tree" reset --quiet --hard HEAD~1
 
   # A second workflow defining a required job name. A job name is unique within
   # a workflow, not across the repository: `aaa-other.yml` sorts first, so a
@@ -2422,6 +2475,35 @@ PYJOBS
     cat "$GH_CASE/refused"
     result=1
   fi
+  # A job mapping written as a flow mapping. Refused, because which jobs the
+  # document defines is then not something a line-at-a-time reader can say —
+  # and with the refusal removed the shape parses to `{}`, a required job with
+  # steps right there read as a job with none. This is the third refusal of the
+  # three, and the only one whose guard was not yet planted: the other two are
+  # covered above.
+  cp "$pristine" "$tree/.github/workflows/tests.yml"
+  python3 - "$tree/.github/workflows/tests.yml" <<'PYFLOWJOBS'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+start = text.index("jobs:\n")
+flow = ("jobs: {suites: {runs-on: ubuntu-latest, "
+        "steps: [{run: 'python3 -m py_compile claim.py'}]}}\n")
+open(path, "w", encoding="utf-8").write(text[:start] + flow)
+PYFLOWJOBS
+  gate_commit_all "$tree" 'the jobs mapping as a flow mapping'
+  if gate_derived_paths "$tree" > "$GH_CASE/refused" 2>&1; then
+    printf '  jobs written as a flow mapping: the derivation answered instead of\n'
+    printf '  refusing, so a document carrying its jobs read as one carrying none:\n'
+    cat "$GH_CASE/refused"
+    result=1
+  elif ! grep -Fq 'flow mapping' "$GH_CASE/refused" \
+    || ! grep -Fq 'block form' "$GH_CASE/refused"; then
+    printf '  jobs written as a flow mapping: refused, but not by naming it:\n'
+    cat "$GH_CASE/refused"
+    result=1
+  fi
+
   cp "$pristine" "$tree/.github/workflows/tests.yml"
   return "$result"
 }
