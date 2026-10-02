@@ -3,8 +3,10 @@ name: tests
 # Linux-only checks cannot establish macOS portability. Both platforms run
 # the same real-subprocess behavioral suite, including the bash API stub.
 #
-# No package install anywhere in the file: bash, python3, and shellcheck are
-# preinstalled on the hosted images, and tests/gh.sh supplies the API stub.
+# The suite stays install-free by design: everything it runs ships with
+# the images -- bash, python3, and shellcheck -- and tests/gh.sh supplies
+# the API stub. The file's one package install is the lint step's
+# hash-pinned ruff into a throwaway venv, which no image preinstalls.
 
 on:
   push:
@@ -160,6 +162,31 @@ jobs:
 
       - name: Compile the claim script
         run: python3 -m py_compile claim.py
+
+      - name: Lint the claim script
+        # py_compile above refuses a file only for a SyntaxError: E9 and
+        # F7's misplaced break/continue already fall inside that refusal.
+        # What it accepts silently is the rest of the set -- F631 (assert
+        # on a tuple), F632 (comparison with a literal), F633 (invalid
+        # print syntax), F634 (condition on a tuple), F82 (undefined
+        # names) -- undefined names above all. The lint runs the whole
+        # defect-oriented intersection set pr-gate gates, and
+        # deliberately not plain F, whose F401 and F841 red CI on benign
+        # refactors.
+        # Why the venv: both hosted images mark their system python externally
+        # managed (PEP 668), so a plain pip install fails on both legs, and
+        # this file has no setup-python step by design (preinstalled python3
+        # only).
+        # Why the awk extraction: the manifest's PyYAML pin carries one hash,
+        # a cp313 manylinux x86_64 wheel, so installing the whole file with
+        # --require-hashes resolves nothing on macOS. The ruff block alone is
+        # platform-complete; the manifest stays the single source for the
+        # version and hashes.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/lint-venv"
+          awk '/^ruff==/{f=1} f{print; if ($0 !~ /\\$/) exit}' .github/workflows/requirements.txt > "$RUNNER_TEMP/ruff.txt"
+          "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/ruff.txt"
+          "$RUNNER_TEMP/lint-venv/bin/ruff" check --select E9,F63,F7,F82 claim.py
 
       - name: Run the behavioral suite
         shell: bash
