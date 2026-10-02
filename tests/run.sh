@@ -7,8 +7,10 @@ mkdir "$RUN/bin"
 ln -s "$ROOT/tests/gh.sh" "$RUN/bin/gh"
 export PATH="$RUN/bin:$PATH"
 # GH_IDENTITY is the default answer for the stub's identity lookup
-# (`gh api user`); a case overrides it by writing identity.response into its
-# own case directory. The value is per-case state, set in reset_case below.
+# (`gh api user`); a case overrides it either by writing identity.response into
+# its own case directory or by assigning this variable — which is also how a
+# case points it at a path with nothing behind it, or supplies the body itself.
+# The value is per-case state, set in reset_case below.
 export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY MAX_CLAIMS EXPIRE
 
 reset_case() {
@@ -2069,7 +2071,9 @@ Alternatively, populate the GH_TOKEN environment variable with a GitHub API auth
 # That login is not the commenter's, so the run does not decline there — it
 # reads the issue, which this case writes no fixture for, and the case fails
 # on a call this shape must never make. No other row separates the two halves
-# of an answer.
+# of an answer. Its status is 7 only in that it is nonzero: the refusal quotes
+# the stderr it was given and never the status, so 2 or 9 would pass here
+# identically and the number is not a value this row pins.
 identity_answer_body_fallback_status_from_case_fails() {
   body=/claim
   printf '%s\n' '{"login":"gh-app-installation","type":"User"}' > "$GH_CASE/answer.body"
