@@ -2783,9 +2783,11 @@ gate_paths_derived_from_workflows() {
     return 1
   }
   local expected='.github/workflows/actionlint.yml
+.github/workflows/audit.yml
 .github/workflows/claim.yml
 .github/workflows/codeql.yml
 .github/workflows/pr-gate.yml
+.github/workflows/requirements-pip-audit.txt
 .github/workflows/requirements.txt
 .github/workflows/scorecard.yml
 .github/workflows/secrets.yml
