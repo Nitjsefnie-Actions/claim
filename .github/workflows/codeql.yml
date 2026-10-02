@@ -53,10 +53,9 @@ jobs:
     strategy:
       # One entry per language CodeQL analyses here: `actions` for the action
       # itself, `python` for claim.py, the program that parses the untrusted
-      # comment body. Both are `build-mode: none` — neither language is
-      # compiled. matrix.language feeds the job name, the init step's
+      # comment body. matrix.language feeds the job name, the init step's
       # `languages:`, and the analyze step's `category:`, so each entry lands
-      # as its own check.
+      # as its own check; tests/run.sh pins all three.
       fail-fast: false
       matrix:
         include:
