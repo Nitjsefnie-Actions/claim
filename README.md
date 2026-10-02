@@ -59,7 +59,19 @@ jobs:
       issues: write
     steps:
       - uses: Nitjsefnie-Actions/claim@8abff4f2f27d59b984528cb736f64b9391952a25 # v2.0.1
+        with:
+          max-claims: 'read=2, triage=4, write=6, maintain=10, admin=-1'
+          expire: '7'
 ```
+
+The `with:` block is the reference policy this repository's own
+`claim.yml` deploys: `max-claims` caps how many open issues one account
+may hold claims on, per repository role, and `expire` retires an idle
+claim after 7 days. Omit the block and the action's defaults apply:
+`max-claims: -1` — unlimited concurrent claims per account — and
+`expire: -1` — claims never expire. Both inputs are documented under
+[Per-role claim caps](#per-role-claim-caps) and
+[Claim expiry](#claim-expiry) below.
 
 `issue_comment` with `types: [created]` handles newly posted comments; editing
 an old comment does not trigger a claim. The job runs on Ubuntu with a
