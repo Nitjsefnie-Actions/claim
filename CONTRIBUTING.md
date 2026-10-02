@@ -251,6 +251,35 @@ Release an issue you stop working, before the merge that closes it — the actio
 acts on open issues only, so a stale assignment on a closed one can no longer
 be removed.
 
+## One maintainer, on purpose
+
+One person maintains this project,
+[@Nitjsefnie](https://github.com/Nitjsefnie), and that is the shape it is meant
+to have rather than a stage it is passing through. It is written down here so a
+contributor does not have to infer it from how long a pull request sits.
+
+As of 2026-10-02 there was no second maintainer to fall back on: the
+organisation had one member, the repository one collaborator holding admin and
+push, no teams, no CODEOWNERS file, and none of the three rulesets named a
+bypass actor. That is a reading of the repository on that date rather than a
+promise that it holds after it, so re-check it before treating it as current:
+
+```bash
+gh api orgs/Nitjsefnie-Actions/members --jq '.[].login'
+gh api repos/Nitjsefnie-Actions/claim/collaborators \
+  --jq '.[] | "\(.login) admin=\(.permissions.admin) push=\(.permissions.push)"'
+gh api orgs/Nitjsefnie-Actions/teams --jq 'length'
+git ls-files | grep -i codeowners
+gh api repos/Nitjsefnie-Actions/claim/rulesets --jq '.[].id' |
+  while read -r id; do
+    gh api "repos/Nitjsefnie-Actions/claim/rulesets/$id" --jq '.bypass_actors'
+  done
+```
+
+[SECURITY.md](SECURITY.md) says what that means for someone reporting a
+vulnerability: the response times it promises, and the explanation of a delay,
+are one person's.
+
 ## Pull requests
 
 Small and single-purpose beats large and comprehensive. One logical change per
