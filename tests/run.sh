@@ -1885,21 +1885,22 @@ identity_not_an_object() {
 
 # The stub must fail on what it does not model rather than invent an answer:
 # with neither a case fixture nor the suite default present, the identity
-# lookup exits 91 like any other unexpected invocation. The run must SURVIVE
-# that — the lookup is best effort, and a failed probe is "identity unknown",
-# never a verdict about the commenter. Pinning this the other way round was
-# the defect: it made the run fatal for every token whose /user refuses.
-identity_answer_missing_proceeds() {
+# lookup exits 91 like any other unexpected invocation. The stub keeps doing
+# that, loudly — the question is what the run does with an answer nobody
+# modelled, and it must not be "no identity, carry on": an exit 91 carries no
+# installation-token refusal, so this is an unknown failure, and the run ends
+# before anything is posted or assigned. This case asserted the opposite until
+# issue 75, and the difference it now pins is the whole defect: the old row
+# could only pass because the probe's reason was thrown away.
+identity_answer_missing_fails() {
   body=/unclaim
   GH_IDENTITY=$GH_CASE/response.absent
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you are not assigned to this issue, so there is nothing to give up.' --silent
-  {
-    printf '%s\n' '["api","user"]'
-    cat "$GH_CASE/expected.jsonl"
-  } > "$GH_CASE/expected.calls"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: unexpected gh invocation: ["api","user"]'
   local result=0
-  run_claim 0 || result=1
+  run_claim 1 || result=1
+  # The empty ordinary-call diff above is the fail-closed assertion; the raw
+  # call set pins the rest of it — one lookup, no retry, no write of any kind.
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
   if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
   return "$result"
 }
@@ -1941,6 +1942,95 @@ identity_answer_403_proceeds() {
   } > "$GH_CASE/expected.calls"
   local result=0
   run_claim 0 || result=1
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# Issue 75: a probe whose reason is not the documented refusal ends the run.
+# Four shapes, one refusal, and each is a case that only it decides — a 403
+# carrying a different message, a 403 carrying the documented words on the
+# BODY but none on stderr, a 403 that opens like the documented one and
+# refuses for another reason, and a nonzero exit with nothing at all on
+# stderr (the branch that reports the status instead of a message gh never
+# wrote). Each names the exit status and the message, and each asserts the
+# empty ordinary-call set: no issue read, no comment, no assignment — the
+# whole point is that nothing at all happens.
+identity_answer_rate_limited_fails() {
+  body=/claim
+  printf '%s\n' '{"message":"API rate limit exceeded"}' > "$GH_CASE/identity.response"
+  printf 'gh: API rate limit exceeded for user ID 42. (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: gh: API rate limit exceeded for user ID 42. (HTTP 403)'
+  local result=0
+  run_claim 1 || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# A 403 is not the documented refusal because of its status code; it is that
+# refusal because of what gh says on stderr. This row isolates the two from
+# each other: its body is the same JSON the documented refusal carries, so a
+# matcher reading the body answers identically to the case above it, and only
+# the stderr decides. A bare 403 is news about the run.
+identity_answer_other_403_fails() {
+  body=/claim
+  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
+  printf 'gh: Forbidden (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: gh: Forbidden (HTTP 403)'
+  local result=0
+  run_claim 1 || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# GitHub words several refusals alike up to the reason, so a phrase match
+# short of the documented one would swallow its neighbours: this 403 opens
+# with the same three words and refuses for a different reason, and it is the
+# phrase's whole length, not its opening, that earns the carve-out.
+identity_answer_unrelated_refusal_fails() {
+  body=/claim
+  printf '%s\n' '{"message":"Resource not accessible by private repository"}' > "$GH_CASE/identity.response"
+  printf 'gh: Resource not accessible by private repository (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: gh: Resource not accessible by private repository (HTTP 403)'
+  local result=0
+  run_claim 1 || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# gh can fail the probe without writing a word — killed mid-call, or unable
+# to reach the API at all. There is no message to quote then, so the refusal
+# reports the status it did get; the run still stops before any write.
+identity_answer_silent_failure_fails() {
+  body=/claim
+  # An empty body and no stderr file, so the stub answers a bare nonzero exit.
+  : > "$GH_CASE/identity.response"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: nothing, exit status 1'
+  local result=0
+  run_claim 1 || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# The refusal is matched in gh's stderr and nowhere else, because the 403
+# body is JSON carrying the same text. This row answers 200 with a body that
+# carries the phrase AND names the commenter, so a matcher that read stdout
+# would return None, skip the self-account guard and go on to read the issue —
+# the decline below is what it would lose. Reading the body is what the run
+# actually does: it declines the commenter and calls nothing but /user.
+identity_body_naming_the_refusal_proceeds() {
+  body=/claim
+  printf '%s\n' '{"login":"octo-claimant","type":"User","message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
+  local result=0
+  run_claim 0 "commenter is the token's own account: octo-claimant"$'\n' || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
   if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
   return "$result"
 }
@@ -4136,7 +4226,10 @@ cases=(
   token_commenter_declined
   token_commenter_declined_case_insensitive distinct_commenter_proceeds
   malformed_identity_snapshot identity_not_an_object
-  identity_answer_missing_proceeds identity_answer_403_proceeds
+  identity_body_naming_the_refusal_proceeds
+  identity_answer_missing_fails identity_answer_403_proceeds
+  identity_answer_rate_limited_fails identity_answer_other_403_fails
+  identity_answer_unrelated_refusal_fails identity_answer_silent_failure_fails
   bot_commenter_no_identity_call
   # A hand assignment, which this action did not make and must not settle.
   contested_hand_assignment_bails

@@ -138,7 +138,22 @@ diagnostic. An empty `actor-type` fails the run as a configuration error; its
 default comes from the comment event, so other event types need an explicit
 value for this input. A comment posted by the account the `token` posts as is
 declined in the run log only, because a reply would re-trigger the very
-workflow that configured the token.
+workflow that configured the token. Declining that comment means comparing it
+against the account the `token` writes as, which the action looks up before it
+does anything else, and the lookup has outcomes of its own:
+
+- a `token` that answers with its login — the comparison is made against it,
+  and a comment from that account is declined;
+- the default `${{ github.token }}`, an App installation token with no account
+  of its own, which GitHub refuses with `Resource not accessible by
+  integration` — that one refusal means "there is no account to compare
+  against", so the run carries on and every comment is processed normally;
+- anything else — a rate limit, a network error, a `5xx`, a `401`, a refusal
+  saying something other than the one above, or a `200` whose body carries no
+  login — which fails the run before anything is posted or assigned, because
+  an action that cannot say which account its own `token` writes as must not go
+  on to answer a comment from that account. The run log says so and carries
+  what `gh` reported.
 
 ### Per-role claim caps
 
@@ -236,7 +251,12 @@ Ages in replies are whole days, rounded down.
 - Act on a bot's comment.
 - Answer a comment posted by the account its `token` posts as. The run
   declines in the run log only, because a reply would re-trigger a caller
-  that configured a user token and answer itself forever.
+  that configured a user token and answer itself forever. That decline holds
+  only while the action can establish which account the `token` writes as:
+  it fails the run before anything is posted or assigned when that lookup
+  fails for any reason other than the documented installation-token refusal,
+  which means there is no account behind the `token` to compare against (see
+  [Inputs](#inputs)).
 - Treat an inexact body as a command.
 - Stay silent about anything that is not an attempt: a comment no line of
   which starts with a command word — a URL or a sentence that merely
