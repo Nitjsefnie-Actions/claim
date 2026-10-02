@@ -727,6 +727,25 @@ expire_takeover_cap_reached() {
   run_claim 0
 }
 
+
+# A finite cap with room does not block the takeover: the search counts 1
+# against read's cap of 2 and the takeover proceeds through DELETE, POST,
+# re-read and the reply.
+expire_takeover_cap_under_proceeds() {
+  body=/claim
+  EXPIRE=7
+  MAX_CLAIMS='read=2'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":1,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claim of @alice (held 8 day(s)) has been taken over by @octo-claimant.' --silent
+  run_claim 0 $'took over expired claim of alice (held 8 day(s))\n'
+}
+
 # A hand assignment among the holders defeats the takeover however ancient
 # the claim looks: proof first, and the proof names an identity that is not
 # this action's.
@@ -838,6 +857,23 @@ expire_release_admin_role() {
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
+  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
+}
+
+
+# One expired holder beside one still inside its window: the privileged
+# release removes exactly the expired holder, the live claim stays, and the
+# reply names only the holder it removed. The removal loop must iterate the
+# expired subset, never the whole assignee list.
+expire_release_mixed_created_at() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8' '810|zoe-helper|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
   run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
@@ -3466,10 +3502,12 @@ cases=(
   expire_disabled_no_timeline_call expire_fresh_claim_no_expiry_calls
   expire_takeover_inside_window expire_takeover_boundary_day expire_takeover_expired
   expire_takeover_multiple_expired expire_takeover_cap_zero expire_takeover_cap_reached
+  expire_takeover_cap_under_proceeds
   expire_takeover_proof_fails expire_takeover_age_unreadable expire_takeover_mixed_created_at
   expire_takeover_post_declined
   expire_release_read_role_refused expire_release_triage_role_refused
   expire_release_write_role expire_release_maintain_role expire_release_admin_role
+  expire_release_mixed_created_at
   expire_release_write_role_inside_window expire_release_proof_fails
   expire_release_integration_token expire_release_multiple_expired
   expire_release_no_assignees
