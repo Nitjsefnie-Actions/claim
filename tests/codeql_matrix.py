@@ -48,8 +48,12 @@ punctuation and spans every column below its key, so nothing about a line
 proves where YAML ends and the scalar begins -- a body can host a copy of a
 pinned line (`run: |` in a guarded step hosting `languages:` at the with
 indent) and the pin reading only its own lines cannot tell the copy from
-the original. Refusing the construct outright is the one arm that cannot be
-out-spelled. A flow collection can span lines at any column, but every line
+the original. Refusing the construct outright is the arm that closes the
+class: a block-scalar header is line-final, its header comment is stripped
+before the check, and the check splits at the last colon, so a line whose
+YAML value is a block scalar always presents the indicator as the head -- no
+spelling of the construct reaches the pin as structure. A flow collection
+can span lines at any column, but every line
 inside it carries flow punctuation, which no bare anchor and no
 `- key: value` entry line does, so the shapes the pin reads cannot be
 reproduced inside one. The remaining limits, stated rather than assumed:
@@ -132,6 +136,12 @@ def no_block_scalar(lines):
         text = entry[2].strip()
         if text.startswith("- "):
             text = text[2:]
+        # A header comment is legal after a block-scalar indicator
+        # (`run: | # host: x` is real YAML), so everything from ` #` on is
+        # comment text or a quoted value's tail -- never the header -- and
+        # is truncated before the split. This is also what keeps a healthy
+        # line whose comment carries `: |` from refusing.
+        text = text.split(" #")[0].rstrip()
         # The header is line-final, so the LAST colon separates it: a plain
         # key may carry a colon that no space follows (`ru:n: |` is real
         # YAML), and partitioning on the first would read the key for the

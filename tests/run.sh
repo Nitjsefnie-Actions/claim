@@ -4584,10 +4584,19 @@ REFUSALS = [
      lambda t: planted(t, "on:\n", "on: |\n"),
      "does not model"),
     ("a block scalar under a colon-bearing key",
-     lambda t: planted(t, "          queries: security-extended\n",
-                       "          queries: security-extended\n"
-                       "        ru:n: |\n"
-                       "          languages: ${{ matrix.language }}\n"),
+     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
+                       "").replace(
+         "          queries: security-extended\n",
+         "          queries: security-extended\n        ru:n: |\n"
+         "          languages: ${{ matrix.language }}\n"),
+     "does not model"),
+    ("a block scalar header carrying a comment",
+     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
+                       "").replace(
+         "          queries: security-extended\n",
+         "          queries: security-extended\n"
+         "        run: | # host: x\n"
+         "          languages: ${{ matrix.language }}\n"),
      "does not model"),
     ("a trailing comment on a read value",
      lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
