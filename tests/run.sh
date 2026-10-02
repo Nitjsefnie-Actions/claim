@@ -3555,11 +3555,21 @@ PY
 #
 # The reader's ADMITTED SUBSET, and the refusal set is everything else it
 # meets. The admitted subset is: an explicit block mapping; scalars that are
-# plain, or quoted without escapes, or one of the four null spellings
-# (`null`, `Null`, `NULL`, `~`) or a bare `key:`, or booleans, or decimals, or
-# `{}`; sequences that are block sequences of mappings and scalars; a node
-# carrying an `&anchor` and/or a string tag, which are stepped over in EITHER
-# position; and every path this case reads carried as a block.
+# plain and stay plain under PyYAML's own implicit resolver, or quoted without
+# escapes, or `{}`; sequences that are block sequences of mappings and scalars;
+# a node carrying an `&anchor` and/or the string tag `!!str` or its long form
+# `!<tag:yaml.org,2002:str>`, which are stepped over in EITHER position, and a
+# property with no content, which is stepped over so the block after it is read;
+# and every path this case reads carried as a block.
+#
+# "Stays plain under PyYAML's own implicit resolver" is the whole of what a
+# usable value is, and it is transcribed from PyYAML's resolver table rather
+# than spelled out here. The five types it resolves -- bool, float, int, null,
+# timestamp -- plus the two it cannot construct safely (`<<` and `=`, which it
+# rejects outright) are every implicit resolution YAML makes, and each becomes a
+# non-string, so the usable-value check asks what the value BECAME. A reader
+# that enumerated those spellings by hand is what resolved `true` and `false`
+# and missed `no`.
 #
 # Each refusal below is one a plant reaches and a refusal message names:
 #   - a block scalar, on its first character, in value position OR as a whole
@@ -3569,7 +3579,13 @@ PY
 #     hole — would refuse `run: echo x >`, which PyYAML accepts as a plain
 #     scalar, so that repair was measured and rejected;
 #   - a TYPE-CHANGING tag (`!custom`, `!!binary`, `!!int`, `!!bool`), because a
-#     tag decides what the value became and this reader does not model that;
+#     tag decides what the value became and this reader does not model that.
+#     The exemption is a predicate on the tag URI, not a list of spellings, so
+#     `!!str` and `!<tag:yaml.org,2002:str>` are both recognised as ONE tag and
+#     `!str` is correctly not it (PyYAML rejects that document);
+#   - a tag on a node that turns out to be a block -- `include: !!str` over a
+#     sequence is a PyYAML ConstructorError. An anchor carries no such claim,
+#     so `include: &m` over a sequence is read as the sequence;
 #   - an alias, in value position or as a sequence entry (`*m`), because its
 #     referent is declared elsewhere and no alias is resolved;
 #   - `?` in value position, an indicator no plain scalar may start with, which
@@ -3592,8 +3608,13 @@ PY
 # content they are and refusing them would be a false refusal of valid YAML:
 #   - an anchor, in value position (`&l python` IS `python`) and as a bare
 #     sequence entry (`- &m` over two keys IS that mapping);
-#   - the string tags `!!str` and `!`, which assert what a plain scalar already
-#     is. `!!int '3'` is NOT one of these and is refused.
+#   - the explicit string tags `!!str` and `!<tag:yaml.org,2002:str>`, which
+#     assert a value is the string a plain scalar already is, and the bare `!`,
+#     which asserts nothing at all. `!!int '3'` is not one of these and is
+#     refused. Note that only the EXPLICIT string tags bypass the implicit
+#     resolver: PyYAML reads `fail-fast: ! false` as False, because a
+#     non-specific tag leaves the resolver to decide, so `!` must not be
+#     treated as forcing a string.
 #
 # Four limits it does NOT refuse, stated rather than assumed away. Each is a
 # shape this reader READS, not one it rejects, so none is a refusal to plant:
@@ -3625,6 +3646,78 @@ def refuse(reason):
     raise SystemExit(3)
 
 
+STRING_TAG = "tag:yaml.org,2002:str"
+
+
+def tag_is_string(spelling):
+    """Whether a tag property names the string type.
+
+    Decided by resolving the spelling to a tag URI, not by comparing it against
+    a list of accepted spellings: the default tag directives make `!!str` and
+    `!<tag:yaml.org,2002:str>` two spellings of ONE tag, and a rule that can
+    only recognise the spellings it was told about is a lookup wearing a
+    predicate's clothes. `!str` is NOT the string tag -- PyYAML resolves it
+    against the `!` handle to a namespace the default directives do not define
+    and rejects the document.
+    """
+    if spelling.startswith("!<") and spelling.endswith(">"):
+        return spelling[2:-1] == STRING_TAG
+    if spelling.startswith("!!"):
+        return "tag:yaml.org,2002:" + spelling[2:] == STRING_TAG
+    return spelling == "!"
+
+
+# What a plain scalar BECOMES, transcribed from PyYAML's own implicit
+# resolver table rather than enumerated by hand. Each entry is (pattern, first
+# characters, kind) exactly as PyYAML registers it, and they are tried in
+# PyYAML's registration order.
+#
+# Transcribing the table rather than writing out the spellings is the point.
+# Hand-writing `no`, `off`, `yes`, `on` into the boolean list is how this reader
+# came to resolve `true` and `false` and miss the other four: the domain was
+# enumerated by spelling rather than derived, so anything not spelled out
+# silently stayed a string.
+#
+# The two remaining resolvers are here even though they are not types a
+# workflow should carry, because PyYAML has no safe constructor for either on a
+# scalar: `build-mode: <<` and `build-mode: =` are both a ConstructorError, not
+# the strings `<<` and `=`. Marking them non-strings keeps a document no parser
+# accepts out of the usable-value set rather than reading it as a string.
+#
+# A resolved type here is a non-string, so the usable-value check asks what the
+# value became rather than what this reader happened to keep.
+IMPLICIT_TYPES = (
+    (r"(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON"
+     r"|off|Off|OFF)$", "yYnNtTfFoO", "bool"),
+    (r"(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?"
+     r"|\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?"
+     r"|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*"
+     r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$", "-+0123456789.", "float"),
+    (r"(?:[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)"
+     r"|[-+]?0x[0-9a-fA-F_]+|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+)$",
+     "-+0123456789", "int"),
+    (r"(?:<<)$", "<", "merge"),
+    (r"(?:~|null|Null|NULL|)$", "~nN", "null"),
+    (r"(?:[0-9]{4}-[0-9]{2}-[0-9]{2}"
+     r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:[Tt]|[ \t]+)[0-9]{1,2}"
+     r":[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?"
+     r"(?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?)$", "0123456789", "timestamp"),
+    (r"(?:=)$", "=", "value"),
+)
+IMPLICIT = {}
+for _pattern, _first, _type in IMPLICIT_TYPES:
+    for _char in _first:
+        IMPLICIT.setdefault(_char, []).append((re.compile(r"^" + _pattern), _type))
+
+
+def resolve_plain(text):
+    """The type a plain scalar resolves to, or the text itself when `str`."""
+    for pattern, kind in IMPLICIT.get(text[:1], ()):
+        if pattern.match(text):
+            return Resolved(kind)
+    return text
+
+
 def strip_properties(text, raw):
     """The node content of `text` with its anchor and tag removed.
 
@@ -3635,14 +3728,22 @@ def strip_properties(text, raw):
 
     An anchor is metadata over a value this reader can read, so it is stepped
     over: `language: &l python` IS the language python, and holding the string
-    `&l python` instead would be a false refusal of valid YAML.
+    `&l python` instead would be a false refusal of valid YAML. So is the
+    string tag, decided by tag URI rather than by spelling.
 
-    A tag can change the value's TYPE -- `!!binary` decodes to bytes, `!!int
-    '3'` to 3, `!!bool 'true'` to True -- so a type-changing tag is refused
-    rather than interpreted. The string tags `!!str` and `!` change nothing a
-    plain scalar is not already, so they are stepped over rather than refused.
+    Any other tag can change the value's TYPE -- `!!binary` to bytes, `!!int
+    '3'` to 3 -- so it is refused rather than interpreted.
+
+    Returns (content, carried_a_tag). A property with NO content is not a
+    value: PyYAML reads `include: &m` over a block sequence as that sequence,
+    and `build-mode: &bm` alone as null. So an emptied content comes back as
+    None -- "no value on this line", which is what lets a block follow --
+    rather than as the empty string, which is a value and refuses the block.
+    The caller checks the flag because PyYAML rejects a tagged node that turns
+    out to be a mapping: `include: !!str` over a block is an error.
     """
     anchors = 0
+    tagged = False
     while text[:1] in ("&", "!", "?"):
         if text[:1] == "?":
             # An indicator, so no plain scalar may begin with one; PyYAML
@@ -3650,7 +3751,8 @@ def strip_properties(text, raw):
             refuse(f"refusing `?` in value position, an indicator no plain "
                    f"scalar may begin with: {raw}")
         if text[:1] == "!":
-            if text.split()[0] not in ("!", "!!str"):
+            tagged = True
+            if not tag_is_string(text.split()[0]):
                 refuse(f"refusing a type-changing tag this reader does not "
                        f"model: {raw}")
         else:
@@ -3662,18 +3764,28 @@ def strip_properties(text, raw):
                        f"admit: {raw}")
         parts = text.split(None, 1)
         text = parts[1].strip() if len(parts) > 1 else ""
-    return text
+    return (text or None), tagged
 
 
-class YamlNull:
-    # YAML's null, kept distinct from None because None already means "no
-    # value on this line, a block follows" to the parse loop below, and
-    # collapsing the two would let `build-mode:` adopt the lines after it.
+class Resolved:
+    """A plain scalar YAML resolves to a non-string type.
+
+    Held as one sentinel for every implicit type, `null` included, and kept
+    distinct from None because None already means "no value on this line, a
+    block follows" to the parse loop below -- collapsing the two would let
+    `build-mode:` adopt the lines after it. The usable-value check asks
+    `isinstance(value, str)`, so every resolved type is rejected by
+    construction and the family needs no spelling-by-spelling test.
+    """
+
+    def __init__(self, kind):
+        self.kind = kind
+
     def __repr__(self):
-        return "<yaml null>"
+        return f"<yaml {self.kind}>"
 
 
-NULL = YamlNull()
+NULL = Resolved("null")
 
 
 def strip_comment(raw):
@@ -3712,6 +3824,7 @@ if not path.is_file():
 nodes = {}
 parents = [(-1, ())]
 sequences = {}
+tagged_nodes = set()
 for raw in path.read_text().splitlines():
     line = strip_comment(raw)
     if not line.strip() or line.lstrip().startswith("#"):
@@ -3745,9 +3858,13 @@ for raw in path.read_text().splitlines():
         # An anchor is metadata over the entry, not the entry itself: PyYAML
         # reads `- &m` followed by two keys as one mapping carrying both, so a
         # bare anchor continues with the entry's parent already pushed.
-        bare_anchor = entry[:1] == "&" and len(entry.split(None, 1)) == 1
-        entry = strip_properties(entry, raw)
-        if bare_anchor:
+        entry, entry_tagged = strip_properties(entry, raw)
+        if entry is None:
+            if entry_tagged:
+                # PyYAML rejects a tag on a node that is not a scalar:
+                # `- !!str` over a mapping body is a ConstructorError.
+                refuse(f"a tag with no content on a block sequence entry, which "
+                       f"YAML does not admit: {raw}")
             continue
         if entry[:1] in ("|", ">"):
             # A block scalar as the whole entry, `- |` over a `language:` /
@@ -3766,6 +3883,10 @@ for raw in path.read_text().splitlines():
     if not pair:
         refuse(f"expected explicit workflow mapping: {raw}")
     key, value = quoted_scalar(pair[1].strip()), pair[2]
+    # Bound on every line, not only on the ones with a value: the parse loop is
+    # one long-lived scope, so a flag set by `fail-fast: ! false` would still be
+    # set when the next bare key is reached, and would tag THAT node.
+    tagged = False
     if key == "<<":
         # A merge key. Which keys it contributes is a question this reader
         # cannot answer, and `<<` read as an ordinary key means a language
@@ -3778,24 +3899,19 @@ for raw in path.read_text().splitlines():
         # `!!str |` has already become `|` by the time it is tested, and keying
         # on the last token instead would refuse `run: echo x >`, which PyYAML
         # accepts as an ordinary plain scalar.
-        value = strip_properties(value, raw)
-        if value[:1] in ("'", '"'):
+        value, tagged = strip_properties(value, raw)
+        if value is None:
+            # A property with no content: no value on this line, so a block may
+            # follow. The tag flag rides along to the check below, because
+            # PyYAML rejects a tagged node that turns out to be a mapping.
+            pass
+        elif value[:1] in ("'", '"'):
             value = quoted_scalar(value)
         elif value[:1] == "*":
             # An alias. Its referent is declared elsewhere; this reader
             # resolves no aliases, so the value is a question it cannot answer.
             refuse(f"an alias in value position, whose referent this reader "
                    f"cannot resolve: {raw}")
-        elif value in ("null", "Null", "NULL", "~"):
-            # YAML's null. Held as a sentinel rather than as None, because None
-            # already means "no value here, a block follows" to the loop above
-            # and the two must not collapse: `build-mode:` and `build-mode:
-            # null` are the same null, but only the first may adopt children.
-            value = NULL
-        elif value in ("true", "false"):
-            value = value == "true"
-        elif value.isdecimal():
-            value = int(value)
         elif value[:1] in ("{", "["):
             # A flow collection. `{}` is an empty mapping and contributes no
             # keys, so `permissions: {}` is read exactly as a leaf; any other
@@ -3818,9 +3934,16 @@ for raw in path.read_text().splitlines():
             # `run: echo a: b` and `run: echo "a: b"` are both ScannerErrors,
             # so a plain scalar cannot carry `: ` in any case. A colon with NO
             # space after it is a value character and is NOT this shape:
-            # PyYAML reads `language: python:3` as the language `python:3`.
+            # PyYAML reads `language: python:3` as the language `python:3`,
+            # and `1:30` as the sexagesimal integer 90.
             refuse(f"two mappings on one line, which this reader refuses to "
                    f"choose between: {raw}")
+        else:
+            # A plain scalar, and the one place YAML decides what a value
+            # BECOMES without being told. Every implicit type resolves to a
+            # non-string, so `no`, `off`, `1:30` and `.inf` are caught by the
+            # family rather than by a spelling added one report at a time.
+            value = resolve_plain(value)
         if isinstance(value, str):
             # Every `${{ … }}` in the value, not only a value that IS one: a
             # job name is `analyze (${{ matrix.language }})`, and normalising
@@ -3833,6 +3956,8 @@ for raw in path.read_text().splitlines():
         refuse(f"duplicate workflow key: {node}")
     nodes[node] = value
     if value is None:
+        if tagged:
+            tagged_nodes.add(node)
         parents.append((indent, node))
 
 
@@ -3845,6 +3970,14 @@ parents_of = {key[:length] for key in nodes for length in range(len(key))}
 for key in [key for key, value in nodes.items()
             if value is None and key not in parents_of]:
     nodes[key] = NULL
+
+# A tag whose node turned out to be a block. Whether a block followed is only
+# knowable here, and PyYAML rejects it: `include: !!str` over a block sequence
+# is a ConstructorError, not the sequence. An anchor carries no such claim, so
+# `include: &m` over a sequence is left alone and reads as the sequence.
+for key in tagged_nodes & parents_of:
+    refuse(f"a tag on a node that is a block rather than a scalar, which YAML "
+           f"does not admit: {'.'.join(key)}")
 
 
 def block(*parts):
