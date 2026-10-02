@@ -3318,9 +3318,13 @@ if not checkout[0] < at < lint[0]:
 #
 # The workflows are DERIVED from the workflows: the same REQUIRED_JOBS the check
 # derives its paths from, read out of that module rather than listed here, so
-# this pin cannot drift from the set of jobs it is protecting. A `push:` filter
-# is not in scope: a push to main is not a merge, so a workflow that does not
-# run for one has blocked nothing.
+# this pin cannot drift from the set of jobs it is protecting. The `push:`
+# trigger gets the opposite polarity because a filter there fails silently in
+# the other direction: a `paths:` allow-list stops the gate running on main
+# after any unrelated change, and no pull request ever blocks to say so, while
+# a `paths-ignore:` deny-list merely skips a documentation-only push. So a
+# `paths-ignore:` key -- or no path filter at all -- is fine on push, and only
+# a `paths:` key is refused.
 sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
 from gate_base_freshness import REQUIRED_JOBS
 
@@ -3336,7 +3340,7 @@ if not carrying:
 
 for workflow in carrying:
     body = workflow.read_text().splitlines()
-    for trigger in ("pull_request:", "pull_request_target:"):
+    for trigger in ("pull_request:", "pull_request_target:", "push:"):
         starts = [index for index, line in enumerate(body)
                   if line.rstrip() == f"  {trigger}"]
         if not starts:
@@ -3348,8 +3352,33 @@ for workflow in carrying:
                     and len(line) - len(line.lstrip(" ")) <= 2:
                 stop = index
                 break
-        if any(re.match(r"\s*paths(-ignore)?:", line)
-               for line in body[starts[0]:stop]):
+        if trigger == "push:":
+            # Opposite polarity from the arms above, and the verdict reads
+            # the key as the whole decoded token rather than a substring, so
+            # a comment or a value's prose can neither satisfy nor evade it.
+            # A line this reader cannot classify -- a quoted `paths` key --
+            # is refused rather than passed.
+            filters = set()
+            for line in body[starts[0]:stop]:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                match = re.match(r"paths(-ignore)?:", stripped)
+                if match:
+                    filters.add(match.group(0))
+                elif re.match(r"['\"]paths(-ignore)?['\"]:", stripped):
+                    fail(f"{workflow.name}'s push: trigger spells its path "
+                         f"filter as a quoted key, which this line-level "
+                         f"check refuses rather than parses; spell it "
+                         f"`paths:` or `paths-ignore:`")
+            if "paths:" in filters:
+                fail(f"{workflow.name}'s push: trigger must not carry a "
+                     f"`paths:` allow-list: it stops the gate running on "
+                     f"main after any unrelated change, and no pull request "
+                     f"ever blocks to say so; deny-list with `paths-ignore:` "
+                     f"instead")
+        elif any(re.match(r"\s*paths(-ignore)?:", line)
+                 for line in body[starts[0]:stop]):
             fail(f"{workflow.name}'s {trigger} trigger must carry no paths "
                  f"filter: a workflow with a required job that does not run "
                  f"reports no status, and the pull request blocks forever")
