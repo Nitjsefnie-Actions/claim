@@ -2782,7 +2782,9 @@ gate_paths_derived_from_workflows() {
     printf '  the derivation refused on the repository as it stands\n'
     return 1
   }
-  local expected='.github/workflows/actionlint.yml
+  local expected='.coveragerc
+.github/ci-thresholds.json
+.github/workflows/actionlint.yml
 .github/workflows/audit.yml
 .github/workflows/claim.yml
 .github/workflows/codeql.yml
