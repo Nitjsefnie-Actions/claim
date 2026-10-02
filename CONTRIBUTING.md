@@ -198,6 +198,12 @@ That last one is not hand-written: `.github/dependabot.yml` configures the
 prefix, so Dependabot's own pull requests arrive in this form and nobody has to
 rewrite them.
 
+**Releases follow semantic versioning.** A release containing any breaking
+commit bumps the major version (`v1.1.0` → `v2.0.0`). Otherwise a release with
+a `feat` commit bumps the minor version, and any other release bumps the patch
+version. The `!` marker is what decides it, so a breaking change never ships
+as a minor release.
+
 ## Issues
 
 Use the [issue form](.github/ISSUE_TEMPLATE/issue.md). Its section order is
