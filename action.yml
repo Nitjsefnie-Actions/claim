@@ -37,7 +37,7 @@ inputs:
     required: false
     default: -1
   expire:
-    description: Days before an idle claim expires; -1 never expires, a positive integer counts days, and 0 or any other non-integer fails the run
+    description: Days before an idle claim expires; -1 never expires, a positive integer counts days, and any value that is not -1 or a positive integer fails the run
     required: false
     default: -1
 
