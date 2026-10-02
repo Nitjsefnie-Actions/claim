@@ -3540,8 +3540,9 @@ PY
 # The third limb is what a pin on the file's text cannot give. A matrix entry
 # nothing consumes analyses nothing — GitHub still runs the job, `init`
 # extracts its default language set, and the SARIF lands with no category the
-# run can be found by. So this reads the init step's `languages:` and the
-# analyze step's `category:` and requires both to interpolate `matrix.language`.
+# run can be found by. So this reads the three consumers of the value: the job
+# name, the init step's `languages:` and the analyze step's `category:`, and
+# requires all three to interpolate `matrix.language`.
 #
 # `python` is the one membership requirement held by hand, and it is held by
 # hand for a checkable reason: the offline oracle for "which languages does
@@ -3552,26 +3553,64 @@ PY
 # and not an equality, so a third language a maintainer adds legitimately does
 # not have to rewrite this pin to go green.
 #
-# The reader accepts ONE shape: an explicit block mapping, whose scalars are
-# plain or quoted without escapes, whose sequences are block sequences or an
-# empty `{}` leaf, and whose every path this case reads is a block. Everything
-# else is refused by name rather than guessed at — a flow collection, a block
-# scalar in any of its spellings, an anchor or an alias, a merge key, a
-# duplicate key, a value carrying two mappings on one line, a tab-indented
-# line, a quoted scalar with an escape, a document that declares none of what
-# this case reads, and a job that does not have exactly one `init` and one
-# `analyze` step.
+# The reader's ADMITTED SUBSET, and the refusal set is everything else it
+# meets. The admitted subset is: an explicit block mapping; scalars that are
+# plain, or quoted without escapes, or one of the four null spellings
+# (`null`, `Null`, `NULL`, `~`) or a bare `key:`, or booleans, or decimals, or
+# `{}`; sequences that are block sequences of mappings and scalars; a node
+# carrying an `&anchor` and/or a string tag, which are stepped over in EITHER
+# position; and every path this case reads carried as a block.
 #
-# Three limits it does NOT refuse, stated rather than assumed away:
-#   - `${{ }}` is normalised for spacing only, never resolved, so a reference
-#     written `matrix . language` reads unequal to `matrix.language`. That
-#     direction reddens rather than greens, and pr_gate_contract does the same.
-#   - A plain scalar holding `:` with no space after it is read as part of the
-#     value (`language: python:3` reads as a language called `python:3`). The
-#     membership limb then reports it; a `build-mode: none:x` would not.
-#   - It reads no trigger at all. `on:` is outside this case's declared scope:
-#     deleting the push trigger answers green here and is caught by no case,
-#     which is a reach limit, not a green.
+# Each refusal below is one a plant reaches and a refusal message names:
+#   - a block scalar, on its first character, in value position OR as a whole
+#     sequence entry (`- |`). Properties are stripped BEFORE the test, which is
+#     what lets it key on the first character at all: `!!str |` has become `|`
+#     by then. Keying on the LAST token instead — the obvious fix for the same
+#     hole — would refuse `run: echo x >`, which PyYAML accepts as a plain
+#     scalar, so that repair was measured and rejected;
+#   - a TYPE-CHANGING tag (`!custom`, `!!binary`, `!!int`, `!!bool`), because a
+#     tag decides what the value became and this reader does not model that;
+#   - an alias, in value position or as a sequence entry (`*m`), because its
+#     referent is declared elsewhere and no alias is resolved;
+#   - `?` in value position, an indicator no plain scalar may start with, which
+#     PyYAML rejects;
+#   - a second anchor on one node (`&a &b python`), which PyYAML rejects;
+#   - a flow collection other than `{}`, which hides structure this reader
+#     cannot walk;
+#   - a merge key `<<`, whose contributed keys are unanswerable;
+#   - a duplicate key at one path;
+#   - two mappings on one line (`: ` inside a plain scalar), which PyYAML
+#     rejects too;
+#   - a tab-indented line, which YAML forbids and this reader would count as
+#     no indentation and silently re-parent;
+#   - an ambiguous `- ` sequence entry, and a quoted scalar carrying an
+#     escape the reader does not model;
+#   - a path that must be a block but is absent, inline, or a bare key;
+#   - a job without exactly one `init` step and exactly one `analyze` step.
+#
+# STEPS OVER rather than refuses, because PyYAML reads these as the plain
+# content they are and refusing them would be a false refusal of valid YAML:
+#   - an anchor, in value position (`&l python` IS `python`) and as a bare
+#     sequence entry (`- &m` over two keys IS that mapping);
+#   - the string tags `!!str` and `!`, which assert what a plain scalar already
+#     is. `!!int '3'` is NOT one of these and is refused.
+#
+# Four limits it does NOT refuse, stated rather than assumed away. Each is a
+# shape this reader READS, not one it rejects, so none is a refusal to plant:
+#   - `${{ }}` is normalised for spacing everywhere it occurs and resolved
+#     nowhere, so a reference written `matrix . language` reads unequal to
+#     `matrix.language`. That direction reddens rather than greens, and
+#     pr_gate_contract does the same.
+#   - A plain scalar holding `:` with NO space after it is read as part of the
+#     value: PyYAML reads `language: python:3` as the language `python:3`, and
+#     so does this reader. The membership limb then reports it; the same shape
+#     in a `build-mode:` would not be reported.
+#   - An anchor is stepped over, never RESOLVED. This reader resolves no
+#     reference between anchors, so an anchor that shadows a key another node
+#     reads is invisible to it.
+#   - It reads no trigger. `on:` is outside this case's declared scope:
+#     deleting the push trigger answers green here, and the WHOLE SUITE
+#     answers green on it too — measured, not assumed.
 codeql_matrix_covers_python() {
   python3 - "$ROOT" <<'PYCODEQL'
 from pathlib import Path
@@ -3584,6 +3623,57 @@ path = Path(sys.argv[1]) / ".github/workflows/codeql.yml"
 def refuse(reason):
     print(f"codeql_matrix_covers_python: {reason}", file=sys.stderr)
     raise SystemExit(3)
+
+
+def strip_properties(text, raw):
+    """The node content of `text` with its anchor and tag removed.
+
+    A scalar's node properties may carry an anchor and a tag in EITHER order,
+    and both precede the content -- PyYAML accepts `&a !!str |` and `!!str &a |`
+    alike -- so they are stepped over in a loop rather than tested in one
+    order.
+
+    An anchor is metadata over a value this reader can read, so it is stepped
+    over: `language: &l python` IS the language python, and holding the string
+    `&l python` instead would be a false refusal of valid YAML.
+
+    A tag can change the value's TYPE -- `!!binary` decodes to bytes, `!!int
+    '3'` to 3, `!!bool 'true'` to True -- so a type-changing tag is refused
+    rather than interpreted. The string tags `!!str` and `!` change nothing a
+    plain scalar is not already, so they are stepped over rather than refused.
+    """
+    anchors = 0
+    while text[:1] in ("&", "!", "?"):
+        if text[:1] == "?":
+            # An indicator, so no plain scalar may begin with one; PyYAML
+            # rejects `run: ? foo` outright.
+            refuse(f"refusing `?` in value position, an indicator no plain "
+                   f"scalar may begin with: {raw}")
+        if text[:1] == "!":
+            if text.split()[0] not in ("!", "!!str"):
+                refuse(f"refusing a type-changing tag this reader does not "
+                       f"model: {raw}")
+        else:
+            anchors += 1
+            if anchors > 1:
+                # PyYAML rejects `&a &b python`: one node carries at most one
+                # anchor.
+                refuse(f"a second anchor on one node, which YAML does not "
+                       f"admit: {raw}")
+        parts = text.split(None, 1)
+        text = parts[1].strip() if len(parts) > 1 else ""
+    return text
+
+
+class YamlNull:
+    # YAML's null, kept distinct from None because None already means "no
+    # value on this line, a block follows" to the parse loop below, and
+    # collapsing the two would let `build-mode:` adopt the lines after it.
+    def __repr__(self):
+        return "<yaml null>"
+
+
+NULL = YamlNull()
 
 
 def strip_comment(raw):
@@ -3646,11 +3736,25 @@ for raw in path.read_text().splitlines():
         parents.append((indent, parent))
         indent += 2
         entry = entry[2:]
-        if entry[:1] in ("&", "*"):
-            # An anchor or an alias. Which keys an aliased entry contributes is
-            # a question this reader cannot answer, and a bare `&m` reads here
-            # as the scalar `&m`, taking the entry's keys with it.
-            refuse(f"an anchor or an alias in a block sequence: {raw}")
+        if entry[:1] == "*":
+            # An alias. Its referent is an anchor declared elsewhere in the
+            # document and this reader resolves no aliases, so which entries it
+            # contributes is a question it cannot answer.
+            refuse(f"an alias in a block sequence, whose referent this reader "
+                   f"cannot resolve: {raw}")
+        # An anchor is metadata over the entry, not the entry itself: PyYAML
+        # reads `- &m` followed by two keys as one mapping carrying both, so a
+        # bare anchor continues with the entry's parent already pushed.
+        bare_anchor = entry[:1] == "&" and len(entry.split(None, 1)) == 1
+        entry = strip_properties(entry, raw)
+        if bare_anchor:
+            continue
+        if entry[:1] in ("|", ">"):
+            # A block scalar as the whole entry, `- |` over a `language:` /
+            # `build-mode:` body. No parent is pushed, so that body would be
+            # walked as structure; refusing here names the block scalar rather
+            # than blaming the matrix entry that follows it.
+            refuse(f"refusing a block scalar this reader does not model: {raw}")
         # A block sequence usually holds mappings, but `paths-ignore:` and
         # `cron:` hold plain scalars. An entry is read as a scalar only when
         # it cannot be a mapping; an ambiguous one is refused, not guessed.
@@ -3669,8 +3773,25 @@ for raw in path.read_text().splitlines():
         refuse(f"a merge key, which this reader does not model: {raw}")
     if value is not None:
         value = value.strip()
+        # Properties come off before anything below interprets the value, which is
+        # what lets the block-scalar arm key on the FIRST character again:
+        # `!!str |` has already become `|` by the time it is tested, and keying
+        # on the last token instead would refuse `run: echo x >`, which PyYAML
+        # accepts as an ordinary plain scalar.
+        value = strip_properties(value, raw)
         if value[:1] in ("'", '"'):
             value = quoted_scalar(value)
+        elif value[:1] == "*":
+            # An alias. Its referent is declared elsewhere; this reader
+            # resolves no aliases, so the value is a question it cannot answer.
+            refuse(f"an alias in value position, whose referent this reader "
+                   f"cannot resolve: {raw}")
+        elif value in ("null", "Null", "NULL", "~"):
+            # YAML's null. Held as a sentinel rather than as None, because None
+            # already means "no value here, a block follows" to the loop above
+            # and the two must not collapse: `build-mode:` and `build-mode:
+            # null` are the same null, but only the first may adopt children.
+            value = NULL
         elif value in ("true", "false"):
             value = value == "true"
         elif value.isdecimal():
@@ -3682,32 +3803,48 @@ for raw in path.read_text().splitlines():
             if value != "{}":
                 refuse(f"refusing a flow collection this reader does not model: {key}: {value}")
         elif value[:1] in ("|", ">"):
-            # A block scalar. Its header is `|` or `>` with an optional
-            # indentation indicator and an optional chomping indicator in
-            # either order, so every spelling is one of `|`, `|-`, `|+`, `|2`,
-            # `|2-`, `>`, `>-`, `>+`, `>2`; the first character catches all of
-            # them and anything malformed too. No parent is pushed, so the body
-            # that follows would be walked as structure: the matrix, `init`'s
-            # `with:` and the analyze step's `category:` can each be satisfied
-            # by inert text under a `run:`, and every limb would read green
-            # over a workflow that analyses nothing at all.
+            # A block scalar, on the FIRST character because any tag or anchor
+            # in front of it has already been stepped over above. Its header is
+            # `|` or `>` with an optional indentation indicator and an optional
+            # chomping indicator in either order, so every spelling is one of
+            # `|`, `|-`, `|+`, `|2`, `|2-`, `>`, `>-`, `>+`, `>2`. No parent is
+            # pushed, so the body that follows would be walked as structure:
+            # the matrix, `init`'s `with:` and the analyze step's `category:`
+            # can each be satisfied by inert text under a `run:`, and every
+            # limb would read green over a workflow that analyses nothing.
             refuse(f"refusing a block scalar this reader does not model: {key}: {value}")
         elif re.search(r":(\s|$)", value):
-            # Two mappings on one line. Read as one mapping it would answer a
-            # question the document does not answer — `language: python:3` a
-            # line-at-a-time reader takes for a language called `python:3`.
-            # PyYAML rejects the same line, so this is not a shape worth
-            # reading: a plain scalar cannot carry `: ` in any case.
+            # Two mappings on one line, which PyYAML rejects as well --
+            # `run: echo a: b` and `run: echo "a: b"` are both ScannerErrors,
+            # so a plain scalar cannot carry `: ` in any case. A colon with NO
+            # space after it is a value character and is NOT this shape:
+            # PyYAML reads `language: python:3` as the language `python:3`.
             refuse(f"two mappings on one line, which this reader refuses to "
                    f"choose between: {raw}")
-        if isinstance(value, str) and value.startswith("${{") and value.endswith("}}"):
-            value = "${{ " + value[3:-2].strip() + " }}"
+        if isinstance(value, str):
+            # Every `${{ … }}` in the value, not only a value that IS one: a
+            # job name is `analyze (${{ matrix.language }})`, and normalising
+            # only a wholly-expression value left the embedded spelling
+            # unnormalised, which reddened a maintainer's tightened spacing.
+            value = re.sub(r"\$\{\{.*?\}\}",
+                           lambda m: "${{ " + m[0][3:-2].strip() + " }}", value)
     node = parent + (key,)
     if node in nodes:
         refuse(f"duplicate workflow key: {node}")
     nodes[node] = value
     if value is None:
         parents.append((indent, node))
+
+
+# A key with no value and no block under it is null, not an unfinished
+# mapping: PyYAML reads `build-mode:` as None exactly as it reads
+# `build-mode: null`. The parse loop above can only know that nothing
+# followed, which is the same fact, so the two are settled here rather than
+# in the assertion that reads them.
+parents_of = {key[:length] for key in nodes for length in range(len(key))}
+for key in [key for key, value in nodes.items()
+            if value is None and key not in parents_of]:
+    nodes[key] = NULL
 
 
 def block(*parts):
@@ -3717,6 +3854,9 @@ def block(*parts):
         node += (key,)
         if node not in nodes:
             refuse(f"the codeql workflow declares no {'.'.join(node)}")
+        if nodes[node] is NULL:
+            refuse(f"{'.'.join(node)} is a bare key, which YAML reads as null "
+                   f"rather than as a block")
         if nodes[node] is not None:
             refuse(f"{'.'.join(node)} is written inline, not as a block")
     return node
@@ -3741,14 +3881,17 @@ for index in entries:
                   if node[:len(include) + 1] == include + (index,)
                   and len(node) == len(include) + 2)
     for key in ("language", "build-mode"):
-        # Presence AND a usable value. An absent key and an empty one reach
-        # init the same way — `build-mode: ${{ matrix.build-mode }}` expands to
-        # nothing — so a presence-only assertion is a green over a matrix leg
-        # that dies on a build-mode CodeQL refuses.
+        # Presence AND a usable value. An absent key, an empty one and a
+        # YAML null all reach init the same way — `build-mode: ${{
+        # matrix.build-mode }}` expands to nothing — so a presence-only
+        # assertion, or one that asks the reader whether its own unresolved
+        # scalar is non-empty, is a green over a matrix leg that dies on a
+        # build-mode CodeQL refuses. NULL is that reader's answer for the four
+        # spellings `null`, `Null`, `NULL` and `~`, and for a bare `key:`.
         value = nodes.get(include + (index, key))
         assert isinstance(value, str) and value.strip(), (
-            f"matrix entry {index} declares no usable {key}: it holds {held}, "
-            f"and init is handed an empty {key} for it")
+            f"matrix entry {index} declares no usable {key}: it holds {held} "
+            f"with {value!r}, and init is handed an empty {key} for it")
 
 
 # 2. python is one of the languages the entries name. The hand-held membership,
