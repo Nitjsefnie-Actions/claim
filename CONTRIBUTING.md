@@ -229,7 +229,9 @@ reply; a line that does start with a command word but is not exactly one
 command is declined with a comment on the issue and a failed run, as are a
 wrong carried number, a closed issue and a pull request. A bot's comment is
 declined in the run log only, and an issue somebody already holds is
-answered without changing assignments. Re-read the issue afterwards and
+answered without changing assignments — unless its claim has expired
+(see “Claim expiry” in the README), in which case `/claim` may take it
+over. Re-read the issue afterwards and
 confirm your login is in `assignees`: a posted comment is not a claim.
 
 Release an issue you stop working, before the merge that closes it — the action
