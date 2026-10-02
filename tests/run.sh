@@ -2788,6 +2788,7 @@ gate_paths_derived_from_workflows() {
 .github/workflows/pr-gate.yml
 .github/workflows/requirements.txt
 .github/workflows/scorecard.yml
+.github/workflows/secrets.yml
 .github/workflows/tests.yml
 README.md
 action.yml
