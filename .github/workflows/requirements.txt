@@ -3,16 +3,16 @@
 # installs whatever artifact the index serves for that version; these sha256
 # hashes make the install the same bytes on every run.
 #
-# The hashes below are the wheels pip resolves on the ubuntu-latest runner
-# platform: x86_64 glibc, CPython 3.13. zizmor declares no runtime
+# What the hashes have to cover is the wheel the ubuntu-latest runner
+# resolves: x86_64 glibc, CPython 3.13. zizmor declares no runtime
 # dependencies, so PyYAML is the whole transitive closure.
 #
 # The `pip` entry in .github/dependabot.yml watches this directory, so a
 # version bump arrives as a pull request with the --hash lines rewritten
-# beside it. Its hash set is every artifact the release ships rather than
-# this platform's, and --require-hashes accepts a superset. To regenerate
-# the hashes for this platform by hand instead of copying them from a
-# release page --
+# beside it, and the set it writes is every artifact the release ships
+# rather than that one platform's. --require-hashes accepts that superset
+# and matches the runner's wheel out of it. To regenerate the hashes for
+# this platform by hand instead of copying them from a release page --
 #
 #   python3 -m pip download -d /tmp/req-dl zizmor==<new> PyYAML==<new>
 #   sha256sum /tmp/req-dl/*
