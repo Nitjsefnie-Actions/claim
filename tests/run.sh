@@ -3552,9 +3552,26 @@ PY
 # and not an equality, so a third language a maintainer adds legitimately does
 # not have to rewrite this pin to go green.
 #
-# The reader accepts this workflow's explicit block layout without a YAML
-# dependency — tests/run.sh imports no yaml and the job installs no packages —
-# and refuses on anything it does not model rather than guessing.
+# The reader accepts ONE shape: an explicit block mapping, whose scalars are
+# plain or quoted without escapes, whose sequences are block sequences or an
+# empty `{}` leaf, and whose every path this case reads is a block. Everything
+# else is refused by name rather than guessed at — a flow collection, a block
+# scalar in any of its spellings, an anchor or an alias, a merge key, a
+# duplicate key, a value carrying two mappings on one line, a tab-indented
+# line, a quoted scalar with an escape, a document that declares none of what
+# this case reads, and a job that does not have exactly one `init` and one
+# `analyze` step.
+#
+# Three limits it does NOT refuse, stated rather than assumed away:
+#   - `${{ }}` is normalised for spacing only, never resolved, so a reference
+#     written `matrix . language` reads unequal to `matrix.language`. That
+#     direction reddens rather than greens, and pr_gate_contract does the same.
+#   - A plain scalar holding `:` with no space after it is read as part of the
+#     value (`language: python:3` reads as a language called `python:3`). The
+#     membership limb then reports it; a `build-mode: none:x` would not.
+#   - It reads no trigger at all. `on:` is outside this case's declared scope:
+#     deleting the push trigger answers green here and is caught by no case,
+#     which is a reach limit, not a green.
 codeql_matrix_covers_python() {
   python3 - "$ROOT" <<'PYCODEQL'
 from pathlib import Path
@@ -3609,6 +3626,13 @@ for raw in path.read_text().splitlines():
     line = strip_comment(raw)
     if not line.strip() or line.lstrip().startswith("#"):
         continue
+    lead = line[:len(line) - len(line.lstrip(" \t"))]
+    if "\t" in lead:
+        # YAML forbids a tab in indentation. This reader counts one as no
+        # indentation at all, which would silently re-parent the line — and a
+        # re-parented key is a different workflow, read without a word.
+        refuse(f"tab-indented line, which YAML forbids and this reader would "
+               f"count as no indentation: {raw}")
     indent = len(line) - len(line.lstrip(" "))
     while parents[-1][0] >= indent:
         parents.pop()
@@ -3622,6 +3646,11 @@ for raw in path.read_text().splitlines():
         parents.append((indent, parent))
         indent += 2
         entry = entry[2:]
+        if entry[:1] in ("&", "*"):
+            # An anchor or an alias. Which keys an aliased entry contributes is
+            # a question this reader cannot answer, and a bare `&m` reads here
+            # as the scalar `&m`, taking the entry's keys with it.
+            refuse(f"an anchor or an alias in a block sequence: {raw}")
         # A block sequence usually holds mappings, but `paths-ignore:` and
         # `cron:` hold plain scalars. An entry is read as a scalar only when
         # it cannot be a mapping; an ambiguous one is refused, not guessed.
@@ -3633,6 +3662,11 @@ for raw in path.read_text().splitlines():
     if not pair:
         refuse(f"expected explicit workflow mapping: {raw}")
     key, value = quoted_scalar(pair[1].strip()), pair[2]
+    if key == "<<":
+        # A merge key. Which keys it contributes is a question this reader
+        # cannot answer, and `<<` read as an ordinary key means a language
+        # hidden behind a merge reads as a key that is merely present.
+        refuse(f"a merge key, which this reader does not model: {raw}")
     if value is not None:
         value = value.strip()
         if value[:1] in ("'", '"'):
@@ -3647,10 +3681,23 @@ for raw in path.read_text().splitlines():
             # one hides structure this reader cannot walk.
             if value != "{}":
                 refuse(f"refusing a flow collection this reader does not model: {key}: {value}")
+        elif value[:1] in ("|", ">"):
+            # A block scalar. Its header is `|` or `>` with an optional
+            # indentation indicator and an optional chomping indicator in
+            # either order, so every spelling is one of `|`, `|-`, `|+`, `|2`,
+            # `|2-`, `>`, `>-`, `>+`, `>2`; the first character catches all of
+            # them and anything malformed too. No parent is pushed, so the body
+            # that follows would be walked as structure: the matrix, `init`'s
+            # `with:` and the analyze step's `category:` can each be satisfied
+            # by inert text under a `run:`, and every limb would read green
+            # over a workflow that analyses nothing at all.
+            refuse(f"refusing a block scalar this reader does not model: {key}: {value}")
         elif re.search(r":(\s|$)", value):
             # Two mappings on one line. Read as one mapping it would answer a
             # question the document does not answer — `language: python:3` a
             # line-at-a-time reader takes for a language called `python:3`.
+            # PyYAML rejects the same line, so this is not a shape worth
+            # reading: a plain scalar cannot carry `: ` in any case.
             refuse(f"two mappings on one line, which this reader refuses to "
                    f"choose between: {raw}")
         if isinstance(value, str) and value.startswith("${{") and value.endswith("}}"):
@@ -3694,9 +3741,14 @@ for index in entries:
                   if node[:len(include) + 1] == include + (index,)
                   and len(node) == len(include) + 2)
     for key in ("language", "build-mode"):
-        assert key in held, (
-            f"matrix entry {index} declares no {key}: it holds {held}, and init "
-            f"is handed an empty {key} for it")
+        # Presence AND a usable value. An absent key and an empty one reach
+        # init the same way — `build-mode: ${{ matrix.build-mode }}` expands to
+        # nothing — so a presence-only assertion is a green over a matrix leg
+        # that dies on a build-mode CodeQL refuses.
+        value = nodes.get(include + (index, key))
+        assert isinstance(value, str) and value.strip(), (
+            f"matrix entry {index} declares no usable {key}: it holds {held}, "
+            f"and init is handed an empty {key} for it")
 
 
 # 2. python is one of the languages the entries name. The hand-held membership,
@@ -3708,8 +3760,22 @@ assert "python" in languages, (
     f"names {sorted(map(str, languages))}")
 
 
-# 3. The value is consumed, not merely declared: the init step analyses
-# matrix.language, and the analyze step files it under that language's category.
+# 3. The value is consumed, not merely declared: the job is NAMED for the
+# language it analyses, the init step analyses matrix.language, and the analyze
+# step files it under that language's category. The job name is the first of
+# the three and is the one that makes two matrix entries land as two checks
+# rather than two runs of the same check, so a pin that left it out would
+# break that silently while the comment above still claimed it.
+#
+# The job name is required to INTERPOLATE the expression rather than to equal a
+# fixed string: `CodeQL (${{ matrix.language }})` names its check just as well,
+# and a pin that reddened a cosmetic rewording would be a defect of its own.
+job_name = nodes.get(("jobs", "analyze", "name"), "<absent>")
+assert isinstance(job_name, str) and "${{ matrix.language }}" in job_name, (
+    f"the analyze job is named {job_name!r}, which does not interpolate "
+    f"matrix.language, so every matrix entry would answer to one check name "
+    f"and none of them would land as its own check")
+
 steps = block("jobs", "analyze", "steps")
 step_names = sorted({node[len(steps)] for node in nodes
                      if node[:len(steps)] == steps and len(node) == len(steps) + 1})
