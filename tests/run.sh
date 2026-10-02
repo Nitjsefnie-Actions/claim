@@ -4044,21 +4044,26 @@ for marker, render in (("taken over by", claim.takeover_reply),
 PY
 }
 
-# The Install block's `if:` and claim.yml's `if:` are two hand-kept copies of
-# one literal, and the only gate that reads both files — actionlint.yml's
-# "Check the README pin matches claim.yml" step — compares the action pins and
-# nothing else. Editing either copy alone therefore shipped green. This case
-# reads the condition out of BOTH files, each through its own parse of its own
-# text, with a reader that models only the shapes these two files use — a
-# block-scalar body (whose `#`-initial lines are content there and refuse
-# rather than strip), an on-key-line plain or quoted scalar (whose
+# The Install block and claim.yml are two hand-kept copies of one manifest,
+# and the only gate that reads both files — actionlint.yml's "Check the README
+# pin matches claim.yml" step — compares the action pins and nothing else.
+# Editing either copy alone therefore shipped green, for the job condition
+# bfe9aad pinned and equally for the step's `with:` mapping beside it. This
+# case reads BOTH surfaces out of BOTH files, each through its own parse of
+# its own text, with a reader that models only the shapes these two files
+# use — a block-scalar body (whose `#`-initial lines are content there and
+# refuse rather than strip), an on-key-line plain or quoted scalar (whose
 # deeper-indented continuation lines refuse rather than join), and the wrapper
-# forms around those — and refuses every shape outside that set, so a
-# condition it cannot read is a red refusal and never a guessed one. The two
-# sides are compared with whitespace folded: the folded `>-` scalar's line
-# breaks and the more-indented `||` continuation lines compare equal, so only
-# a difference in the condition's tokens reddens.
-readme_install_condition_matches_claim_yml() {
+# forms around those — and refuses every shape outside that set, so a value
+# it cannot read is a red refusal and never a guessed one. The two conditions
+# are compared with whitespace folded: the folded `>-` scalar's line breaks
+# and the more-indented `||` continuation lines compare equal, so only a
+# difference in the condition's tokens reddens. The `with:` values are
+# compared as their DECODED scalars — quote-stripped, so a comment or a
+# spelling difference cannot satisfy the compare — exactly, with no folding:
+# `max-claims` and `expire` are single-line quoted literals in both files,
+# and the value itself is the contract.
+readme_install_block_matches_claim_yml() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
 import re
@@ -4083,9 +4088,9 @@ def quoted_scalar(path, text):
     return text
 
 
-def condition_of(path, text):
-    """jobs.claim.if read out of one manifest, refusing every shape outside
-    the set modelled below."""
+def job_block_of(path, text):
+    """the claim job's lines read out of one manifest, refusing every shape
+    outside the set modelled below."""
     significant = []
     for line in text.splitlines():
         lead = line[: len(line) - len(line.lstrip(" "))]
@@ -4135,8 +4140,12 @@ def condition_of(path, text):
     stop = next((i for i in range(start, len(jobs_block))
                  if jobs_block[i][0] <= 2 and not jobs_block[i][2]),
                 len(jobs_block))
-    job_block = jobs_block[start:stop]
+    return jobs_block[start:stop]
 
+
+def condition_of(path, job_block):
+    """jobs.claim.if read out of the claim job's lines, refusing every shape
+    outside the set modelled below."""
     # Only a key at indent 4 is the job's own condition: a step's `if:` sits
     # at indent 6 and deeper, inside `steps:`, and must not be picked up.
     ifs_at = [i for i, (indent, s, comment) in enumerate(job_block)
@@ -4205,6 +4214,88 @@ def condition_of(path, text):
 readme = (root / "README.md").read_text(encoding="utf-8")
 workflow = (root / ".github/workflows/claim.yml").read_text(encoding="utf-8")
 
+
+def with_of(path, job_block):
+    """the action step's `with:` mapping read as decoded values, refusing
+    every shape outside the set modelled below."""
+    inline = [s for indent, s, comment in job_block
+              if indent == 4 and not comment
+              and s.startswith("steps:") and s != "steps:"]
+    assert not inline, (
+        f"{path}: `steps:` carries an inline value this reader does not model: "
+        f"{inline[0]!r}")
+    steps_at = [i for i, (indent, s, comment) in enumerate(job_block)
+                if indent == 4 and not comment and s == "steps:"]
+    assert len(steps_at) == 1, (
+        f"{path}: expected exactly one `steps:` at indent 4 in the claim job, "
+        f"found {len(steps_at)}")
+    start = steps_at[0] + 1
+    stop = next((i for i in range(start, len(job_block))
+                 if job_block[i][0] <= 4 and not job_block[i][2]),
+                len(job_block))
+    steps_block = job_block[start:stop]
+    items = [(i, s) for i, (indent, s, comment) in enumerate(steps_block)
+             if not comment and s.startswith("- ")]
+    assert len(items) == 1, (
+        f"{path}: expected exactly one step item under `steps:`, "
+        f"found {len(items)}")
+    item_at, item = items[0]
+    assert steps_block[item_at][0] == 6, (
+        f"{path}: the step item does not sit at indent 6 under `steps:`")
+    assert item.startswith("- uses:"), (
+        f"{path}: the step item does not open with `uses:`; a step this "
+        f"reader does not model: {item!r}")
+    inline = [s for indent, s, comment in steps_block[item_at + 1:]
+              if 6 < indent and not comment
+              and s.startswith("with:") and s != "with:"]
+    assert not inline, (
+        f"{path}: `with:` carries an inline value this reader does not model: "
+        f"{inline[0]!r}")
+    withs_at = [i for i, (indent, s, comment) in
+                enumerate(steps_block[item_at + 1:], item_at + 1)
+                if 6 < indent and not comment and s == "with:"]
+    assert len(withs_at) == 1, (
+        f"{path}: expected exactly one `with:` in the action's step, "
+        f"found {len(withs_at)}")
+    start = withs_at[0] + 1
+    stop = next((i for i in range(start, len(steps_block))
+                 if steps_block[i][0] <= 8 and not steps_block[i][2]),
+                len(steps_block))
+    with_block = steps_block[start:stop]
+    values = {}
+    for indent, s, comment in with_block:
+        if comment:
+            continue
+        key, sep, rest = s.partition(":")
+        assert key in ("max-claims", "expire") and sep, (
+            f"{path}: a `with:` key this check does not compare is a shape "
+            f"this reader does not model: {s!r}")
+        assert key not in values, (
+            f"{path}: duplicate `with:` key {key!r}")
+        rest = rest.strip()
+        assert rest, (
+            f"{path}: `{key}:` carries no value on its key line; a value on a "
+            f"following line is a shape this reader does not model")
+        if rest[0] in ("'", '"'):
+            value = quoted_scalar(path, rest)
+        else:
+            assert " #" not in rest, (
+                f"{path}: trailing comment in a plain scalar, which this "
+                f"reader does not model: {rest!r}")
+            assert rest[0] not in "&*!?%@`{[|>", (
+                f"{path}: a value opening with the indicator {rest[0]!r} is a "
+                f"shape this reader does not model: {rest!r}")
+            value = rest
+        assert "${{" not in value and "}}" not in value, (
+            f"{path}: an embedded expression in `{key}:` is a shape this "
+            f"reader does not model: {rest!r}")
+        values[key] = value
+    assert set(values) == {"max-claims", "expire"}, (
+        f"{path}: expected exactly the `with:` keys max-claims and expire, "
+        f"found {sorted(values)}")
+    return values
+
+
 # The Install block's fence is the one yaml fence whose content carries a
 # top-level `jobs:` key line: the README's other yaml fence quotes a `with:`
 # block, and must not match. Zero or two candidates is a README this case
@@ -4221,12 +4312,22 @@ def fold(text):
     return " ".join(text.split())
 
 
-readme_condition = fold(condition_of("README.md install block", installs[0]))
-workflow_condition = fold(condition_of(".github/workflows/claim.yml", workflow))
+readme_job = job_block_of("README.md install block", installs[0])
+workflow_job = job_block_of(".github/workflows/claim.yml", workflow)
+
+readme_condition = fold(condition_of("README.md install block", readme_job))
+workflow_condition = fold(condition_of(".github/workflows/claim.yml", workflow_job))
 assert readme_condition == workflow_condition, (
     "the README install block's job condition drifted from claim.yml's:"
     f"\n  README.md: {readme_condition!r}"
     f"\n  claim.yml: {workflow_condition!r}")
+
+readme_with = with_of("README.md install block", readme_job)
+workflow_with = with_of(".github/workflows/claim.yml", workflow_job)
+assert readme_with == workflow_with, (
+    "the README install block's `with:` values drifted from claim.yml's:"
+    f"\n  README.md: {readme_with!r}"
+    f"\n  claim.yml: {workflow_with!r}")
 PY
 }
 
@@ -4861,10 +4962,11 @@ cases=(
   expire_release_no_assignees
   # The manifests this action is, and the literals it keeps in more than one
   # file: the replies the README quotes (held against claim.py) and the
-  # install block's job condition (held against claim.yml — actionlint.yml's
-  # pin step compares the pins alone, so no other gate sees this pair drift).
+  # install block's job condition and `with:` values (held against claim.yml —
+  # actionlint.yml's pin step compares the pins alone, so no other gate sees
+  # these pairs drift).
 action_contract pr_gate_contract readme_quoted_replies
-  readme_install_condition_matches_claim_yml codeql_matrix_covers_python
+  readme_install_block_matches_claim_yml codeql_matrix_covers_python
   codeql_matrix_refuses_each_unmodelled_shape codeql_matrix_reddens_on_a_planted_matrix
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
