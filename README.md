@@ -143,8 +143,9 @@ workflow that configured the token.
 per repository role. The value is either `-1` alone — the default, which
 disables the cap entirely: no role lookup, no search call, behavior
 exactly as before this input existed — or a comma-separated map of
-`ROLE=CAP` pairs, an optional space after each comma and no spaces
-inside an entry:
+`ROLE=CAP` pairs; whitespace around an entry — spaces or tabs — is
+stripped and ignored, while whitespace inside an entry, around the
+`=` or inside the role or the cap, is refused:
 
 ```yaml
 with:
