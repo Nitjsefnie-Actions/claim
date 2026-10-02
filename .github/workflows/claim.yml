@@ -9,9 +9,7 @@ concurrency:
 jobs:
   claim:
     if: >-
-      github.event.issue.pull_request == null
-      && github.event.issue.state == 'open'
-      && github.event.comment.user.type != 'Bot'
+      github.event.comment.user.type != 'Bot'
       && (contains(github.event.comment.body, '/claim')
           || contains(github.event.comment.body, '/unclaim')
           || contains(github.event.comment.body, '/release'))
