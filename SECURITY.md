@@ -23,6 +23,17 @@ You will get an assessment within ten working days: whether it reproduces, what
 it affects, and if it is accepted, a rough idea of when a fix will land. If it
 takes longer than that, you will be told why rather than left waiting.
 
+Those two clocks are one person's working days. As of 2026-10-02 this project
+had no fallback maintainer — [CONTRIBUTING.md](CONTRIBUTING.md) records what
+was checked — so the promises above are conditional on this person being
+available to work on a report. A promise kept is kept as written, and a slow
+answer can reflect that person's availability rather than anything about the
+report. That availability is also what carries the explanation: when it runs
+out the reason runs out with it, so a report can pass ten working days with
+neither an assessment nor the account of why there is none, and nobody else
+will answer — this file refuses the public tracker, and there is no second
+maintainer to ask.
+
 Disclosure is coordinated with you. A fix is released before any public
 description, and the advisory credits you unless you ask otherwise. Ninety days
 after the report is the point at which disclosure happens regardless, so a
