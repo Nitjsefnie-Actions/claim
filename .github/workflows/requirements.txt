@@ -10,9 +10,10 @@
 # The `pip` entry in .github/dependabot.yml watches this directory, so a
 # version bump arrives as a pull request with the --hash lines rewritten
 # beside it, and the set it writes is every artifact the release ships
-# rather than that one platform's. --require-hashes accepts that superset
-# and matches the runner's wheel out of it. To regenerate the hashes for
-# this platform by hand instead of copying them from a release page --
+# rather than that one platform's. With `--require-hashes` that superset is
+# accepted and the runner's wheel is matched out of it. To regenerate the
+# hashes for this platform by hand instead of copying them from a release
+# page --
 #
 #   python3 -m pip download -d /tmp/req-dl zizmor==<new> PyYAML==<new>
 #   sha256sum /tmp/req-dl/*
