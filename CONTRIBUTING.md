@@ -159,6 +159,13 @@ another. Dependency bumps are the exception: use `ci(deps)`, including
 bumps inside workflows, to match Dependabot. Repository automation that is not
 a workflow uses its subject, such as `ci(templates)` or `ci(repo)`.
 
+Two merged commits show the distinction slipping: 9c794f8 and 9b6aa2b used
+`fix(tests)` for changes to `tests/` machinery with no workflow involved.
+`tests` names the tests workflow, so the commits read as workflow changes, and
+a contributor copying the history repeats the mistake. Changes to
+`tests/gate_base_freshness.py` take scope `harness` — the subject is the test
+machinery — and only a change to the `tests` workflow itself is `ci(tests)`.
+
 Scopes identify commit subjects more precisely than the broader `area:` issue
 labels (`action`, `ci`, `claim`, `docs`, `repo`, `tests`); they need not match
 one-to-one, so the four document scopes all fall under `area: docs`.
