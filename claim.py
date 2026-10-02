@@ -17,17 +17,20 @@ import sys
 # exists — and for any added later.
 MAX_COMMENT = 65536
 
-# The one message that means "this token has no user account behind it": an
-# App installation token — which the default `${{ github.token }}` is — is
+# An App installation token — which the default `${{ github.token }}` is — is
 # refused by `GET /user` with HTTP 403 "Resource not accessible by
 # integration" (verified on an Actions runner 2026-10-01), while a user token
-# answers 200 with its account. Every other refusal is news about the run
-# rather than about the token's shape: a rate limit, a network error, a 5xx, a
-# 401, a 403 saying something else, and folding those into the same answer
-# would silently switch the caller's self-account guard off. gh prints that
-# message on stderr, and only on stderr — the 403 body is JSON carrying the
-# same text, so a matcher that read the body would call a healthy 200 a
-# refusal.
+# answers 200 with its account. That one verified refusal is what earns the
+# None below; nothing here claims GitHub's refusal vocabulary is closed. Every
+# other failure is news about the run rather than about the token's shape — a
+# rate limit, a network error, a 5xx, a 401, a 403 saying something else — and
+# folding those into the same answer would silently switch the caller's
+# self-account guard off.
+#
+# The phrase is matched in gh's MESSAGE LINE, which gh writes to stderr; the
+# same text also sits in the JSON error body, which gh writes to stdout
+# (measured against gh 2.98.0), so a matcher reading the body would call a
+# healthy 200 a refusal.
 INSTALLATION_REFUSAL = "Resource not accessible by integration"
 
 
@@ -58,15 +61,20 @@ def own_identity():
     if probe.returncode != 0:
         if INSTALLATION_REFUSAL in probe.stderr:
             return None
-        # gh's own words, first line: the run log is where a maintainer reads
-        # why this run stopped, and stderr was captured rather than passed
-        # through, so nothing else would put the reason anywhere.
+        # All of gh's own words, not the first line: the run log is where a
+        # maintainer reads why this run stopped, and stderr was captured
+        # rather than passed through, so nothing else would put the reason
+        # anywhere. gh's output runs to more than one line whenever it is
+        # advice rather than an error — an unauthenticated `gh api` prints two
+        # (measured on gh 2.98.0) — and the second line of that pair is the
+        # half that names the fix.
         detail = probe.stderr.strip().splitlines()
         raise ValueError(
             "cannot establish which account this token posts as: the /user "
             "lookup failed for a reason other than the documented "
             "installation-token refusal, and reported: "
-            + (detail[0] if detail else f"nothing, exit status {probe.returncode}")
+            + ("\n".join(detail) if detail
+               else f"nothing, exit status {probe.returncode}")
         )
     identity = json.loads(probe.stdout)
     if not isinstance(identity, dict) or not isinstance(identity.get("login"), str):

@@ -978,9 +978,9 @@ expire_release_proof_fails() {
   run_claim 0
 }
 
-# The default-token majority: identity unknown (the /user 403 fixture), but
-# the single shared actor is the Bot account an installation writes as — the
-# proof holds and the expired claim is released.
+# The default-token majority: the token has no user account (the /user 403
+# fixture), but the single shared actor is the Bot account an installation
+# writes as — the proof holds and the expired claim is released.
 expire_release_integration_token() {
   body=/release
   ACTOR=octo-maintainer
@@ -1947,14 +1947,16 @@ identity_answer_403_proceeds() {
 }
 
 # Issue 75: a probe whose reason is not the documented refusal ends the run.
-# Four shapes, one refusal, and each is a case that only it decides — a 403
+# Five shapes, one refusal, and each is a case that only it decides — a 403
 # carrying a different message, a 403 carrying the documented words on the
 # BODY but none on stderr, a 403 that opens like the documented one and
-# refuses for another reason, and a nonzero exit with nothing at all on
-# stderr (the branch that reports the status instead of a message gh never
-# wrote). Each names the exit status and the message, and each asserts the
-# empty ordinary-call set: no issue read, no comment, no assignment — the
-# whole point is that nothing at all happens.
+# refuses for another reason, a nonzero exit with nothing at all on stderr
+# (the branch that reports the status instead of a message gh never wrote),
+# and gh's own two-line advice with the status it really exits on (the branch
+# that reports all of the message rather than its first line). Each names the
+# exit status and the message, and each asserts the empty ordinary-call set: no
+# issue read, no comment, no assignment — the whole point is that nothing at
+# all happens.
 identity_answer_rate_limited_fails() {
   body=/claim
   printf '%s\n' '{"message":"API rate limit exceeded"}' > "$GH_CASE/identity.response"
@@ -2006,12 +2008,39 @@ identity_answer_unrelated_refusal_fails() {
 # gh can fail the probe without writing a word — killed mid-call, or unable
 # to reach the API at all. There is no message to quote then, so the refusal
 # reports the status it did get; the run still stops before any write.
+#
+# This is the ONLY row that reaches the status, because it is the only one
+# whose stderr is empty, so the status it writes is what holds that limb. It
+# is 2 rather than 1 on purpose: what the row holds is that the refusal
+# carries the status gh exited with, and a hardcoded 1 in the refusal would
+# satisfy every other fixture in this table.
 identity_answer_silent_failure_fails() {
   body=/claim
   # An empty body and no stderr file, so the stub answers a bare nonzero exit.
   : > "$GH_CASE/identity.response"
-  printf '1\n' > "$GH_CASE/identity.response.status"
-  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: nothing, exit status 1'
+  printf '2\n' > "$GH_CASE/identity.response.status"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: nothing, exit status 2'
+  local result=0
+  run_claim 1 || result=1
+  printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+# gh's own advice rather than an error message, and the status it really
+# exits on — measured on gh 2.98.0 unauthenticated: two lines on stderr, an
+# empty stdout, exit 4. This is the shape the `token` input produces when a
+# caller passes an empty value, and it is the one a maintainer is handed
+# instructions in, so both halves matter: quoting only the first line reads
+# like a different failure, and reporting status 1 would be a number gh never
+# returned.
+identity_answer_unauthenticated_fails() {
+  body=/claim
+  : > "$GH_CASE/identity.response"
+  printf '%s\n' 'To get started with GitHub CLI, please run:  gh auth login' 'Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.' > "$GH_CASE/identity.response.stderr"
+  printf '4\n' > "$GH_CASE/identity.response.status"
+  expected_error='cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, and reported: To get started with GitHub CLI, please run:  gh auth login
+Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.'
   local result=0
   run_claim 1 || result=1
   printf '%s\n' '["api","user"]' > "$GH_CASE/expected.calls"
@@ -2073,9 +2102,9 @@ contested_hand_assignment_bails_integration() {
 }
 
 # The other side of the same coin: the default-token majority must keep
-# settling. Identity unknown (the 403 fixture), but the single shared actor
-# is the Bot-typed account an installation token writes as — that IS this
-# action's own write, so the later claim is still removed.
+# settling. The token has no user account (the 403 fixture), but the single
+# shared actor is the Bot-typed account an installation token writes as — that
+# IS this action's own write, so the later claim is still removed.
 contested_integration_still_settles() {
   body=/claim
   printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
@@ -4230,6 +4259,7 @@ cases=(
   identity_answer_missing_fails identity_answer_403_proceeds
   identity_answer_rate_limited_fails identity_answer_other_403_fails
   identity_answer_unrelated_refusal_fails identity_answer_silent_failure_fails
+  identity_answer_unauthenticated_fails
   bot_commenter_no_identity_call
   # A hand assignment, which this action did not make and must not settle.
   contested_hand_assignment_bails
