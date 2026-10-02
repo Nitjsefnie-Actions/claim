@@ -37,7 +37,13 @@ maintainer to ask.
 Disclosure is coordinated with you. A fix is released before any public
 description, and the advisory credits you unless you ask otherwise. Ninety days
 after the report is the point at which disclosure happens regardless, so a
-report cannot be buried by being left unanswered.
+report cannot be buried by being left unanswered. That disclosure is carried by
+the same one person the clocks above are. Ninety days remains the target, and
+if that person is unavailable when the ninety days fall due, the advisory
+publishes when they return — the commitment is scoped to the same availability,
+not withdrawn. What a reporter can rely on if the day falls due with the
+person still away is that this file never asks a report to be held past ninety
+days: the choice to disclose is the reporter's own at that point.
 
 If a report is declined, you will be told the reason. Disagreeing with that is
 reasonable, and saying so is welcome.
