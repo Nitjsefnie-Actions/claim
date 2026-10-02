@@ -118,6 +118,7 @@ commenter's identity and the issue and body from that comment event.
 | `actor-type` | `${{ github.event.comment.user.type }}` | Commenter's GitHub account type. |
 | `body` | `${{ github.event.comment.body }}` | Comment body containing the command. |
 | `max-claims` | `-1` | Per-role caps on concurrent claims, as comma-separated `ROLE=CAP` pairs (see below). `-1` alone disables the cap. |
+| `expire` | `-1` | Days before an idle claim expires (see below). `-1` never expires. |
 
 For a recognized command, a non-`User` account type is refused with a log
 diagnostic. An empty `actor-type` fails the run as a configuration error; its
@@ -164,6 +165,56 @@ manual assignment. The search index is eventually consistent, so a
 burst of rapid claims can land one or two past a finite cap before it
 catches up.
 
+### Claim expiry
+
+`expire` retires an idle claim. The value is `-1` — the default, which
+disables expiry entirely: no expiry code runs, no extra API call is made,
+and the behavior is exactly what it was before this input existed — or a
+positive integer counting days. `0` would expire every claim the moment it
+is made, so it is refused loudly (the run fails) like every other value the
+action cannot read: `-2`, `7d`, `abc`, an empty string.
+
+Expiry is lazy. It is evaluated inside the run that answers a comment —
+never by a sweep, a schedule or a second workflow mode. A `/claim` that
+lands on an unassigned issue never touches the timeline at all.
+
+The age of a claim is the `created_at` of its holder's **current**
+`assigned` event — the same `--paginate` replay of the issue's events the
+tie-break reads — and a claim expires when it has been held **strictly**
+longer than `expire` days: held exactly 7.0 days with `expire: 7` is not
+expired yet. An event whose `created_at` is missing or unreadable leaves
+the age unestablished: the claim counts as not expired, nothing is
+removed, and the run log names the holder whose age could not be read.
+
+Only claims this action itself made can expire. Every holder's current
+assignment must be provably a write of the action's own account — the
+login the token posts as, or, for the default `github.token`, its
+Bot-typed account — which is the same proof the tie-break uses. A manual
+assignment anywhere among the holders defeats the takeover and the
+privileged release however ancient the claim looks: the action does not
+remove assignments it did not make.
+
+Two things may then happen to an expired claim:
+
+- **Takeover.** Any commenter may `/claim` an issue whose claim has
+  expired: each expired holder is unassigned, the commenter is
+  assigned in their place, and the reply names each expired holder with
+  its age — `The expired claim of @alice (held 8 day(s)) has been taken
+  over by @bob.` The takeover obeys the same per-role cap as a fresh
+  claim (a `0` cap, or a reached finite cap, refuses with the same
+  replies and removes nothing); the cap is read only after expiry, so an
+  in-window claim costs no role or search call. Holders whose claims have
+  not expired — or whose age could not be read — keep their claims and
+  stay assigned beside the new claimant.
+- **Privileged release.** A commenter whose repository role (`role_name`,
+  the same lookup the cap uses) is `write`, `maintain` or `admin` may
+  `/release` (or `/unclaim`) someone else's expired claim; `read` and
+  `triage` are refused exactly as today, without the timeline read. The
+  reply names who acted and who held how long — `@bob has released
+  @alice's expired claim (held 8 day(s)).`
+
+Ages in replies are whole days, rounded down.
+
 ## What it will not do
 
 - Act on a closed issue, including releasing an assignment after closure.
@@ -177,10 +228,12 @@ catches up.
   which starts with a command word — a URL or a sentence that merely
   mentions one — gets no reply and a green run. Every declined attempt is
   answered on the issue, and the run fails.
-- Claim an issue somebody already holds or replace its assignees. If the
-  commenter already holds it, the action says so without changing assignments.
-  Two claims landing in the same instant are the one case that removes
-  somebody else's assignment; a `/unclaim` removes only the commenter's own.
+- Claim an issue somebody already holds — while every claim on it is
+  still inside its `expire` window. If the commenter already holds it, the
+  action says so without changing assignments. Two claims landing in the
+  same instant, and the takeover of an expired claim (above), are the only
+  cases that remove somebody else's assignment; a `/unclaim` removes only
+  the commenter's own.
   The issue is then left with whichever login's **current** assignment event
   comes first. The order comes from those events and never from the commenter
   list: a login assigned, unassigned and reassigned inside the window is
