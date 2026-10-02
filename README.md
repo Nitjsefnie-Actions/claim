@@ -49,9 +49,7 @@ concurrency:
 jobs:
   claim:
     if: >-
-      github.event.issue.pull_request == null
-      && github.event.issue.state == 'open'
-      && github.event.comment.user.type != 'Bot'
+      github.event.comment.user.type != 'Bot'
       && (contains(github.event.comment.body, '/claim')
           || contains(github.event.comment.body, '/unclaim')
           || contains(github.event.comment.body, '/release'))
@@ -102,16 +100,21 @@ That group is per repository and per workflow, though, so a caller without
 that exact group — or with it under another name — gets no protection from it.
 The action therefore settles a tie itself rather than depending on the group.
 
-The job's `if:` is only a prefilter to save starting a runner. The action
-re-checks all three conditions itself: the target is an issue rather than a
-pull request, the issue is open, and the commenter is not a bot. The
-`contains()` checks also only prefilter: the action performs the exact command
-match itself. Those checks stay loose on purpose. The accepted forms include
-a body with leading whitespace or a leading blank line, which a
-`startsWith()` on the raw body would refuse to start a run for — GitHub's
-expression language has no `trim`, so a caller cannot strip first, and a
-valid command would be one the action could never see. A loose prefilter
-only starts a runner for a comment the action then ends quietly.
+The job's `if:` is only a prefilter to save starting a runner. It checks
+two things: that the commenter is not a bot, and that the comment contains
+a command word. The closed-issue and pull-request conditions are enforced
+by the action itself, and both declines are loud — a reply naming the
+command word and a failed run — where a job-level condition would skip the
+run before any reply could be posted. The loose prefilter starts a runner
+for a command on a closed issue or a pull request too, which the action
+then declines loudly. The `contains()` checks also only prefilter: the
+action performs the exact command match itself. Those checks stay loose on
+purpose. The accepted forms include a body with leading whitespace or a
+leading blank line, which a `startsWith()` on the raw body would refuse to
+start a run for — GitHub's expression language has no `trim`, so a caller
+cannot strip first, and a valid command would be one the action could
+never see. A comment no line of which starts with a command word still
+ends quietly, and a bot's comment still never starts a runner.
 
 ## Inputs
 
