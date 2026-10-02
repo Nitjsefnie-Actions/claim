@@ -36,6 +36,10 @@ inputs:
     description: Maximum open claims per repository role, as comma-separated ROLE=CAP pairs; roles are read, triage, write, maintain, admin; a cap of -1 is unlimited, 0 forbids the role, and the value -1 alone disables the cap
     required: false
     default: -1
+  expire:
+    description: Days before an idle claim expires; -1 never expires, a positive integer counts days, and 0 or any other non-integer fails the run
+    required: false
+    default: -1
 
 runs:
   using: composite
@@ -53,4 +57,5 @@ runs:
         ACTOR_TYPE: ${{ inputs.actor-type }}
         BODY: ${{ inputs.body }}
         MAX_CLAIMS: ${{ inputs.max-claims }}
+        EXPIRE: ${{ inputs.expire }}
       run: 'python3 "$GITHUB_ACTION_PATH/claim.py"'

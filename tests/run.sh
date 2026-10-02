@@ -9,7 +9,7 @@ export PATH="$RUN/bin:$PATH"
 # GH_IDENTITY is the default answer for the stub's identity lookup
 # (`gh api user`); a case overrides it by writing identity.response into its
 # own case directory. The value is per-case state, set in reset_case below.
-export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY MAX_CLAIMS
+export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY MAX_CLAIMS EXPIRE
 
 reset_case() {
   GH_TOKEN=test-token
@@ -18,6 +18,7 @@ reset_case() {
   ACTOR=octo-claimant
   ACTOR_TYPE=User
   MAX_CLAIMS=-1
+  EXPIRE=-1
   GH_IDENTITY=$ROOT/tests/identity.response
   body=
   expected_error=
@@ -546,6 +547,374 @@ cap_search_transport_failure() {
     api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
   run_claim 42
 }
+
+
+# The slurped events answer an expiry case expects. The first argument is the
+# events' actor as LOGIN or LOGIN|TYPE; each following spec is ID|LOGIN|AGE
+# where AGE is DAYS, DAYS:HOURS (hours may be negative) or `none` for an
+# event with no readable created_at. Ids stay in the order given.
+expected_timeline() {
+  python3 - "$@" <<'PYTIMELINE'
+import json, sys
+from datetime import datetime, timedelta, timezone
+login, _, actor_type = sys.argv[1].partition("|")
+actor = {"login": login}
+if actor_type:
+    actor["type"] = actor_type
+now = datetime.now(timezone.utc)
+events = []
+for spec in sys.argv[2:]:
+    identifier, assignee, age = spec.split("|")[:3]
+    event = {"id": int(identifier), "event": "assigned",
+             "actor": actor, "assignee": {"login": assignee}}
+    if age != "none":
+        days, _, hours = age.partition(":")
+        stamp = now - timedelta(days=float(days),
+                                hours=float(hours) if hours else 0.0)
+        event["created_at"] = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    events.append(event)
+print(json.dumps([events], separators=(",", ":")))
+PYTIMELINE
+}
+
+
+# ---- Claim expiry (issue 61). Ages are relative to real time; the strict
+# boundary is pinned from both sides at the closest the clock allows: a
+# claim 30 minutes short of the limit is never expired, one an hour past it
+# always is.
+
+expire_malformed_zero() {
+  body=/claim
+  EXPIRE=0
+  expected_error='invalid expire: expected -1 or a positive integer of days'
+  run_claim 1
+}
+
+expire_malformed_below_minus_one() {
+  body=/claim
+  EXPIRE=-2
+  expected_error='invalid expire: expected -1 or a positive integer of days'
+  run_claim 1
+}
+
+expire_malformed_unit_suffix() {
+  body=/claim
+  EXPIRE=7d
+  expected_error='invalid expire: expected -1 or a positive integer of days'
+  run_claim 1
+}
+
+expire_malformed_not_a_number() {
+  body=/claim
+  EXPIRE=abc
+  expected_error='invalid expire: expected -1 or a positive integer of days'
+  run_claim 1
+}
+
+expire_malformed_empty() {
+  body=/claim
+  EXPIRE=
+  expected_error='invalid expire: expected -1 or a positive integer of days'
+  run_claim 1
+}
+
+# The disabled default costs nothing even on a claimed issue: no events
+# call, no takeover machinery — the empty events expectation IS the
+# assertion, because the stub fails loudly on any call the case never
+# expected.
+expire_disabled_no_timeline_call() {
+  body=/claim
+  EXPIRE=-1
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+# Expiry is lazy: with expire configured, a claim that lands on an
+# UNASSIGNED issue costs nothing beyond the fresh-claim sequence — no
+# events read, no role lookup, no search.
+expire_fresh_claim_no_expiry_calls() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant.' --silent
+  run_claim 0
+}
+
+# Seven days minus an hour: inside the window, today's refusal verbatim.
+expire_takeover_inside_window() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+# The strict boundary's near side: thirty minutes short of seven days is
+# still not expired (exactly seven days is not expired either; a real clock
+# cannot be made to read exactly 7.0 at both ends of a subprocess run, so
+# the near side is pinned as close to the edge as determinism allows).
+expire_takeover_boundary_day() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|7:-0.5')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+# An hour past the limit: the holder is deleted, the commenter assigned, the
+# re-read confirms, and the reply names holder, age and actor.
+expire_takeover_expired() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|7:1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claim of @alice (held 7 day(s)) has been taken over by @octo-claimant.' --silent
+  run_claim 0 $'took over expired claim of alice (held 7 day(s))\n'
+}
+
+# Two expired holders: both are removed in login order and the reply names
+# each with its own age.
+expire_takeover_multiple_expired() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=bob' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claims of @alice (held 9 day(s)) and @bob (held 8 day(s)) have been taken over by @octo-claimant.' --silent
+  run_claim 0 $'took over expired claim of alice (held 9 day(s)), bob (held 8 day(s))\n'
+}
+
+# The takeover still obeys the cap: a 0 cap for the commenter's role refuses
+# with the existing cap-0 reply after the role lookup, and nothing is
+# removed.
+expire_takeover_cap_zero() {
+  body=/claim
+  EXPIRE=7
+  MAX_CLAIMS='read=0'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant claiming is disabled for your role (read) in this repository. A maintainer can still assign you by hand.' --silent
+  run_claim 0
+}
+
+# A reached finite cap refuses with the existing cap reply — searched, not
+# deleted.
+expire_takeover_cap_reached() {
+  body=/claim
+  EXPIRE=7
+  MAX_CLAIMS='read=1'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
+  expect_gh '{"total_count":1,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already hold 1 open claim in this repository, and the cap for your role (read) is 1. Comment `/unclaim` (or `/release`) on one you are giving up, then `/claim` again.' --silent
+  run_claim 0
+}
+
+# A hand assignment among the holders defeats the takeover however ancient
+# the claim looks: proof first, and the proof names an identity that is not
+# this action's.
+expire_takeover_proof_fails() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline aaron-maintainer '800|alice|400')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+# A current event without created_at leaves the age unestablished: the run
+# refuses exactly as today AND says in the run log which holder it could not
+# read.
+expire_takeover_age_unreadable() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|none')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0 $'no readable age for: alice\n'
+}
+
+# One expired holder beside one whose current event carries no created_at:
+# only the expired holder is removed, the unreadable one keeps the claim,
+# and the run log names the holder it could not read.
+expire_takeover_mixed_created_at() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8' '810|zoe-helper|none')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claim of @alice (held 8 day(s)) has been taken over by @octo-claimant.' --silent
+  run_claim 0 $'no readable age for: zoe-helper\ntook over expired claim of alice (held 8 day(s))\n'
+}
+
+# GitHub declined the takeover's assignment — the POST response is the
+# decline discriminator, so the run refuses and posts nothing about a
+# takeover that did not happen.
+expire_takeover_post_declined() {
+  body=/claim
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
+  run_claim 1
+}
+
+# Privileged release: anyone below write is refused with today's reply and
+# no timeline call at all.
+expire_release_read_role_refused() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
+  run_claim 0
+}
+
+expire_release_triage_role_refused() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"read","role_name":"triage"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
+  run_claim 0
+}
+
+# write, maintain and admin may release someone else's expired claim.
+expire_release_write_role() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
+  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
+}
+
+expire_release_maintain_role() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"maintain","role_name":"maintain"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
+  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
+}
+
+expire_release_admin_role() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
+  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
+}
+
+# write but pre-expiry: today's refusal, nothing removed.
+expire_release_write_role_inside_window() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
+  run_claim 0
+}
+
+# write and the claim is ancient, but a maintainer made the assignment:
+# proof fails, nothing is removed.
+expire_release_proof_fails() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline aaron-maintainer '800|alice|400')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
+  run_claim 0
+}
+
+# The default-token majority: identity unknown (the /user 403 fixture), but
+# the single shared actor is the Bot account an installation writes as — the
+# proof holds and the expired claim is released.
+expire_release_integration_token() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
+  printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline 'claim-app[bot]|Bot' '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
+  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
+}
+
+# Two expired holders, one reply naming each with its age, one DELETE per
+# holder in login order.
+expire_release_multiple_expired() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=bob' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 9 day(s)) and @bob's expired claim (held 8 day(s))." --silent
+  run_claim 0 $'released expired claim of alice (held 9 day(s)), bob (held 8 day(s))\n'
+}
+
+# An issue holding nobody cannot have anything expired on it: refused with
+# today's reply and no role lookup, no timeline call.
+expire_release_no_assignees() {
+  body=/release
+  ACTOR=octo-maintainer
+  EXPIRE=7
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
+  run_claim 0
+}
+
 
 # Two claims that both read an empty assignee list. The winner is the one the
 # issue's events record as assigned FIRST, which here is yuki-dev even though
@@ -2730,7 +3099,7 @@ script_variables = {
 # GH_TOKEN is consumed by gh, the script's API client, through its environment.
 assert set(env) == script_variables | {"GH_TOKEN"}, "claim step env must match script dependencies"
 specs = re.findall(r"^  ([a-z-]+):\n((?:    [^\n]+(?:\n|$))+)", inputs, re.M)
-assert len(specs) == 7 and len(dict(specs)) == 7, "expected seven distinct inputs"
+assert len(specs) == 8 and len(dict(specs)) == 8, "expected eight distinct inputs"
 specs = dict(specs)
 expected_inputs = set()
 for name, value in env.items():
@@ -3089,6 +3458,21 @@ cases=(
   cap_malformed_value_empty_entry cap_malformed_role_snapshot
   cap_role_snapshot_not_an_object cap_custom_role_base_unreadable
   cap_role_lookup_failure cap_malformed_search_response cap_search_transport_failure
+  # Claim expiry: the input grammar, the lazy default, and both expiry
+  # paths (takeover and privileged release) on every side of their
+  # boundaries.
+  expire_malformed_zero expire_malformed_below_minus_one expire_malformed_unit_suffix
+  expire_malformed_not_a_number expire_malformed_empty
+  expire_disabled_no_timeline_call expire_fresh_claim_no_expiry_calls
+  expire_takeover_inside_window expire_takeover_boundary_day expire_takeover_expired
+  expire_takeover_multiple_expired expire_takeover_cap_zero expire_takeover_cap_reached
+  expire_takeover_proof_fails expire_takeover_age_unreadable expire_takeover_mixed_created_at
+  expire_takeover_post_declined
+  expire_release_read_role_refused expire_release_triage_role_refused
+  expire_release_write_role expire_release_maintain_role expire_release_admin_role
+  expire_release_write_role_inside_window expire_release_proof_fails
+  expire_release_integration_token expire_release_multiple_expired
+  expire_release_no_assignees
   # The manifests this action is.
   action_contract pr_gate_contract
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
