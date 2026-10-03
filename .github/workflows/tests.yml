@@ -262,10 +262,14 @@ jobs:
         # packages, so the suite stays install-free (#87).
         # Why the awk lift: the manifest's PyYAML pin carries one hash, a
         # cp313 manylinux x86_64 wheel, so installing the whole file with
-        # --require-hashes resolves nothing on macOS. The pylint block runs
-        # to EOF of the manifest, so the plain `{f=1}` lift takes the three
-        # tools and the nine dependencies they resolve, and the manifest
-        # stays the single source for the versions and hashes.
+        # --require-hashes resolves nothing on macOS. The lift reaches from
+        # the coverage block to EOF, one plain range like every other lift
+        # in this workflow: the files these checks read import coverage
+        # (.github/scripts/diff_coverage.py), so the venv that lints the
+        # tree must resolve what the tree imports, and coverage sitting
+        # before pylint in the manifest puts both blocks plus pylint's
+        # dependencies inside the one range. The manifest stays the single
+        # source for the versions and hashes.
         # POSIX legs only: the venv's interpreter sits at venv/bin/python on
         # POSIX and venv/Scripts/python.exe on Windows, and this step is
         # written for the POSIX layout; extending it to Windows is future
@@ -275,7 +279,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           python3 -m venv "$RUNNER_TEMP/checks-venv"
-          awk '/^pylint==/{f=1} f' .github/workflows/requirements.txt > "$RUNNER_TEMP/checks.txt"
+          awk '/^(coverage|pylint)==/{f=1} f' .github/workflows/requirements.txt > "$RUNNER_TEMP/checks.txt"
           "$RUNNER_TEMP/checks-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/checks.txt"
 
       - name: pycodestyle

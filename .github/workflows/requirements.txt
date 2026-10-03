@@ -1,9 +1,10 @@
 # Hash-pinned requirements for the CI installs, all --require-hashes:
 # the "Install zizmor" step in actionlint.yml installs the whole file, and
-# tests.yml lifts the ruff, type/lint and coverage blocks with awk and
-# installs each in its own venv -- the coverage block twice, once in the
-# coverage cell and again in the diff-coverage job, which never runs a suite
-# and needs only the statement analyzer. A version pin alone still installs
+# tests.yml lifts the ruff, coverage and pylint blocks with awk and installs
+# each in its own venv: the coverage cell and the diff-coverage job take the
+# coverage block alone, and the type/lint venv takes it beside the pylint
+# block, because the tree that venv lints imports coverage
+# (.github/scripts/diff_coverage.py). A version pin alone still installs
 # whatever artifact the index serves for that version; these sha256 hashes
 # make the install the same bytes on every run.
 #
