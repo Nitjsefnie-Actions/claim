@@ -243,6 +243,15 @@ def assignments_are_ours(current, assignees, identity):
         return False
     ((event_login, event_type),) = identities
     if identity is not None:
+        # An actor GitHub could not name is no identity to compare against
+        # this token's own: the write behind that event is unattributable,
+        # which the docstring already defines as not ours, so the refusal
+        # is explicit rather than an attribute read on a login that is not
+        # there. The account type is not read on this branch and needs no
+        # guard; the Bot branch below compares `== "Bot"`, which reads the
+        # same on None as on any non-Bot string.
+        if event_login is None:
+            return False
         return event_login.casefold() == identity.casefold()
     return event_type == "Bot"
 
@@ -735,6 +744,7 @@ def main():
             f"could not prove every assignment on it was made by this "
             f"action, so no assignment was changed. {advice}")
         return 1
+
     # (id, login) is a total order, so two events sharing an id settle the same
     # way in every run rather than leaving a pair behind.
     def order(login):
