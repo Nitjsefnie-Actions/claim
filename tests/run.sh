@@ -4567,9 +4567,10 @@ PY
 # `max-claims` and `expire` are single-line quoted literals in both files,
 # and the value itself is the contract. The `permissions:` and
 # `concurrency:` blocks compare as exact key sets over only the keys this
-# check models — `issues`; `group`, `cancel-in-progress`, `queue` — and a
-# key outside that set refuses on either surface, never a text-compare of a
-# key only one copy carries. The concurrency `group` keeps its embedded
+# check models — `issues` and `pull-requests`; `group`, `cancel-in-progress`,
+# `queue` — and a key outside that set refuses on either surface, never a
+# text-compare of a key only one copy carries. The concurrency `group` keeps
+# its embedded
 # `${{ github.event.issue.number }}` IN the compare — the one deliberate
 # exception to the readers' expression refusal: both copies must spell the
 # group identically, and a one-sided edit to the expression is precisely
@@ -4877,14 +4878,14 @@ def permissions_of(path, job_block):
             f"{path}: a line at indent {indent} inside the `permissions:` "
             f"block is a shape this reader does not model: {s!r}")
         key, sep, rest = s.partition(":")
-        assert key == "issues" and sep, (
+        assert key in ("issues", "pull-requests") and sep, (
             f"{path}: a `permissions:` key this check does not compare is a "
             f"shape this reader does not model: {s!r}")
         assert key not in values, (
             f"{path}: duplicate `permissions:` key {key!r}")
         rest = rest.strip()
         assert rest, (
-            f"{path}: `issues:` carries no value on its key line; a value "
+            f"{path}: `{key}:` carries no value on its key line; a value "
             f"on a following line is a shape this reader does not model")
         if rest[0] in ("'", '"'):
             value = quoted_scalar(path, rest)
@@ -4897,12 +4898,12 @@ def permissions_of(path, job_block):
                 f"a shape this reader does not model: {rest!r}")
             value = rest
         assert "${{" not in value and "}}" not in value, (
-            f"{path}: an embedded expression in `issues:` is a shape this "
+            f"{path}: an embedded expression in `{key}:` is a shape this "
             f"reader does not model: {rest!r}")
         values[key] = value
-    assert set(values) == {"issues"}, (
-        f"{path}: expected exactly the `permissions:` key issues, "
-        f"found {sorted(values)}")
+    assert set(values) == {"issues", "pull-requests"}, (
+        f"{path}: expected exactly the `permissions:` keys issues and "
+        f"pull-requests, found {sorted(values)}")
     return values
 
 
