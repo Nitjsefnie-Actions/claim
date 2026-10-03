@@ -5163,9 +5163,10 @@ cases=(
   expire_release_no_assignees
   # The manifests this action is, and the literals it keeps in more than one
   # file: the replies the README quotes (held against claim.py) and the
-  # install block's job condition and `with:` values (held against claim.yml —
-  # actionlint.yml's pin step compares the pins alone, so no other gate sees
-  # these pairs drift).
+  # install block's job condition, `with:` values, `runs-on`,
+  # `timeout-minutes`, `permissions:` block and top-level `concurrency:`
+  # block (held against claim.yml — actionlint.yml's pin step compares the
+  # pins alone, so no other gate sees these pairs drift).
 action_contract pr_gate_contract readme_quoted_replies
   readme_install_block_matches_claim_yml codeql_matrix_covers_python
   codeql_matrix_refuses_each_unmodelled_shape codeql_matrix_reddens_on_a_planted_matrix
