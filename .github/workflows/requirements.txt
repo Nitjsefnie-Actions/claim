@@ -1,11 +1,11 @@
-# Hash-pinned requirements for four CI installs, all --require-hashes:
+# Hash-pinned requirements for the CI installs, all --require-hashes:
 # the "Install zizmor" step in actionlint.yml installs the whole file, and
-# the "Lint the claim script", "Install the type and lint toolchain" and
-# "Install coverage tooling" steps in tests.yml lift the ruff, type/lint
-# and coverage blocks with awk and install each in its own venv. A version
-# pin alone still installs whatever artifact the index serves for that
-# version; these sha256 hashes make the install the same bytes on every
-# run.
+# tests.yml lifts the ruff, type/lint and coverage blocks with awk and
+# installs each in its own venv -- the coverage block twice, once in the
+# coverage cell and again in the diff-coverage job, which never runs a suite
+# and needs only the statement analyzer. A version pin alone still installs
+# whatever artifact the index serves for that version; these sha256 hashes
+# make the install the same bytes on every run.
 #
 # What the hashes have to cover is the wheel each consumer's runner
 # resolves: actionlint.yml's ubuntu-latest runner takes x86_64 glibc,
