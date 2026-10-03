@@ -243,16 +243,15 @@ def assignments_are_ours(current, assignees, identity):
         return False
     ((event_login, event_type),) = identities
     if identity is not None:
-        # An actor GitHub could not name is no identity to compare against
-        # this token's own: the write behind that event is unattributable,
-        # which the docstring already defines as not ours, so the refusal
-        # is explicit rather than an attribute read on a login that is not
-        # there. The account type is not read on this branch and needs no
-        # guard; the Bot branch below compares `== "Bot"`, which reads the
-        # same on None as on any non-Bot string.
-        if event_login is None:
-            return False
-        return event_login.casefold() == identity.casefold()
+        # The None check rides in the return rather than a branch of its
+        # own: an actor GitHub could not name leaves None here, and None is
+        # no identity to compare against this token's own, so it folds to
+        # False — the docstring's answer for an unattributable write —
+        # instead of an AttributeError. The account type is not read on
+        # this branch; the Bot branch below compares `== "Bot"`, which
+        # reads the same on None as on any non-Bot string.
+        return (event_login is not None
+                and event_login.casefold() == identity.casefold())
     return event_type == "Bot"
 
 
