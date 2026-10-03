@@ -3330,7 +3330,11 @@ from gate_base_freshness import CANDIDATE
 # spells one: the class is written `[A-Za-z0-9._/-]`, which contains brackets.
 print(" ".join(c for c in "*?[]" if re.fullmatch(CANDIDATE, c)))
 PYGLOB
-)
+) || {
+    printf '  the glob oracle could not run; the absence assertion below\n'
+    printf '  would read an empty capture as a measured negative\n'
+    return 1
+  }
   if [[ -n $globbed ]]; then
     printf '  the candidate class now matches %s, so the absence of a glob arm\n' "$globbed"
     printf '  in resolve() is a hole rather than a fact\n'
