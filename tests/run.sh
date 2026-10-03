@@ -2794,9 +2794,12 @@ gate_paths_derived_from_workflows() {
 .github/workflows/scorecard.yml
 .github/workflows/secrets.yml
 .github/workflows/tests.yml
+.pylintrc
 README.md
 action.yml
 claim.py
+pyrightconfig.json
+setup.cfg
 tests/codeql_matrix.py
 tests/commit_scopes.py
 tests/gate_base_freshness.py
