@@ -3113,7 +3113,11 @@ gate_derivation_handles_every_spelling() {
   # must name BOTH. A message naming one is a red blaming a change nobody made:
   # under this fixture the arm was not added, and saying so would be false.
   # (the second way the limit can end, with the arm still absent)
-  python3 - "$tree/.github/workflows/tests.yml" <<'PYNAMED'
+  # Every plant below has its exit status checked: the cases run in `if`
+  # context, so an unchecked failing plant would leave the fixture untouched
+  # and the assertions after it would read the tree as it stands rather than
+  # the state the plant exists to produce.
+  if ! python3 - "$tree/.github/workflows/tests.yml" <<'PYNAMED'
 import sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
@@ -3124,6 +3128,11 @@ if anchor not in text:
 open(path, "w", encoding="utf-8").write(
     text.replace(anchor, anchor + "\n          cat CONTRIBUTING.md > /dev/null", 1))
 PYNAMED
+then
+    printf '  the plant naming CONTRIBUTING.md could not land; the assertions\n'
+    printf '  below would measure an unchanged tree\n'
+    return 1
+fi
   gate_commit_all "$tree" 'a required job names CONTRIBUTING.md'
   after=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused once a required job named CONTRIBUTING.md\n'
@@ -3180,21 +3189,84 @@ PYNAMED
   # step with no keys in it — no path from a `run:` there, and no `uses:` to
   # reach the local-action branch. Two plants, because the two keys fail
   # differently.
+  #
+  # The compact plant reads the step out of the fixture's file rather than
+  # freezing the whole step as a literal: a frozen literal breaks on the first
+  # reshape the step takes, and the refusals in the plant are what keep a
+  # reshape it cannot carry into the one-line spelling loud.
   before=$after
-  python3 - "$tree/.github/workflows/tests.yml" <<'PYCOMPACT'
+  if ! python3 - "$tree/.github/workflows/tests.yml" <<'PYCOMPACT'
 import sys
+
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
-block = """      - name: Compile the claim script
-        run: python3 -m py_compile claim.py
-"""
-compact = "      - run: python3 -m py_compile claim.py\n"
-if block not in text:
-    print("the fixture's tests.yml has no block-form compile step to compact",
-          file=sys.stderr)
+marker = "      - name: Compile the claim script\n"
+found = text.count(marker)
+if found != 1:
+    print(
+        "the fixture's tests.yml carries the compile step's name line %d"
+        " times, not once" % found,
+        file=sys.stderr)
     raise SystemExit(1)
-open(path, "w", encoding="utf-8").write(text.replace(block, compact, 1))
+lines = text.splitlines(keepends=True)
+start = lines.index(marker)
+end = start + 1
+while end < len(lines):
+    line = lines[end]
+    if not line.strip():
+        end += 1
+        continue
+    if line.startswith("      - ") or len(line) - len(line.lstrip(" ")) < 8:
+        break
+    end += 1
+# Blank lines after the run key space the step from the next one; they are
+# not the step's to take, so the rewrite leaves them where they are.
+content_end = end
+while content_end > start + 1 and not lines[content_end - 1].strip():
+    content_end -= 1
+step = lines[start:content_end]
+run_lines = [i for i in range(1, len(step))
+             if step[i].startswith("        run: ")]
+if len(run_lines) != 1:
+    print(
+        "the compile step carries %d run: keys, not the one a compact"
+        " spelling rewrites" % len(run_lines),
+        file=sys.stderr)
+    raise SystemExit(1)
+run_at = run_lines[0]
+value = step[run_at][len("        run: "):].rstrip()
+after = [line for line in step[run_at + 1:] if line.strip()]
+if not value:
+    print("the compile step's run: value is empty", file=sys.stderr)
+    raise SystemExit(1)
+if value[0] in "|>":
+    print(
+        "the compile step's run: value is a block scalar, so the compact"
+        " spelling has no single line to carry it in",
+        file=sys.stderr)
+    raise SystemExit(1)
+deep = [line for line in step[1:] if line.strip()
+        and len(line) - len(line.lstrip(" ")) >= 10]
+if deep:
+    print(
+        "the compile step carries a more-indented line, so its run: value"
+        " may continue past its own line",
+        file=sys.stderr)
+    raise SystemExit(1)
+if after:
+    print(
+        "the compile step carries content after its run: line, which the"
+        " compact spelling would drop",
+        file=sys.stderr)
+    raise SystemExit(1)
+lines[start:content_end] = ["      - run: %s\n" % value]
+open(path, "w", encoding="utf-8").write("".join(lines))
 PYCOMPACT
+then
+    printf '  the compact-spelling plant could not land; the equality below\n'
+    printf '  would compare the tree against itself\n'
+    return 1
+fi
   gate_commit_all "$tree" 'the compile step on one line'
   after=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused on the compact-spelling fixture\n'
@@ -3215,7 +3287,7 @@ PYCOMPACT
   # step having been read.
   mkdir -p "$tree/local-action"
   printf 'name: local\n' > "$tree/local-action/action.yml"
-  python3 - "$tree/.github/workflows/tests.yml" <<'PYLOCAL'
+  if ! python3 - "$tree/.github/workflows/tests.yml" <<'PYLOCAL'
 import sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
@@ -3226,6 +3298,11 @@ if anchor not in text:
 open(path, "w", encoding="utf-8").write(
     text.replace(anchor, "      - uses: ./local-action\n\n" + anchor, 1))
 PYLOCAL
+then
+    printf '  the local-action plant could not land; the membership below\n'
+    printf '  would assert on a tree that never gained the uses: step\n'
+    return 1
+fi
   gate_commit_all "$tree" 'a one-line step uses a local action'
   after=$(gate_derived_paths "$tree") || {
     printf '  the derivation refused on the local-action fixture\n'
