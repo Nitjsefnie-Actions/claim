@@ -157,15 +157,16 @@ verification.
 
 The windows leg stops short of the behavioral suite for a stated reason:
 the suite's `gh` stub is an extension-less bash script placed on PATH as
-`gh`, and `claim.py` starts it through Python's subprocess — on Windows
-that is CreateProcess, which launches only PE images, so it refuses a
-text file with error 193 and the stub never executes. Every stub-driven
-case would fail loudly, so the suite step is scoped to the POSIX legs;
-the windows leg instead runs the workflow's bash steps and the compile
-check, with a small `python3` PATH shim backing the `python3` calls by
-forwarding to the image's `python`. Real consumers are unaffected — they
-run the real `gh.exe`. Widening the leg needs a Windows-executable stub
-form, tracked in the issue tracker.
+`gh`, and `claim.py` spawns `gh` by bare name — on Windows, CreateProcess
+appends `.exe` before it searches PATH, so the extension-less stub is
+never selected at all: with the image's real `gh.exe` on PATH the cases
+would run against it, and without one every case fails to start with
+WinError 2 (file not found). Either way the stub never executes, so the
+suite step is scoped to the POSIX legs; the windows leg instead runs the
+workflow's bash steps and the compile check, with a small `python3` PATH
+shim backing the `python3` calls by forwarding to the image's `python`.
+Real consumers are unaffected — they run the real `gh.exe`. Widening the
+leg needs a Windows-executable stub form, tracked in the issue tracker.
 
 ## Inputs
 
