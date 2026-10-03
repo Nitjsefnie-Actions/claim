@@ -5611,9 +5611,6 @@ def planted(wf, md, which, anchor, replacement):
     return wf, real.replace(anchor, replacement)
 
 
-LINT_IF = ("        if: matrix.os != 'windows-latest'\n"
-           "        run: |\n"
-           "          python3 -m venv \"$RUNNER_TEMP/lint-venv\"")
 CHECKS_IF = ("        if: matrix.os != 'windows-latest'\n"
              "        run: |\n"
              "          python3 -m venv \"$RUNNER_TEMP/checks-venv\"")
@@ -5623,6 +5620,25 @@ COVERAGE_IF = ("        if: matrix.os == 'ubuntu-latest'\n"
 PV_SUITE = ("      - name: Run the behavioral suite\n"
             "        shell: bash\n"
             "        run: tests/run.sh\n")
+
+def dup_pycodestyle(wf, md):
+    # The reviewer's false green for the comparison key, both halves: the
+    # landed pycodestyle narrowed to ubuntu AND a later unconditional step
+    # also named pycodestyle. Keyed on names, the comparison kept only the
+    # last step's legs and sat green while the README still claimed macos.
+    wf, md = planted(wf, md, "wf",
+                     "      - name: pycodestyle\n"
+                     "        if: ${{ !cancelled() && "
+                     "steps.install_checks.outcome == 'success' }}\n",
+                     "      - name: pycodestyle\n"
+                     "        if: matrix.os == 'ubuntu-latest'\n")
+    return planted(wf, md, "wf",
+                   "          git ls-files '*.py' | xargs "
+                   "\"$RUNNER_TEMP/checks-venv/bin/pycodestyle\"\n",
+                   "          git ls-files '*.py' | xargs "
+                   "\"$RUNNER_TEMP/checks-venv/bin/pycodestyle\"\n"
+                   "      - name: pycodestyle\n"
+                   "        run: echo x\n")
 
 REFUSALS = [
     ("a valued strategy anchor",
@@ -5718,6 +5734,24 @@ REFUSALS = [
                           "        id: install_checks\n"
                           "        run: echo x\n"),
      "[2 matching steps]"),
+    ("a step id the pin does not read",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: pylint\n"
+                          "        if: ${{ !cancelled() && steps.install_checks.outcome == 'success' }}\n",
+                          "      - name: pylint\n"
+                          "        id: other\n"
+                          "        if: ${{ !cancelled() && steps.install_checks.outcome == 'success' }}\n"),
+     "a step `id:` other than `install_checks`"),
+    ("an id on a python-versions step",
+     lambda w, m: planted(w, m, "wf", PV_SUITE,
+                          PV_SUITE.replace(
+                              "      - name: Run the behavioral suite\n",
+                              "      - name: Run the behavioral suite\n"
+                              "        id: install_checks\n")),
+     "no chain anchor lives in this job"),
+    ("a duplicate step name, the comparison's key",
+     lambda w, m: dup_pycodestyle(w, m),
+     "expected at most one step named `pycodestyle`"),
     ("the chain id step chained on itself",
      lambda w, m: planted(w, m, "wf", CHECKS_IF,
                           CHECKS_IF.replace(
@@ -5967,6 +6001,14 @@ REDS = [
                           "        if: matrix.os == 'ubuntu-latest'\n"
                           "        shell: bash\n"
                           "        run: python3 -m py_compile claim.py\n"),
+     "with an `if:` that no README row claims"),
+    ("an exemption lookalike step no row claims",
+     lambda w, m: planted(w, m, "wf",
+                          '          "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json\n',
+                          '          "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json\n'
+                          "      - name: Install the type and lint toolchain (extra)\n"
+                          "        if: matrix.os == 'ubuntu-latest'\n"
+                          "        run: echo x\n"),
      "with an `if:` that no README row claims"),
 ]
 

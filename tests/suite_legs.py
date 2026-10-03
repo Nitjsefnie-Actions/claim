@@ -20,10 +20,13 @@ the only lines read:
     exactly their indents, in that order, each exactly once; the matrix
     `os:` one-line flow list and the `include:` entries; every step under
     `steps:` of the `suites` and `python-versions` jobs, read for its
-    `name:` / `if:` / `id:` at the step key indent (a dash line may carry
-    `uses:` or `name:`; a dash-carried value is read with any `# v7.0.1`-
-    style SHA comment truncated, because the value's identity is the SHA,
-    and the python-versions dashes are additionally prefix-checked); and the
+    `name:` / `if:` / `id:` at the step key indent -- step names are unique
+    per job (the comparison keys on them, so a duplicate would silently keep
+    only the last one's legs) and only the suites job's chain anchor may
+    carry an `id:` (a dash line may carry `uses:` or `name:`; a dash-carried
+    value is read with any `# v7.0.1`-style SHA comment truncated, because
+    the value's identity is the SHA, and the python-versions dashes are
+    additionally prefix-checked, and that job carries no id at all); and the
     `runs-on:` line that consumes `matrix.os`;
   - from README.md: the one `| Check |` table header, its `---` separator,
     and the run of `|`-led data rows that follows, and nothing else.
@@ -104,7 +107,8 @@ does not model refuses (exit 3): a renamed or added row is an edit to this
 pin, not a row to skip. A mapping key whose row vanished from the README,
 and a mapped step that no longer exists in the workflow, fail semantically
 (exit 1), naming the drifted half. Every step carrying an `if:` must be
-mapped by some row or named in EXEMPT_STEPS; the two checkout steps carry
+mapped by some row or named in EXEMPT_STEPS -- membership exact, so a name
+merely containing an exempt name is not exempt; the two checkout steps carry
 no `if:` and sit outside the sweep.
 
 Shapes this pin refuses on a fine file, stated rather than assumed (the
@@ -373,6 +377,21 @@ def read_steps(job, job_name):
             "id": step_field(span, "id"),
             "uses": uses,
         })
+    # The comparison keys on step names, so a duplicate would silently keep
+    # only the last one's legs -- every other duplicate class here (table
+    # rows, header, anchors, the chain id) is refused, and this is the one
+    # key the row-to-step mapping resolves through.
+    names = [step["name"] for step in steps]
+    for name in names:
+        if name is not None and names.count(name) > 1:
+            refuse(f"[{names.count(name)} matching steps]",
+                   f"expected at most one step named `{name}`")
+    # The chain spelling is the only consumer of a step id, so any other id
+    # is a shape this pin does not read -- refused rather than admitted as
+    # inert structure.
+    for step in steps:
+        if step["id"] is not None and step["id"] != CHAIN_ID:
+            refuse(step["id"], f"a step `id:` other than `{CHAIN_ID}`")
     return steps
 
 
@@ -482,6 +501,9 @@ def python_versions_steps(job):
     checkout = steps[0]
     setup_python = steps[1]
     suite = steps[2]
+    if any(step["id"] is not None for step in steps):
+        refuse("[step id]", "the python-versions job carries a step `id:` -- "
+                            "no chain anchor lives in this job")
     for step, prefix in ((checkout, "actions/checkout@"),
                          (setup_python, "actions/setup-python@")):
         if step["name"] is not None or step["if"] is not None:
