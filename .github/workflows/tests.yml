@@ -303,15 +303,15 @@ jobs:
           # pyrightconfig.json. The exit code is the gate: no baseline and
           # no ratchet, because the tree passes outright.
           "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json
-      # One install step, on the measured cell only: it lifts the coverage
-      # block out of the hash-pinned manifest into a venv (PEP 668 marks both
-      # hosted images' system python externally managed, so a plain pip
-      # install fails), writes coverage's startup hook into that venv, and
-      # arms the three env vars the rest of the job inherits through
-      # GITHUB_ENV -- PATH first, so the suite's run step and the coverage
-      # commands below resolve the venv's python3. The run step stays
-      # byte-for-byte what it was, and on every other cell the step is
-      # skipped, and the suite runs exactly as before.
+      # The measured cell's coverage install lifts the coverage block out of
+      # the hash-pinned manifest into a venv (PEP 668 marks both hosted
+      # images' system python externally managed, so a plain pip install
+      # fails), writes coverage's startup hook into that venv, and arms the
+      # three env vars the rest of the job inherits through GITHUB_ENV --
+      # PATH first, so the suite's run step and the coverage commands below
+      # resolve the venv's python3. The run step stays byte-for-byte what it
+      # was, and on every other cell the step is skipped, and the suite runs
+      # exactly as before.
       - name: Install coverage tooling
         if: matrix.os == 'ubuntu-latest'
         run: |
