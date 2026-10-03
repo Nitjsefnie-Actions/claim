@@ -128,6 +128,44 @@ cannot strip first, and a valid command would be one the action could
 never see. A comment no line of which starts with a command word still
 ends quietly, and a bot's comment still never starts a runner.
 
+## Runners and Python versions
+
+The action needs `bash`, `gh` and `python3` on the runner's PATH. Its
+composite step runs everything under `shell: bash` — Git for Windows Bash
+on a windows runner — and `claim.py` uses only the standard library, so
+there is nothing to install on any supported runner.
+
+Consumers can run the action on ubuntu, macos and windows runners. What
+this repository's CI runs, per leg and per step:
+
+| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |
+| --- | --- | --- | --- | --- |
+| Behavioral suite | yes | yes | no — stub limitation, below | yes |
+| ruff lint of claim.py | yes | yes | no | no |
+| Coverage measurement and gate | yes | no | no | no |
+| Merge-conflict marker check | yes | yes | yes | no |
+| Compile the claim script | yes | yes | yes | no |
+| Put a python3 on PATH | no | no | yes | no |
+
+The full behavioral suite runs on ubuntu-latest and macos-latest at each
+image's preinstalled python3, and again on Python 3.11, 3.12, 3.13 and
+3.14 via setup-python in a separate informational job. Coverage is
+measured and gated on the ubuntu cell only, so the reported number names
+one reproducible environment. No version floor is claimed beyond that
+verification.
+
+The windows leg stops short of the behavioral suite for a stated reason:
+the suite's `gh` stub is an extension-less bash script placed on PATH as
+`gh`, and `claim.py` starts it through Python's subprocess — on Windows
+that is CreateProcess, which launches only PE images, so it refuses a
+text file with error 193 and the stub never executes. Every stub-driven
+case would fail loudly, so the suite step is scoped to the POSIX legs;
+the windows leg instead runs the workflow's bash steps and the compile
+check, with a small `python3` PATH shim backing the `python3` calls by
+forwarding to the image's `python`. Real consumers are unaffected — they
+run the real `gh.exe`. Widening the leg needs a Windows-executable stub
+form, tracked in the issue tracker.
+
 ## Inputs
 
 All inputs are optional. Keep the event-derived defaults for ordinary use;
