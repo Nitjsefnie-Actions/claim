@@ -2839,6 +2839,20 @@ pyrightconfig.json
 setup.cfg
 tests/codeql_matrix.py
 tests/commit_scopes.py
+tests/diffcoverage/absent.diff
+tests/diffcoverage/absent.xml
+tests/diffcoverage/binary.diff
+tests/diffcoverage/merge.diff
+tests/diffcoverage/merge.xml
+tests/diffcoverage/minimal.xml
+tests/diffcoverage/nomeasured.diff
+tests/diffcoverage/quoted-invalid.diff
+tests/diffcoverage/quoted.diff
+tests/diffcoverage/quoted.xml
+tests/diffcoverage/table.diff
+tests/diffcoverage/table.xml
+tests/diffcoverage/unmeasured.diff
+tests/diffcoverage/wholediff-utf8.diff
 tests/gate_base_freshness.py
 tests/gh.sh
 tests/identity.response
@@ -5099,6 +5113,246 @@ for name, plant, expected in REDS:
 PYRED
 }
 
+# --- the patch-coverage reporter (issue #129's script), issue #137 ----------
+#
+# The script decides with a hunk walk, a git-quoted path decoder, a
+# statement-record check and a handful of render cases; every branch is
+# pinned here against a COMMITTED fixture pair under tests/diffcoverage/,
+# the script run the way the diff-coverage job runs it: from the repository
+# root, where .coveragerc sits and claim.py is the source its statement
+# analyzer opens. One case per branch, so a broken branch reds exactly its
+# own case, and the expectations are hand-written constants the fixtures
+# render — never values read back out of the script.
+
+# The reporter imports coverage at module level, so a python3 without it
+# cannot even start the script. The ubuntu cell installs the pinned coverage
+# before the suite runs, so the controls run there every time; a python3
+# without the module says so and passes, loudly, rather than red-ing a cell
+# that never promised the dependency.
+diffcoverage_skip_unless_coverage() {
+  if python3 -c 'import coverage' 2> /dev/null; then
+    return 0
+  fi
+  printf '  SKIP diff-coverage controls: coverage is not importable from python3 here\n'
+  return 2
+}
+
+# From the repository root: the statement analyzer reads .coveragerc and
+# claim.py relative to the working directory.
+run_diffcoverage() {
+  local status=0
+  (cd "$ROOT" && python3 .github/scripts/diff_coverage.py \
+    --coverage "tests/diffcoverage/$1" \
+    --diff "tests/diffcoverage/$2" \
+    > "$GH_CASE/out" 2> "$GH_CASE/err") || status=$?
+  return "$status"
+}
+
+diffcoverage_renders() {
+  local xml=$1 diff=$2 status=0 failed=0
+  run_diffcoverage "$xml" "$diff" || status=$?
+  if [[ $status -ne 0 ]]; then
+    printf '  exit status: expected 0, got %s\n' "$status"
+    failed=1
+  fi
+  if [[ ! -f $GH_CASE/expected ]]; then
+    printf '  the case wrote no expected body\n'
+    return 1
+  fi
+  diff -u "$GH_CASE/expected" "$GH_CASE/out" || failed=1
+  if grep -Fq Traceback "$GH_CASE/err"; then
+    printf '  unexpected traceback\n'
+    failed=1
+  fi
+  return "$failed"
+}
+
+diffcoverage_refuses_with() {
+  # The refusal shape every invalid input owes: exit 1, nothing on stdout,
+  # no traceback, and a first stderr line starting with the caller's text.
+  # The absent-records case passes only a prefix: the ranges after it are
+  # read off claim.py's current shape, so pinning them would red the suite
+  # on every honest edit of the file.
+  local prefix=$1 xml=$2 diff=$3 status=0 failed=0
+  run_diffcoverage "$xml" "$diff" || status=$?
+  if [[ $status -ne 1 ]]; then
+    printf '  exit status: expected 1, got %s\n' "$status"
+    failed=1
+  fi
+  if [[ -s $GH_CASE/out ]]; then
+    printf '  the refusal wrote to stdout\n'
+    failed=1
+  fi
+  if ! [[ $(sed -n '1p' "$GH_CASE/err") == "$prefix"* ]]; then
+    printf '  the refusal did not start with the expected line:\n'
+    sed -n '1p' "$GH_CASE/err"
+    failed=1
+  fi
+  if grep -Fq Traceback "$GH_CASE/err"; then
+    printf '  unexpected traceback\n'
+    failed=1
+  fi
+  return "$failed"
+}
+
+diffcoverage_hunk_walk_missed_ranges() {
+  # The hunk walk turns the diff into added line numbers, and the guard it
+  # leans on: a REMOVED line whose content begins `-- ` renders as `--- `
+  # and must not be taken for a file header, or the path is cleared mid-hunk
+  # and every later hunk of the file drops out of the report in silence. The
+  # same fixture pins the missed-ranges table: adjacent misses collapse into
+  # a `21-22` span and disjoint ones join with `, `.
+  diffcoverage_skip_unless_coverage || return 0
+  cat > "$GH_CASE/expected" <<'EOF'
+### Coverage of this change
+
+**40.0%** of added lines covered (2/5).
+
+| File | Covered | Added | Missed lines |
+| --- | ---: | ---: | --- |
+| `claim.py` | 2 | 5 | 21-22, 24 |
+EOF
+  diffcoverage_renders table.xml table.diff
+}
+
+diffcoverage_quoted_path_decode() {
+  # A git-quoted path arrives with quotes and `\NNN` octal escapes; the
+  # decoder must strip both and land on the name the report uses. The
+  # fixture's quoted spelling decodes to claim.py, so a decoder that keeps
+  # the quoting renders "no measured lines" instead of this table.
+  diffcoverage_skip_unless_coverage || return 0
+  cat > "$GH_CASE/expected" <<'EOF'
+### Coverage of this change
+
+**100.0%** of added lines covered (2/2).
+
+| File | Covered | Added | Missed lines |
+| --- | ---: | ---: | --- |
+| `claim.py` | 2 | 2 | — |
+
+Every added line was reached.
+EOF
+  diffcoverage_renders quoted.xml quoted.diff
+}
+
+diffcoverage_quoted_path_invalid_utf8() {
+  # The quoted-path decode happens INSIDE the report guard, so an escape
+  # sequence whose bytes are not UTF-8 is a one-line refusal naming the
+  # report, not a traceback.
+  diffcoverage_skip_unless_coverage || return 0
+  diffcoverage_refuses_with \
+    "coverage report invalid: 'utf-8' codec can't decode byte 0xff in position 4: invalid start byte" \
+    minimal.xml quoted-invalid.diff
+}
+
+diffcoverage_whole_diff_invalid_utf8() {
+  # The whole-diff decode has its own guard and its own sentence: an input
+  # that is not text at all is refused as the DIFF, never mislabelled as an
+  # invalid report.
+  diffcoverage_skip_unless_coverage || return 0
+  diffcoverage_refuses_with \
+    "diff is not valid UTF-8: 'utf-8' codec can't decode byte 0xff in position 110: invalid start byte" \
+    minimal.xml wholediff-utf8.diff
+}
+
+diffcoverage_binary_diff_refused() {
+  # A binary diff record carries no line numbers to measure, so it is a
+  # refusal, never an empty report read as a clean one.
+  diffcoverage_skip_unless_coverage || return 0
+  diffcoverage_refuses_with \
+    'coverage report invalid: binary diff record is not measurable: Binary files a/claim.py and b/claim.py differ' \
+    minimal.xml binary.diff
+}
+
+diffcoverage_absent_statement_records() {
+  # The hard error: an added executable statement with no XML record must
+  # refuse rather than shrink the denominator. The fixture claims lines
+  # 30-40 of claim.py, which hold real statements, and records none of them;
+  # the refusal's ranges are claim.py's to move, so only the prefix is
+  # pinned.
+  diffcoverage_skip_unless_coverage || return 0
+  diffcoverage_refuses_with \
+    'coverage report invalid: missing executable statement records for claim.py: ' \
+    absent.xml absent.diff
+}
+
+diffcoverage_duplicate_class_max_hits() {
+  # A file can appear as more than one <class>; a line reached by any of
+  # them counts as covered, which is the max() over the duplicate records —
+  # last-wins or min() here renders line 1 missed and this body changes.
+  diffcoverage_skip_unless_coverage || return 0
+  cat > "$GH_CASE/expected" <<'EOF'
+### Coverage of this change
+
+**100.0%** of added lines covered (1/1).
+
+| File | Covered | Added | Missed lines |
+| --- | ---: | ---: | --- |
+| `claim.py` | 1 | 1 | — |
+
+Every added line was reached.
+EOF
+  diffcoverage_renders merge.xml merge.diff
+}
+
+diffcoverage_no_measured_lines() {
+  # A change confined to files the report does not measure is said in full,
+  # because a bare "nothing added" reads like the tool failed to find the
+  # diff.
+  diffcoverage_skip_unless_coverage || return 0
+  cat > "$GH_CASE/expected" <<'EOF'
+### Coverage of this change
+
+No **measured** lines were added. The report measures only `claim.py` (`[report] include` in `.coveragerc`), so a change confined to the suite, the workflows or any other file has no patch coverage to report -- that is not the same as none of it running.
+EOF
+  diffcoverage_renders minimal.xml nomeasured.diff
+}
+
+diffcoverage_unmeasured_changed_source() {
+  # A changed source path the report never named is listed, because a
+  # systematic spelling mismatch is otherwise indistinguishable from a
+  # change confined to unmeasured files.
+  diffcoverage_skip_unless_coverage || return 0
+  cat > "$GH_CASE/expected" <<'EOF'
+### Coverage of this change
+
+This change added lines to claim.py, the one file the coverage report measures, but the report names none of the changed paths. Nothing here was measured, which is not the same as nothing needing to be: the report most likely spells paths differently than the diff does.
+
+Unmeasured changed source files:
+- `claim.py`
+EOF
+  diffcoverage_renders minimal.xml unmeasured.diff
+}
+
+diffcoverage_artifact_names_one_leg() {
+  # A run's artifact names are one namespace shared by every job in it, so
+  # the wiring must keep exactly one uploader per name: the ubuntu matrix
+  # leg alone uploads `coverage-xml`, and the diff-coverage job is the only
+  # other uploader. A second leg under either name would leave the download
+  # resolving the pair however it likes.
+  python3 - "$ROOT/.github/workflows/tests.yml" <<'PYWIRE'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+found = []
+for block in re.split(r"\n(?=      - )", text):
+    if not re.search(r"^        uses: actions/upload-artifact@", block, re.M):
+        continue
+    cond = re.search(r"^        if: (.+)$", block, re.M)
+    name = re.search(r"^          name: (\S+)", block, re.M)
+    found.append((cond.group(1) if cond else None,
+                  name.group(1) if name else None))
+expected = [("matrix.os == 'ubuntu-latest'", "coverage-xml"),
+            (None, "diff-coverage-comment")]
+if found != expected:
+    print(f"tests.yml's upload-artifact steps are {found!r}, expected "
+          f"{expected!r}: one artifact namespace per run means exactly one "
+          f"uploading leg per name", file=sys.stderr)
+    raise SystemExit(1)
+PYWIRE
+}
+
 # The suite, grouped by what it is about. #45, #50 and #51 are the branch;
 # everything else predates it. The three long-body groups are the ones whose
 # size arithmetic is worth knowing before changing: a reply crosses GitHub's
@@ -5228,7 +5482,17 @@ action_contract pr_gate_contract readme_quoted_replies
   # reds exactly its own case.
   commit_scope_refuses_a_quoted_name commit_scope_refuses_a_valueless_name
   commit_scope_refuses_a_commented_name commit_scope_refuses_a_continued_name
-  commit_scope_refuses_a_duplicated_name)
+  commit_scope_refuses_a_duplicated_name
+  # Issue #137: the patch-coverage reporter's decision branches, each pinned
+  # against a committed fixture pair under tests/diffcoverage/ — one case per
+  # branch, hand-written expected bodies, and a loud skip where the coverage
+  # module is absent (the ubuntu cell installs it before the suite, so the
+  # controls run there every time).
+  diffcoverage_hunk_walk_missed_ranges diffcoverage_quoted_path_decode
+  diffcoverage_quoted_path_invalid_utf8 diffcoverage_whole_diff_invalid_utf8
+  diffcoverage_binary_diff_refused diffcoverage_absent_statement_records
+  diffcoverage_duplicate_class_max_hits diffcoverage_no_measured_lines
+  diffcoverage_unmeasured_changed_source diffcoverage_artifact_names_one_leg)
 failures=0
 for case_name in "${cases[@]}"; do
   GH_CASE="$RUN/$case_name"

@@ -1,0 +1,7 @@
+diff --git "a/cl\141im.py" "b/cl\141im.py"
+index 0000000..1111111 100644
+--- "a/cl\141im.py"
++++ "b/cl\141im.py"
+@@ -10,0 +11,2 @@
++    quoted_one = 1
++    quoted_two = 2

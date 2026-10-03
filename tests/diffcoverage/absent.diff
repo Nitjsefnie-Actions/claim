@@ -1,0 +1,16 @@
+diff --git a/claim.py b/claim.py
+index 0000000..1111111 100644
+--- a/claim.py
++++ b/claim.py
+@@ -29,0 +30,11 @@
++    absent_one = 1
++    absent_two = 2
++    absent_three = 3
++    absent_four = 4
++    absent_five = 5
++    absent_six = 6
++    absent_seven = 7
++    absent_eight = 8
++    absent_nine = 9
++    absent_ten = 10
++    absent_eleven = 11
