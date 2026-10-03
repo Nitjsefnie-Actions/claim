@@ -3554,6 +3554,7 @@ PYWIRE
 commit_scope_states() {
   local fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
   local tree=$fixture/tree status result=0 planted subject
+  local latinprobe=0 readback=0 latinreadback=0 listing
   if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
     "Refuse a commit whose scope names a workflow outside the ci type" "$script"; then
     printf '  the commit-scope step could not be extracted from tests.yml\n'
@@ -3764,6 +3765,207 @@ YAML
   git -C "$tree" commit --quiet --amend -m 'docs(readme): rename a job'
   subject='docs(readme): rename a job'
   gate_commit_in_range "$tree" "$subject" || return 1
+
+  # A workflow behind a non-ASCII FILENAME joins the set through the bytes
+  # HEAD tracks, never through the display form: under git's default
+  # core.quotePath a newline-separated enumeration reads the C-quoted
+  # `".github/workflows/\303\274ber.yml"` for the path, the leading double
+  # quote misses the workflow-file filter, and the workflow's name silently
+  # never joins the set -- a fix naming that name passes green over a defect
+  # the rule exists to catch. quotePath is pinned true here so a developer's
+  # global false cannot hide the shape, and the two readbacks prove the
+  # fixture sits in the state the red describes: the quoted form is what
+  # plain ls-tree prints, the raw bytes are what HEAD tracks.
+  git -C "$tree" config core.quotepath true
+  if [[ $(git -C "$tree" config core.quotepath) != true ]]; then
+    printf '  core.quotepath did not pin true; the fixture is not in the shape the bug needs\n'
+    return 1
+  fi
+  # The name `audit` must live ONLY here once audit.yml is gone: a name that
+  # also sat in an ASCII-named file would make the red below hold for the
+  # wrong reason -- the set would carry the name even with the non-ASCII
+  # file dropped.
+  rm "$tree/.github/workflows/audit.yml"
+  python3 - "$tree" <<'PYUEBER'
+import sys
+
+with open(sys.argv[1].encode("utf-8") + b"/.github/workflows/\xc3\xbcber.yml",
+          "wb") as handle:
+    handle.write(b"name: audit\n"
+                 b"on:\n"
+                 b"  push:\n"
+                 b"jobs:\n"
+                 b"  audit:\n"
+                 b"    runs-on: ubuntu-latest\n"
+                 b"    steps:\n"
+                 b"      - run: true\n")
+PYUEBER
+  gate_commit_all "$tree" 'rename the audit workflow'
+  listing=$(git -C "$tree" ls-tree -r --name-only --full-tree HEAD)
+  if ! grep -Fq '".github/workflows/\303\274ber.yml"' <<< "$listing"; then
+    printf '  the quoted display form is absent from the tree listing; the fixture is not in the quoted shape the bug needs\n'
+    return 1
+  fi
+  readback=0
+  python3 - "$tree" <<'PYRAWTRACKED' || readback=$?
+import subprocess
+import sys
+
+tracked = subprocess.run(
+    ("git", "-C", sys.argv[1], "ls-tree", "-z", "-r", "--name-only",
+     "--full-tree", "HEAD"), capture_output=True, check=True).stdout
+if b".github/workflows/\xc3\xbcber.yml" not in tracked.split(b"\0"):
+    sys.stderr.write("  the raw bytes .github/workflows/\\xc3\\xbcber.yml "
+                     "are not tracked at HEAD\n")
+    raise SystemExit(1)
+PYRAWTRACKED
+  if [[ $readback != 0 ]]; then
+    printf '  the raw bytes are not what HEAD tracks; the fixture is not in the state the red describes\n'
+    return 1
+  fi
+  printf 'a change naming the non-ascii workflow\n' >> "$tree/NOTES.md"
+  subject='fix(audit): outgoing workflow change'
+  gate_commit_all "$tree" "$subject"
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  fix(audit) behind a non-ascii filename: expected a non-zero exit, got 0\n'
+    result=1
+  fi
+  # Backticks are literal in these patterns; they are message punctuation.
+  # shellcheck disable=SC2016
+  if ! grep -Fq "$subject" "$GH_CASE/stdout" \
+    || ! grep -Fq 'scope `audit`' "$GH_CASE/stdout"; then
+    printf '  the red did not name the subject and the scope the non-ascii file put in the set:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # Repair the range for the states that follow: the same summary with a
+  # scope that is neither a workflow name nor exempt.
+  git -C "$tree" commit --quiet --amend -m 'docs(readme): outgoing workflow change'
+  subject='docs(readme): outgoing workflow change'
+  gate_commit_in_range "$tree" "$subject" || return 1
+
+  # The negative space of the widening: with `audit` in the set only through
+  # the non-ASCII-named file, an ASCII-scoped subject is still examined and
+  # still green -- the widened set admits, it does not refuse. The count is
+  # the eight examined subjects the range carries here: test(harness) pin,
+  # ci(tests), fix(claim), ci(claim), fix(zzz), the two repaired amends
+  # (docs(readme) rename a job, docs(readme) outgoing workflow change) and
+  # this commit; the two renames are listed, never examined.
+  printf 'an ascii change\n' >> "$tree/NOTES.md"
+  gate_commit_all "$tree" 'test(harness): ascii is unchanged'
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  test(harness) beside the non-ascii workflow: expected exit 0, got %s\n' \
+      "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 8' "$GH_CASE/stdout"; then
+    printf '  the ascii green does not state what it examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if ! grep -Fq 'No commit pairs' "$GH_CASE/stdout"; then
+    printf '  the ascii green did not come back green:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # A filename that is not even valid UTF-8 -- latin-1 e-acute, a single
+  # 0xE9 byte -- arrives from `ls-tree -z` as a lone surrogate after the
+  # surrogateescape decode and round-trips through cat-file's argv
+  # byte-exact, so its workflow still joins the set: the red below is that
+  # round-trip's end-to-end proof, and a strict decode here (the shape this
+  # fix replaces) would die inside subprocess with no subject and no scope
+  # named. Whether this filesystem can hold such a name at all is decided
+  # by a create-and-unlink probe, and the state branches on the probe's
+  # OUTCOME, never on a platform name: APFS refuses the byte outright
+  # (OSError, errno 92), and a fixture that cannot be built measures
+  # nothing. The probe cleans up after itself on both paths; a refusal
+  # prints one disclosure line and skips only this state -- never
+  # silently.
+  latinprobe=0
+  python3 - "$tree" <<'PYLATINPROBE' 2> "$GH_CASE/latinprobe.err" || latinprobe=$?
+import os
+import sys
+
+target = sys.argv[1].encode("utf-8") + b"/.github/workflows/\xe9.yml"
+try:
+    with open(target, "wb") as handle:
+        handle.write(b"probe\n")
+except OSError as refusal:
+    sys.stderr.write(f"{type(refusal).__name__} errno {refusal.errno}: "
+                     f"{refusal.strerror}\n")
+    raise SystemExit(1)
+finally:
+    try:
+        os.unlink(target)
+    except FileNotFoundError:
+        pass
+PYLATINPROBE
+  if [[ $latinprobe != 0 ]]; then
+    printf '  this filesystem refused the raw 0xe9 filename (probe exit %s: %s); the non-utf8 round-trip pin cannot run here and is skipped, disclosed\n' \
+      "$latinprobe" "$(cat "$GH_CASE/latinprobe.err")"
+  else
+    python3 - "$tree" <<'PYLATIN'
+import sys
+
+with open(sys.argv[1].encode("utf-8") + b"/.github/workflows/\xe9.yml",
+          "wb") as handle:
+    handle.write(b"name: latin\n"
+                 b"on:\n"
+                 b"  push:\n"
+                 b"jobs:\n"
+                 b"  latin:\n"
+                 b"    runs-on: ubuntu-latest\n"
+                 b"    steps:\n"
+                 b"      - run: true\n")
+PYLATIN
+    gate_commit_all "$tree" 'add a workflow with a non-utf8 name'
+    latinreadback=0
+    python3 - "$tree" <<'PYLATINREADBACK' || latinreadback=$?
+import subprocess
+import sys
+
+tracked = subprocess.run(
+    ("git", "-C", sys.argv[1], "ls-tree", "-z", "-r", "--name-only",
+     "--full-tree", "HEAD"), capture_output=True, check=True).stdout
+if b".github/workflows/\xe9.yml" not in tracked.split(b"\0"):
+    sys.stderr.write("  the raw byte .github/workflows/\\xe9.yml is not "
+                     "tracked at HEAD\n")
+    raise SystemExit(1)
+PYLATINREADBACK
+    if [[ $latinreadback != 0 ]]; then
+      printf '  the raw 0xe9 byte is not what HEAD tracks; the fixture is not in the state the red describes\n'
+      return 1
+    fi
+    printf 'a change naming the latin workflow\n' >> "$tree/NOTES.md"
+    subject='fix(latin): read the latin workflow'
+    gate_commit_all "$tree" "$subject"
+    gate_commit_in_range "$tree" "$subject" || return 1
+    gate_run_step "$fixture" "$script"
+    status=$(cat "$GH_CASE/status")
+    if [[ $status == 0 ]]; then
+      printf '  fix(latin) behind a non-utf8 filename: expected a non-zero exit, got 0\n'
+      result=1
+    fi
+    # Backticks are literal in these patterns; they are message punctuation.
+    # shellcheck disable=SC2016
+    if ! grep -Fq "$subject" "$GH_CASE/stdout" \
+      || ! grep -Fq 'scope `latin`' "$GH_CASE/stdout"; then
+      printf '  the red did not name the subject and the scope the non-utf8 file put in the set:\n'
+      cat "$GH_CASE/stdout"
+      result=1
+    fi
+    # Repair the range for the states that follow: the same summary with a
+    # scope that is neither a workflow name nor exempt.
+    git -C "$tree" commit --quiet --amend -m 'docs(readme): read the latin workflow'
+    subject='docs(readme): read the latin workflow'
+    gate_commit_in_range "$tree" "$subject" || return 1
+  fi
 
   # A job-level name is not a workflow name: hhh.yml's job displays as
   # `check`, and fix(check) must stay green -- only column 0 is collected.
