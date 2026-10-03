@@ -1,7 +1,13 @@
 name: tests
 
-# Linux-only checks cannot establish macOS portability. Both platforms run
-# the same real-subprocess behavioral suite, including the bash API stub.
+# Linux-only checks cannot establish macOS portability. The two POSIX legs
+# run the same real-subprocess behavioral suite, including the bash API
+# stub, plus the ruff lint, and coverage is measured on the ubuntu cell
+# only. The windows leg runs the workflow's own bash steps -- the
+# merge-conflict marker check, the python3 PATH shim and the compile check
+# -- while the behavioral suite stays scoped to the POSIX legs (see that
+# step for why). The python-versions job runs the full suite on Python
+# 3.11-3.14 on ubuntu.
 #
 # The suite stays install-free by design (#87): everything it runs ships with
 # the images -- bash, python3, and shellcheck -- and tests/gh.sh supplies the
@@ -133,6 +139,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
 
@@ -142,6 +150,22 @@ jobs:
           # Nothing in this job pushes. Leaving the token in
           # .git/config lets any later step reuse it.
           persist-credentials: false
+
+      - name: Put a python3 on PATH
+        # The windows image provides `python` but not `python3`, and the
+        # steps below and tests/run.sh all call `python3` by name. The shim
+        # is the suite's own install-free fix: a two-line sh script on PATH,
+        # no package install. `shell: bash` because the body is bash syntax
+        # -- on windows the default shell is pwsh, and Git Bash executes the
+        # extension-less shim where pwsh would not.
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec python "$@"\n' > "$RUNNER_TEMP/bin/python3"
+          chmod +x "$RUNNER_TEMP/bin/python3"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/python3" --version
 
       - name: Check no tracked file carries a merge-conflict marker
         # a3363ac landed on main with `<<<<<<< HEAD` and the `>>>>>>> 0d9bffc`
@@ -158,6 +182,12 @@ jobs:
         # actionlint one because this workflow's push trigger is unfiltered,
         # so it runs for the documentation-only commit that carries the marker
         # as well as for the code change.
+        # Explicit `shell: bash` so the step also runs on the windows leg,
+        # whose default shell is pwsh and cannot run this bash body; on the
+        # POSIX legs the explicit form adds only `-o pipefail`, and the body
+        # already guards `git grep` with `|| found=$?`, so no pipe here can
+        # turn "no match" into a failure the implicit shell would not have.
+        shell: bash
         run: |
           # git grep exits 1 for "no match" and above 1 for an error it could
           # not run, and a guard that reads its own error as a clean tree is
@@ -174,6 +204,10 @@ jobs:
           fi
 
       - name: Compile the claim script
+        # Explicit `shell: bash` so the step also runs on the windows leg,
+        # whose default shell is pwsh and cannot run this body; on the POSIX
+        # legs the explicit form adds only `-o pipefail`.
+        shell: bash
         run: python3 -m py_compile claim.py
 
       - name: Lint the claim script
@@ -187,14 +221,21 @@ jobs:
         # deliberately not plain F, whose F401 and F841 red CI on benign
         # refactors.
         # Why the venv: both hosted images mark their system python externally
-        # managed (PEP 668), so a plain pip install fails on both legs, and
-        # this file has no setup-python step by design (preinstalled python3
-        # only).
+        # managed (PEP 668), so a plain pip install fails on all legs. The
+        # suites job keeps the images' preinstalled python3; only the
+        # python-versions job runs setup-python, to pin the four explicit
+        # versions it covers, and setup-python installs an interpreter, never
+        # packages, so the suite stays install-free (#87).
         # Why the awk extraction: the manifest's PyYAML pin carries one hash,
         # a cp313 manylinux x86_64 wheel, so installing the whole file with
         # --require-hashes resolves nothing on macOS. The ruff block alone is
         # platform-complete; the manifest stays the single source for the
         # version and hashes.
+        # POSIX legs only: the venv's interpreter sits at venv/bin/python on
+        # POSIX and venv/Scripts/python.exe on Windows, and this step is
+        # written for the POSIX layout; extending it to Windows is future
+        # work.
+        if: matrix.os != 'windows-latest'
         run: |
           python3 -m venv "$RUNNER_TEMP/lint-venv"
           awk '/^ruff==/{f=1} f{print; if ($0 !~ /\\$/) exit}' .github/workflows/requirements.txt > "$RUNNER_TEMP/ruff.txt"
@@ -268,6 +309,17 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run the behavioral suite
+        # POSIX legs only. tests/gh.sh is an extension-less bash script
+        # placed on PATH as `gh`, and claim.py starts it through Python's
+        # subprocess: on Windows that is CreateProcess, which launches only
+        # PE images -- it resolves `gh` to `gh.exe` and refuses a text file
+        # with error 193 (%1 is not a valid Win32 application), so the
+        # extension-less stub never executes and every stub-driven case
+        # fails loudly. Real consumers are unaffected: they run the real
+        # gh.exe on windows runners. This is a harness limitation, not a
+        # product defect; widening the leg needs a Windows-executable stub
+        # form, tracked in the issue tracker.
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: tests/run.sh
 
@@ -290,3 +342,31 @@ jobs:
         run: |
           floor="$(python3 -c 'import json; print(json.load(open(".github/ci-thresholds.json"))["coverage"]["python"]["floor"])')"
           python3 -m coverage report --fail-under="$floor" --precision=1 --rcfile=.coveragerc
+
+  # The suites job pins OS coverage at each image's preinstalled python3;
+  # this job pins Python coverage at pr-gate's four supported versions.
+  # Informational, never required: a new job name is not a required status
+  # context, and making one required is a ruleset edit the maintainer
+  # makes, not this workflow.
+  python-versions:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this job pushes. Leaving the token in
+          # .git/config lets any later step reuse it.
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Run the behavioral suite
+        shell: bash
+        run: tests/run.sh
