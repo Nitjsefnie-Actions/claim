@@ -1,0 +1,13 @@
+{
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.13",
+    "pythonPlatform": "All",
+    "include": [
+        "claim.py",
+        "tests"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        ".venv"
+    ]
+}
