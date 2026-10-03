@@ -331,7 +331,13 @@ def main():
 
     diff_bytes = (sys.stdin.buffer.read() if args.diff == '-'
                   else Path(args.diff).read_bytes())
-    diff_text = diff_bytes.decode('utf-8')
+    try:
+        diff_text = diff_bytes.decode('utf-8')
+    except UnicodeDecodeError as error:
+        # Its own guard with its own sentence: this input is the DIFF, and
+        # "coverage report invalid" would name the wrong artifact.
+        print(f'diff is not valid UTF-8: {error}', file=sys.stderr)
+        return 1
     try:
         # Inside the guard with its sibling: a git-quoted path whose bytes
         # are not UTF-8 raises UnicodeDecodeError, a ValueError subclass,
