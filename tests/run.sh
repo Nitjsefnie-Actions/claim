@@ -4050,22 +4050,33 @@ PY
 # The Install block and claim.yml are two hand-kept copies of one manifest,
 # and the only gate that reads both files — actionlint.yml's "Check the README
 # pin matches claim.yml" step — compares the action pins and nothing else.
-# Editing either copy alone therefore shipped green, for the job condition
-# bfe9aad pinned and equally for the step's `with:` mapping beside it. This
-# case reads BOTH surfaces out of BOTH files, each through its own parse of
+# Editing either copy alone therefore shipped green — for the job condition
+# bfe9aad pinned, for the step's `with:` values, and equally for the job's
+# `runs-on`, `timeout-minutes` and `permissions:` block and the whole
+# top-level `concurrency:` block (#130), which sits outside `jobs:` and is
+# sliced from the same significant-lines list the job locator reads. This
+# case reads all of that out of BOTH files, each through its own parse of
 # its own text, with a reader that models only the shapes these two files
 # use — a block-scalar body (whose `#`-initial lines are content there and
 # refuse rather than strip), an on-key-line plain or quoted scalar (whose
-# deeper-indented continuation lines refuse rather than join), and the wrapper
-# forms around those — and refuses every shape outside that set, so a value
-# it cannot read is a red refusal and never a guessed one. The two conditions
-# are compared with whitespace folded: the folded `>-` scalar's line breaks
-# and the more-indented `||` continuation lines compare equal, so only a
-# difference in the condition's tokens reddens. The `with:` values are
-# compared as their DECODED scalars — quote-stripped, so a comment or a
+# deeper-indented continuation lines refuse rather than join), and the
+# wrapper forms around those — and refuses every shape outside that set, so
+# a value it cannot read is a red refusal and never a guessed one. The two
+# conditions are compared with whitespace folded: the folded `>-` scalar's
+# line breaks and the more-indented `||` continuation lines compare equal,
+# so only a difference in the condition's tokens reddens. The `with:` values
+# are compared as their DECODED scalars — quote-stripped, so a comment or a
 # spelling difference cannot satisfy the compare — exactly, with no folding:
 # `max-claims` and `expire` are single-line quoted literals in both files,
-# and the value itself is the contract.
+# and the value itself is the contract. The `permissions:` and
+# `concurrency:` blocks compare as exact key sets over only the keys this
+# check models — `issues`; `group`, `cancel-in-progress`, `queue` — and a
+# key outside that set refuses on either surface, never a text-compare of a
+# key only one copy carries. The concurrency `group` keeps its embedded
+# `${{ github.event.issue.number }}` IN the compare — the one deliberate
+# exception to the readers' expression refusal: both copies must spell the
+# group identically, and a one-sided edit to the expression is precisely
+# the drift this check exists to redden.
 readme_install_block_matches_claim_yml() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -4091,9 +4102,9 @@ def quoted_scalar(path, text):
     return text
 
 
-def job_block_of(path, text):
-    """the claim job's lines read out of one manifest, refusing every shape
-    outside the set modelled below."""
+def significant_lines_of(path, text):
+    """a manifest's significant lines as (indent, text, is_comment) — the
+    one list every locator below slices, so no second parser exists."""
     significant = []
     for line in text.splitlines():
         lead = line[: len(line) - len(line.lstrip(" "))]
@@ -4104,8 +4115,14 @@ def job_block_of(path, text):
             continue
         # A full-line comment rides along flagged, not dropped: inside a
         # block-scalar body a `#`-initial line is CONTENT per YAML, and only
-        # the body collector below may decide what one means.
+        # the block readers below may decide what one means.
         significant.append((len(lead), stripped, stripped.startswith("#")))
+    return significant
+
+
+def job_block_of(path, significant):
+    """the claim job's lines sliced from one manifest's significant lines,
+    refusing every shape outside the set modelled below."""
 
     # Exactly one top-level `jobs:` block. A flow mapping (`jobs: {…}`) or any
     # other inline value is refused, never read.
@@ -4299,6 +4316,160 @@ def with_of(path, job_block):
     return values
 
 
+def job_scalar_of(path, job_block, key):
+    """jobs.claim.<key> read as a decoded on-key-line scalar, refusing every
+    shape outside the set modelled below."""
+    keys_at = [i for i, (indent, s, comment) in enumerate(job_block)
+               if indent == 4 and not comment and s.startswith(f"{key}:")]
+    assert len(keys_at) == 1, (
+        f"{path}: expected exactly one job-level `{key}:` at indent 4 in the "
+        f"claim job, found {len(keys_at)}")
+    rest = job_block[keys_at[0]][1][len(key) + 1:].strip()
+    assert rest, (
+        f"{path}: `{key}:` carries no value on its key line; a value on a "
+        f"following line is a shape this reader does not model")
+    if rest[0] in ("'", '"'):
+        value = quoted_scalar(path, rest)
+    else:
+        assert " #" not in rest, (
+            f"{path}: trailing comment in a plain scalar, which this reader "
+            f"does not model: {rest!r}")
+        assert rest[0] not in "&*!?%@`{[|>", (
+            f"{path}: a value opening with the indicator {rest[0]!r} is a "
+            f"shape this reader does not model: {rest!r}")
+        value = rest
+    assert "${{" not in value and "}}" not in value, (
+        f"{path}: an embedded expression in `{key}:` is a shape this reader "
+        f"does not model: {rest!r}")
+    # Per YAML a deeper-indented line after an on-key-line scalar CONTINUES
+    # it, so an extra conjunct indented past the key would silently join a
+    # value this reader never reads. It is refused, never skipped.
+    followers = [(indent, s) for indent, s, comment
+                 in job_block[keys_at[0] + 1:] if not comment]
+    if followers and followers[0][0] > 4:
+        refuse(path, f"a continuation line after an on-key-line `{key}:` "
+                     f"value is a shape this reader does not model: "
+                     f"{followers[0][1]!r}")
+    return value
+
+
+def permissions_of(path, job_block):
+    """jobs.claim.permissions read out of the claim job's lines, refusing
+    every shape outside the set modelled below."""
+    inline = [s for indent, s, comment in job_block
+              if indent == 4 and not comment
+              and s.startswith("permissions:") and s != "permissions:"]
+    assert not inline, (
+        f"{path}: `permissions:` carries an inline value this reader does "
+        f"not model: {inline[0]!r}")
+    perms_at = [i for i, (indent, s, comment) in enumerate(job_block)
+                if indent == 4 and not comment and s == "permissions:"]
+    assert len(perms_at) == 1, (
+        f"{path}: expected exactly one `permissions:` at indent 4 in the "
+        f"claim job, found {len(perms_at)}")
+    start = perms_at[0] + 1
+    stop = next((i for i in range(start, len(job_block))
+                 if job_block[i][0] <= 4 and not job_block[i][2]),
+                len(job_block))
+    perms_block = job_block[start:stop]
+    values = {}
+    for indent, s, comment in perms_block:
+        if comment:
+            continue
+        assert indent == 6, (
+            f"{path}: a line at indent {indent} inside the `permissions:` "
+            f"block is a shape this reader does not model: {s!r}")
+        key, sep, rest = s.partition(":")
+        assert key == "issues" and sep, (
+            f"{path}: a `permissions:` key this check does not compare is a "
+            f"shape this reader does not model: {s!r}")
+        assert key not in values, (
+            f"{path}: duplicate `permissions:` key {key!r}")
+        rest = rest.strip()
+        assert rest, (
+            f"{path}: `issues:` carries no value on its key line; a value "
+            f"on a following line is a shape this reader does not model")
+        if rest[0] in ("'", '"'):
+            value = quoted_scalar(path, rest)
+        else:
+            assert " #" not in rest, (
+                f"{path}: trailing comment in a plain scalar, which this "
+                f"reader does not model: {rest!r}")
+            assert rest[0] not in "&*!?%@`{[|>", (
+                f"{path}: a value opening with the indicator {rest[0]!r} is "
+                f"a shape this reader does not model: {rest!r}")
+            value = rest
+        assert "${{" not in value and "}}" not in value, (
+            f"{path}: an embedded expression in `issues:` is a shape this "
+            f"reader does not model: {rest!r}")
+        values[key] = value
+    assert set(values) == {"issues"}, (
+        f"{path}: expected exactly the `permissions:` key issues, "
+        f"found {sorted(values)}")
+    return values
+
+
+def concurrency_of(path, significant):
+    """the top-level `concurrency:` mapping sliced from one manifest's
+    significant lines, refusing every shape outside the set modelled below.
+    Its `group` value embeds `${{ … }}` in both files and is compared with
+    the expression included: the two surfaces must keep the same spelling,
+    and any one-sided edit to it changes the text."""
+    inline = [s for indent, s, comment in significant
+              if indent == 0 and not comment
+              and s.startswith("concurrency:") and s != "concurrency:"]
+    assert not inline, (
+        f"{path}: `concurrency:` carries an inline value this reader does "
+        f"not model: {inline[0]!r}")
+    concurs_at = [i for i, (indent, s, comment) in enumerate(significant)
+                  if indent == 0 and not comment and s == "concurrency:"]
+    assert len(concurs_at) == 1, (
+        f"{path}: expected exactly one top-level `concurrency:` block "
+        f"mapping, found {len(concurs_at)}")
+    start = concurs_at[0] + 1
+    stop = next((i for i in range(start, len(significant))
+                 if significant[i][0] == 0 and not significant[i][2]),
+                len(significant))
+    concurs_block = significant[start:stop]
+    values = {}
+    for indent, s, comment in concurs_block:
+        if comment:
+            continue
+        assert indent == 2, (
+            f"{path}: a line at indent {indent} inside the `concurrency:` "
+            f"block is a shape this reader does not model: {s!r}")
+        key, sep, rest = s.partition(":")
+        assert key in ("group", "cancel-in-progress", "queue") and sep, (
+            f"{path}: a `concurrency:` key this check does not compare is a "
+            f"shape this reader does not model: {s!r}")
+        assert key not in values, (
+            f"{path}: duplicate `concurrency:` key {key!r}")
+        rest = rest.strip()
+        assert rest, (
+            f"{path}: `{key}:` carries no value on its key line; a value on "
+            f"a following line is a shape this reader does not model")
+        if rest[0] in ("'", '"'):
+            value = quoted_scalar(path, rest)
+        else:
+            assert " #" not in rest, (
+                f"{path}: trailing comment in a plain scalar, which this "
+                f"reader does not model: {rest!r}")
+            assert rest[0] not in "&*!?%@`{[|>", (
+                f"{path}: a value opening with the indicator {rest[0]!r} is "
+                f"a shape this reader does not model: {rest!r}")
+            value = rest
+        # No embedded-expression refusal here, the readers' one deliberate
+        # exception (#130): `group` embeds `${{ github.event.issue.number }}`
+        # in both files, the two copies must keep the same spelling of it,
+        # and a one-sided edit changes the decoded text — so the expression
+        # compares like any other part of the value.
+        values[key] = value
+    assert set(values) == {"group", "cancel-in-progress", "queue"}, (
+        f"{path}: expected exactly the `concurrency:` keys group, "
+        f"cancel-in-progress and queue, found {sorted(values)}")
+    return values
+
+
 # The Install block's fence is the one yaml fence whose content carries a
 # top-level `jobs:` key line: the README's other yaml fence quotes a `with:`
 # block, and must not match. Zero or two candidates is a README this case
@@ -4315,8 +4486,10 @@ def fold(text):
     return " ".join(text.split())
 
 
-readme_job = job_block_of("README.md install block", installs[0])
-workflow_job = job_block_of(".github/workflows/claim.yml", workflow)
+readme_lines = significant_lines_of("README.md install block", installs[0])
+workflow_lines = significant_lines_of(".github/workflows/claim.yml", workflow)
+readme_job = job_block_of("README.md install block", readme_lines)
+workflow_job = job_block_of(".github/workflows/claim.yml", workflow_lines)
 
 readme_condition = fold(condition_of("README.md install block", readme_job))
 workflow_condition = fold(condition_of(".github/workflows/claim.yml", workflow_job))
@@ -4331,6 +4504,31 @@ assert readme_with == workflow_with, (
     "the README install block's `with:` values drifted from claim.yml's:"
     f"\n  README.md: {readme_with!r}"
     f"\n  claim.yml: {workflow_with!r}")
+
+readme_scalars = {key: job_scalar_of("README.md install block", readme_job, key)
+                  for key in ("runs-on", "timeout-minutes")}
+workflow_scalars = {
+    key: job_scalar_of(".github/workflows/claim.yml", workflow_job, key)
+    for key in ("runs-on", "timeout-minutes")}
+assert readme_scalars == workflow_scalars, (
+    "the README install block's job `runs-on`/`timeout-minutes` values "
+    "drifted from claim.yml's:"
+    f"\n  README.md: {readme_scalars!r}"
+    f"\n  claim.yml: {workflow_scalars!r}")
+
+readme_permissions = permissions_of("README.md install block", readme_job)
+workflow_permissions = permissions_of(".github/workflows/claim.yml", workflow_job)
+assert readme_permissions == workflow_permissions, (
+    "the README install block's `permissions:` block drifted from claim.yml's:"
+    f"\n  README.md: {readme_permissions!r}"
+    f"\n  claim.yml: {workflow_permissions!r}")
+
+readme_concurrency = concurrency_of("README.md install block", readme_lines)
+workflow_concurrency = concurrency_of(".github/workflows/claim.yml", workflow_lines)
+assert readme_concurrency == workflow_concurrency, (
+    "the README install block's `concurrency:` block drifted from claim.yml's:"
+    f"\n  README.md: {readme_concurrency!r}"
+    f"\n  claim.yml: {workflow_concurrency!r}")
 PY
 }
 
