@@ -155,7 +155,8 @@ def workflow_name(workflow, text):
     lines = text.splitlines()
     tops = [index for index, line in enumerate(lines)
             if not skippable(line) and indent_of(line) == 0
-            and MAPPING.match(line) and MAPPING.match(line)["key"] == "name"]
+            and (header := MAPPING.match(line)) is not None
+            and header["key"] == "name"]
     if len(tops) == 0:
         refuse_name(
             workflow,
@@ -167,7 +168,12 @@ def workflow_name(workflow, text):
             f"reader can read, and which one names the workflow cannot be "
             f"established")
     at = tops[0]
-    value = (MAPPING.match(lines[at])["value"] or "").strip()
+    # Captured once: a second match call on the same line reads as a fresh
+    # Optional to the type checker even though the line was already matched
+    # in the scan above, and a header this reader somehow cannot match has
+    # no value to extract, which the valueless-name refusal below states.
+    header = MAPPING.match(lines[at])
+    value = ((header["value"] if header is not None else "") or "").strip()
     if not value:
         refuse_name(workflow, f"the top-level `name:` at line {at + 1} carries no value")
     if NOT_PLAIN.match(value[0]):
@@ -258,8 +264,6 @@ def outgoing_commits(root, base):
 
 
 def check(root):
-    head = git(root, "rev-parse", "--verify", "HEAD^{commit}",
-               what="resolve the checked-out head").strip()
     fetch_base(root)
     base = git(root, "rev-parse", "--verify",
                f"refs/remotes/origin/{BASE_BRANCH}^{{commit}}",

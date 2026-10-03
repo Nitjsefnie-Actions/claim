@@ -170,14 +170,20 @@ def workflow_steps(text, workflow):
     # refusals, because the alternative is a smaller set with nothing said.
     tops = [index for index, line in enumerate(lines)
             if not skippable(line) and indent_of(line) == 0
-            and MAPPING.match(line) and MAPPING.match(line)["key"] == "jobs"]
+            and (header := MAPPING.match(line)) is not None
+            and header["key"] == "jobs"]
     if len(tops) != 1:
         raise WorkflowError(
             f"{workflow} has {len(tops)} top-level `jobs:` mappings; this "
             f"reader models exactly one, so which jobs it defines cannot be "
             f"established")
     top = tops[0]
-    if MAPPING.match(lines[top])["value"] is not None:
+    # Captured once: a second match call on the same line reads as a fresh
+    # Optional to the type checker even though the line was already matched
+    # in the scan above, and the flow-mapping refusal is where an unreadable
+    # header belongs anyway.
+    header = MAPPING.match(lines[top])
+    if header is None or header["value"] is not None:
         raise WorkflowError(
             f"{workflow} writes `jobs:` as a flow mapping; this reader models "
             f"only the block form")

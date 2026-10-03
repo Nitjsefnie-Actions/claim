@@ -71,6 +71,7 @@ reproduced inside one. The remaining limits, stated rather than assumed:
 from pathlib import Path
 import re
 import sys
+from typing import NoReturn
 
 FILE = ".github/workflows/codeql.yml"
 
@@ -91,7 +92,12 @@ class Refused(Exception):
     """The file carries a shape this pin does not model."""
 
 
-def refuse(line, reason):
+def refuse(line, reason) -> NoReturn:
+    # Saying the raise is unconditional is what lets the guards that end in
+    # a refuse() call narrow the optional they just refused on: the type
+    # checker treats a plain call as able to return, and reads every
+    # `re.fullmatch` result past its own `not match:` guard as still
+    # optional.
     raise Refused(f"{reason}: {line!r}")
 
 
