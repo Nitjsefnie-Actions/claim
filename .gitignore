@@ -27,6 +27,9 @@ tests/*
 !.github/ISSUE_TEMPLATE/
 .github/ISSUE_TEMPLATE/*
 !.github/ISSUE_TEMPLATE/issue.md
+!.github/scripts/
+.github/scripts/*
+!.github/scripts/diff_coverage.py
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/actionlint.yml
