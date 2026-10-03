@@ -5567,6 +5567,8 @@ if found != expected:
           f"uploading leg per name", file=sys.stderr)
     raise SystemExit(1)
 PYWIRE
+}
+
 # Issue 141: the suite-legs pin lives in tests/suite_legs.py, in the
 # codeql_matrix shape -- a guard that reads the tests.yml matrix and every
 # step's `if:`, the README coverage table, and fails naming the row and the
@@ -5752,6 +5754,32 @@ REFUSALS = [
     ("a duplicate step name, the comparison's key",
      lambda w, m: dup_pycodestyle(w, m),
      "expected at most one step named `pycodestyle`"),
+    ("a diff-coverage needs naming another job",
+     lambda w, m: planted(w, m, "wf", "    needs: suites\n",
+                          "    needs: python-versions\n"),
+     "must name `suites`"),
+    ("a drifted diff-coverage job if",
+     lambda w, m: planted(
+         w, m, "wf",
+         "    if: ${{ !cancelled() && needs.suites.result == 'success' && "
+         "github.event_name == 'pull_request' }}\n",
+         "    if: ${{ !cancelled() && needs.suites.result == 'success' }}\n"),
+     "is not the landed spelling this pin reads"),
+    ("a diff-coverage step carrying an if",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Measure the coverage of this change\n",
+                          "      - name: Measure the coverage of this change\n"
+                          "        if: github.event_name == 'pull_request'\n"),
+     "a diff-coverage step carrying an `if:`"),
+    ("a reordered diff-coverage step list",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Install coverage tooling\n"
+                          "        run: |\n"
+                          "          python3 -m venv \"$RUNNER_TEMP/coverage-venv\"\n",
+                          "      - name: Install coverage tooling later\n"
+                          "        run: |\n"
+                          "          python3 -m venv \"$RUNNER_TEMP/coverage-venv\"\n"),
+     "at its landed position"),
     ("the chain id step chained on itself",
      lambda w, m: planted(w, m, "wf", CHECKS_IF,
                           CHECKS_IF.replace(
@@ -6010,6 +6038,18 @@ REDS = [
                           "        if: matrix.os == 'ubuntu-latest'\n"
                           "        run: echo x\n"),
      "with an `if:` that no README row claims"),
+    ("a coverage XML step removed",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Upload the coverage XML\n"
+                          "        # actions/upload-artifact v7.0.1\n"
+                          "        if: matrix.os == 'ubuntu-latest'\n"
+                          "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
+                          "        with:\n"
+                          "          name: coverage-xml\n"
+                          "          path: coverage.xml\n"
+                          "          if-no-files-found: error\n",
+                          ""),
+     "maps to workflow steps"),
 ]
 
 # The intersection control: a multi-step row derives the INTERSECTION of its

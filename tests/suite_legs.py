@@ -15,19 +15,20 @@ promise), so no YAML or Markdown library stands behind it. The lines read, and
 the only lines read:
 
   - from tests.yml: the `jobs:` anchor; exactly the `shellcheck:`,
-    `suites:` and `python-versions:` job keys under it; inside `suites:` the
-    `strategy:` / `matrix:` / `os:` / `include:` / `steps:` anchor chain at
-    exactly their indents, in that order, each exactly once; the matrix
-    `os:` one-line flow list and the `include:` entries; every step under
-    `steps:` of the `suites` and `python-versions` jobs, read for its
-    `name:` / `if:` / `id:` at the step key indent -- step names are unique
-    per job (the comparison keys on them, so a duplicate would silently keep
-    only the last one's legs) and only the suites job's chain anchor may
-    carry an `id:` (a dash line may carry `uses:` or `name:`; a dash-carried
-    value is read with any `# v7.0.1`-style SHA comment truncated, because
-    the value's identity is the SHA, and the python-versions dashes are
-    additionally prefix-checked, and that job carries no id at all); and the
-    `runs-on:` line that consumes `matrix.os`;
+    `suites:`, `python-versions:` and `diff-coverage:` job keys under it;
+    inside `suites:` the `strategy:` / `matrix:` / `os:` / `include:` /
+    `steps:` anchor chain at exactly their indents, in that order, each
+    exactly once; the matrix `os:` one-line flow list and the `include:`
+    entries; every step under `steps:` of the `suites` and
+    `python-versions` jobs, read for its `name:` / `if:` / `id:` at the
+    step key indent -- step names are unique per job (the comparison keys
+    on them, so a duplicate would silently keep only the last one's legs)
+    and only the suites job's chain anchor may carry an `id:` (a dash line
+    may carry `uses:` or `name:`; a dash-carried value is read with any
+    `# v7.0.1`-style SHA comment truncated, because the value's identity is
+    the SHA, and the python-versions dashes are additionally prefix-checked,
+    and that job carries no id at all); and the `runs-on:` line that
+    consumes `matrix.os`;
   - from README.md: the one `| Check |` table header, its `---` separator,
     and the run of `|`-led data rows that follows, and nothing else.
 
@@ -96,6 +97,18 @@ Legs, and how they are derived:
     README's `3.11-3.14 (ubuntu)` column means: a row claims that column
     when one of its steps is that step.
 
+The `diff-coverage:` job is pull-request-only and not a README-table leg --
+the table documents the per-leg CI surface, and this job runs on no leg --
+so no row claims it and the sweep does not walk its steps. Its shape is
+pinned LITERALLY instead of by derivation, because there is no README side
+to derive from: `needs: suites`, the landed job-level `if:` spelling (the
+normalised `${{ !cancelled() && needs.suites.result == 'success' &&
+github.event_name == 'pull_request' }}`), and the exact six-step list with
+no conditions -- `needs` and the job `if` are pinned because the job's
+reach is their semantics, and a step condition here would be a second,
+unpinned gate beside the job-level one. A change to any of the literals is
+a deliberate edit to this pin.
+
 Comparison: every table row is mapped by the pinned ROW_STEPS table to the
 workflow step or steps that implement it; a multi-step row derives the
 INTERSECTION of its steps' leg sets, because the row promises the whole
@@ -112,14 +125,16 @@ merely containing an exempt name is not exempt; the two checkout steps carry
 no `if:` and sit outside the sweep.
 
 Shapes this pin refuses on a fine file, stated rather than assumed (the
-false-positive audit): a tab-led line anywhere in the workflow; a fourth job
+false-positive audit): a tab-led line anywhere in the workflow; a fifth job
 key under `jobs:`; a quoted or multi-line `os:` flow list, or an `os` value
 with no README column; an `include:` entry keyed other than `os:`; a
 near-miss `if:` such as `matrix.os == 'windows-latest'` or a double-quoted
 operand; an empty-valued `if:`; a `with:` block under a step is unread, not
 admitted. In the README: a missing, duplicated or renamed header; a
 malformed separator; a ragged row; a cell outside the yes/no grammar; an
-unknown row label; a duplicate row label.
+unknown row label; a duplicate row label. In the diff-coverage job: a
+`needs:` naming another job, a drifted job-level `if:` spelling, a step
+carrying an `if:` of its own, or a reordered/renamed/extra step.
 """
 
 from pathlib import Path
@@ -158,6 +173,9 @@ NOT_WINDOWS_IF = "matrix.os != 'windows-latest'"
 UBUNTU_IF = "matrix.os == 'ubuntu-latest'"
 CHAIN_IF = "${{ !cancelled() && steps.install_checks.outcome == 'success' }}"
 CHAIN_ID = "install_checks"
+DIFF_COVERAGE_IF = (
+    "${{ !cancelled() && needs.suites.result == 'success' && "
+    "github.event_name == 'pull_request' }}")
 
 # README Check label -> the workflow steps that implement the check. A row
 # the README renames refuses on the read side; a step renamed in the
@@ -168,7 +186,8 @@ ROW_STEPS = {
     "pycodestyle, pylint and pyright": ("pycodestyle", "pylint", "pyright"),
     "Coverage measurement and gate": (
         "Install coverage tooling", "Record the coverage summary",
-        "Coverage gate"),
+        "Coverage gate", "Write the coverage XML",
+        "Upload the coverage XML"),
     "Merge-conflict marker check": (
         "Check no tracked file carries a merge-conflict marker",),
     "Compile the claim script": ("Compile the claim script",),
@@ -527,6 +546,61 @@ def python_versions_steps(job):
     return suite["name"]
 
 
+def diff_coverage_steps(job):
+    """The diff-coverage job, pinned to its landed shape.
+
+    The job is pull-request-only and not a README-table leg -- the table
+    documents the per-leg CI surface, and this job runs on no leg -- so
+    there is no README side to derive from and no row claims it: the shape
+    is pinned LITERALLY instead, and a change to any of the literals is a
+    deliberate edit to this pin. `needs: suites` and the job-level `if:`
+    spelling are pinned because the job's reach is their semantics (run
+    only on pull requests, only after the suites job succeeded); the steps
+    are pinned to the landed list with no conditions, because a step
+    condition here would be a second, unpinned gate beside the job-level
+    one.
+    """
+    needs = exactly_one(job, JOB_KEY, r"needs: (\S.*)",
+                        "`needs:` in the diff-coverage job")
+    if plain(needs[2], needs[2].strip()[len("needs:"):],
+             "needs") != "suites":
+        refuse(needs[2], "`needs:` in the diff-coverage job must name "
+                         "`suites`")
+    condition = exactly_one(job, JOB_KEY, r"if: (\S.*)",
+                            "job-level `if:` in the diff-coverage job")
+    if plain(condition[2], condition[2].strip()[len("if:"):],
+             "if") != DIFF_COVERAGE_IF:
+        refuse(condition[2], "the diff-coverage job's `if:` is not the "
+                             "landed spelling this pin reads")
+    steps = read_steps(job, "diff-coverage")
+    if len(steps) != 6:
+        refuse(f"[{len(steps)} steps]",
+               "expected exactly six steps in the diff-coverage job")
+    checkout = steps[0]
+    if not (checkout["uses"] or "").startswith("actions/checkout@"):
+        refuse("[step dash]",
+               "expected a dash-`uses:` actions/checkout@ step as the "
+               "diff-coverage job's first step")
+    if checkout["name"] is not None or checkout["if"] is not None:
+        refuse("[step]", "the diff-coverage checkout carries a name or "
+                         "condition this pin does not model")
+    for step, name in zip(steps[1:], (
+            "Download the coverage XML",
+            "Install coverage tooling",
+            "Measure the coverage of this change",
+            "Package the comment for the trusted commenter",
+            "Upload the comment for the trusted commenter")):
+        if step["name"] != name:
+            refuse("[named step]",
+                   f"expected the diff-coverage step `{name}` at its "
+                   "landed position")
+        if step["if"] is not None:
+            refuse(step["if"], "a diff-coverage step carrying an `if:` -- "
+                               "the job-level condition gates the whole "
+                               "job, so a step condition is a shape this "
+                               "pin does not model")
+
+
 def read_table(text):
     """The README coverage table as {row label: {column key: bool}}.
 
@@ -598,13 +672,15 @@ def covers(workflow_text, readme_text):
     tail = between(lines, jobs)
     spans = {anchor[2].strip()[:-1]: job_span(tail, anchor)
              for anchor in at_indent(tail, JOB, r"\S.*:")}
-    if set(spans) != {"shellcheck", "suites", "python-versions"}:
+    if set(spans) != {"shellcheck", "suites", "python-versions",
+                      "diff-coverage"}:
         refuse(f"[{sorted(spans)}]",
-               "expected exactly the `shellcheck`, `suites` and "
-               "`python-versions:` jobs under `jobs:`")
+               "expected exactly the `shellcheck`, `suites`, "
+               "`python-versions:` and `diff-coverage:` jobs under `jobs:`")
 
     steps, derived = suites_legs(spans["suites"])
     versions_suite_step = python_versions_steps(spans["python-versions"])
+    diff_coverage_steps(spans["diff-coverage"])
 
     table = read_table(readme_text)
     missing_rows = sorted(set(ROW_STEPS) - set(table))
