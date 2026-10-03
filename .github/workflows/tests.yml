@@ -2,11 +2,12 @@ name: tests
 
 # Linux-only checks cannot establish macOS portability. The two POSIX legs
 # run the same real-subprocess behavioral suite, including the bash API
-# stub, plus the ruff lint, and coverage is measured on the ubuntu cell
-# only. The windows leg runs the workflow's own bash steps -- the
-# merge-conflict marker check, the python3 PATH shim and the compile check
-# -- while the behavioral suite stays scoped to the POSIX legs (see that
-# step for why). The python-versions job runs the full suite on Python
+# stub, plus the ruff lint and the pycodestyle/pylint/pyright checks, and
+# coverage is measured on the ubuntu cell only. The windows leg runs the
+# workflow's own bash steps -- the merge-conflict marker check, the
+# python3 PATH shim and the compile check -- while the behavioral suite
+# and the venv-backed checks stay scoped to the POSIX legs (see those
+# steps for why). The python-versions job runs the full suite on Python
 # 3.11-3.14 on ubuntu.
 #
 # The suite stays install-free by design (#87): everything it runs ships with
@@ -245,15 +246,24 @@ jobs:
       - name: Install the type and lint toolchain
         id: install_checks
         # Why the venv: both hosted images mark their system python externally
-        # managed (PEP 668), so a plain pip install fails on both legs, and
-        # this file has no setup-python step by design (preinstalled python3
-        # only).
+        # managed (PEP 668), so a plain pip install fails on all legs. The
+        # suites job keeps the images' preinstalled python3; only the
+        # python-versions job runs setup-python, to pin the four explicit
+        # versions it covers, and setup-python installs an interpreter, never
+        # packages, so the suite stays install-free (#87).
         # Why the awk lift: the manifest's PyYAML pin carries one hash, a
         # cp313 manylinux x86_64 wheel, so installing the whole file with
         # --require-hashes resolves nothing on macOS. The pylint block runs
         # to EOF of the manifest, so the plain `{f=1}` lift takes the three
         # tools and the nine dependencies they resolve, and the manifest
         # stays the single source for the versions and hashes.
+        # POSIX legs only: the venv's interpreter sits at venv/bin/python on
+        # POSIX and venv/Scripts/python.exe on Windows, and this step is
+        # written for the POSIX layout; extending it to Windows is future
+        # work. The three checks below chain on
+        # steps.install_checks.outcome == 'success', so each self-skips
+        # wherever this install is skipped, including the windows leg.
+        if: matrix.os != 'windows-latest'
         run: |
           python3 -m venv "$RUNNER_TEMP/checks-venv"
           awk '/^pylint==/{f=1} f' .github/workflows/requirements.txt > "$RUNNER_TEMP/checks.txt"
