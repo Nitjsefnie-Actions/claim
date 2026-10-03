@@ -5885,6 +5885,35 @@ def consistent_macos_drop(wf, md):
         md = md.replace(old, new)
     return wf, md
 
+def consistent_ubuntu_drop(wf, md):
+    # The mirror of consistent_macos_drop, and the only shipped fixture that
+    # separates the live derivation from a silent half-revert of it: on
+    # every other fixture a UBUNTU_IF pinned back to the constant {"ubuntu"}
+    # reads identical to the fix, because ubuntu is in the landed matrix.
+    # Dropping ubuntu flips the coverage steps to no legs under the fix but
+    # leaves them claiming {ubuntu} under the half-revert, and the coverage
+    # row -- the separating one, since it maps only UBUNTU_IF steps -- reds
+    # naming exactly that row.
+    wf, _ = planted(wf, md, "wf", "        os: [ubuntu-latest, macos-latest]",
+                    "        os: [macos-latest]")
+    for old, new in (
+        ("| Behavioral suite | yes | yes | no — stub limitation, below | yes |",
+         "| Behavioral suite | no | yes | no — stub limitation, below | yes |"),
+        ("| ruff lint of claim.py | yes | yes | no | no |",
+         "| ruff lint of claim.py | no | yes | no | no |"),
+        ("| pycodestyle, pylint and pyright | yes | yes | no | no |",
+         "| pycodestyle, pylint and pyright | no | yes | no | no |"),
+        ("| Coverage measurement and gate | yes | no | no | no |",
+         "| Coverage measurement and gate | no | no | no | no |"),
+        ("| Merge-conflict marker check | yes | yes | yes | no |",
+         "| Merge-conflict marker check | no | yes | yes | no |"),
+        ("| Compile the claim script | yes | yes | yes | no |",
+         "| Compile the claim script | no | yes | yes | no |"),
+    ):
+        assert md.count(old) == 1, f"plant anchor not unique: {old!r}"
+        md = md.replace(old, new)
+    return wf, md
+
 REDS = [
     ("the lint step de-scoped to ubuntu",
      lambda w, m: planted(w, m, "wf", LINT_IF,
@@ -5960,6 +5989,8 @@ GREENS = [
                           "      - name: Record the coverage summary\n")),
     ("a matrix macos drop with a consistent README update",
      lambda w, m: consistent_macos_drop(w, m)),
+    ("a matrix ubuntu drop with a consistent README update",
+     lambda w, m: consistent_ubuntu_drop(w, m)),
 ]
 
 for name, plant in GREENS:
