@@ -21,6 +21,13 @@ statements, and counting them would make the percentage depend on formatting.
 For any changed Python source the XML does measure, every added executable
 statement must have an XML record; an absent record is an invalid report,
 never a smaller denominator.
+
+The diff body is decoded with replacement characters, never refused: the
+diff is git-generated, a byte git renders is not garbage this reporter may
+refuse, and only line numbers reach the report, so unreadable content cannot
+move the number. A path whose bytes are not UTF-8 is still a one-line
+refusal -- a path this reporter cannot name is a report it cannot write
+honestly.
 """
 import argparse
 import re
@@ -331,13 +338,18 @@ def main():
 
     diff_bytes = (sys.stdin.buffer.read() if args.diff == '-'
                   else Path(args.diff).read_bytes())
-    try:
-        diff_text = diff_bytes.decode('utf-8')
-    except UnicodeDecodeError as error:
-        # Its own guard with its own sentence: this input is the DIFF, and
-        # "coverage report invalid" would name the wrong artifact.
-        print(f'diff is not valid UTF-8: {error}', file=sys.stderr)
-        return 1
+    # Replacement, not refusal: the diff is git-generated, and the workflow
+    # diffs with --text, so a tracked file's bytes are rendered here
+    # verbatim -- a byte git renders is not garbage this reporter may
+    # refuse, and one unreadable line in an unrelated file must not fail a
+    # legitimate tree's report (the branch-debt fixture round shipped a
+    # fixture with raw non-UTF-8 bytes and the live run red: 37100400229).
+    # Nothing but line numbers crosses into the report, and counting is
+    # byte-independent, so replacement characters in unreadable content
+    # cannot move the number. The quoted-path decode below stays strict and
+    # guarded: a path this reporter cannot name is a report it cannot write
+    # honestly.
+    diff_text = diff_bytes.decode('utf-8', errors='replace')
     try:
         # Inside the guard with its sibling: a git-quoted path whose bytes
         # are not UTF-8 raises UnicodeDecodeError, a ValueError subclass,

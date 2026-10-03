@@ -5245,14 +5245,27 @@ diffcoverage_quoted_path_invalid_utf8() {
     minimal.xml quoted-invalid.diff
 }
 
-diffcoverage_whole_diff_invalid_utf8() {
-  # The whole-diff decode has its own guard and its own sentence: an input
-  # that is not text at all is refused as the DIFF, never mislabelled as an
-  # invalid report.
+diffcoverage_whole_diff_unreadable_bytes() {
+  # The whole-diff decode is replacement, never refusal: the diff is
+  # git-generated and the workflow diffs with --text, so a tracked file's
+  # bytes are rendered here verbatim and one unreadable line in an
+  # unrelated file must not fail a legitimate tree's report. The fixture
+  # carries raw non-UTF-8 bytes in a NON-measured file's added line beside
+  # a clean claim.py hunk; the report must be byte-for-byte the clean
+  # control's body, with the measured row unchanged and correct.
   diffcoverage_skip_unless_coverage || return 0
-  diffcoverage_refuses_with \
-    "diff is not valid UTF-8: 'utf-8' codec can't decode byte 0xff in position 110: invalid start byte" \
-    minimal.xml wholediff-utf8.diff
+  cat > "$GH_CASE/expected" <<'EOF'
+### Coverage of this change
+
+**100.0%** of added lines covered (1/1).
+
+| File | Covered | Added | Missed lines |
+| --- | ---: | ---: | --- |
+| `claim.py` | 1 | 1 | — |
+
+Every added line was reached.
+EOF
+  diffcoverage_renders quoted.xml wholediff-utf8.diff
 }
 
 diffcoverage_binary_diff_refused() {
@@ -5489,7 +5502,7 @@ action_contract pr_gate_contract readme_quoted_replies
   # module is absent (the ubuntu cell installs it before the suite, so the
   # controls run there every time).
   diffcoverage_hunk_walk_missed_ranges diffcoverage_quoted_path_decode
-  diffcoverage_quoted_path_invalid_utf8 diffcoverage_whole_diff_invalid_utf8
+  diffcoverage_quoted_path_invalid_utf8 diffcoverage_whole_diff_unreadable_bytes
   diffcoverage_binary_diff_refused diffcoverage_absent_statement_records
   diffcoverage_duplicate_class_max_hits diffcoverage_no_measured_lines
   diffcoverage_unmeasured_changed_source diffcoverage_artifact_names_one_leg)
