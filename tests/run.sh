@@ -3331,7 +3331,10 @@ if not checkout[0] < at < lint[0]:
 # `paths-ignore:` key -- or no path filter at all -- is fine on push, and a
 # `paths:` key is refused -- as is a quoted `paths` key, which this
 # line-level reader refuses rather than decodes, because a filter it cannot
-# decode cannot be told from an allow-list.
+# decode cannot be told from an allow-list. Spacing a key leaves before its
+# colon (`paths :`, `"paths" :`) is matched too -- YAML honours it -- and
+# the push arm's verdict reads the canonical key (`paths` / `paths-ignore`),
+# quoting and spacing normalised away.
 sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
 from gate_base_freshness import REQUIRED_JOBS
 
@@ -3370,22 +3373,22 @@ for workflow in carrying:
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#"):
                     continue
-                match = re.match(r"paths(-ignore)?:", stripped)
+                match = re.match(r"(paths(-ignore)?)\s*:", stripped)
                 if match:
-                    filters.add(match.group(0))
-                elif re.match(r"['\"]paths(-ignore)?['\"]:", stripped):
+                    filters.add(match.group(1))
+                elif re.match(r"['\"]paths(-ignore)?['\"]\s*:", stripped):
                     fail(f"{workflow.name}'s push: trigger spells its path "
                          f"filter as a quoted key, which this line-level "
                          f"check refuses rather than parses; spell it "
                          f"`paths:` or `paths-ignore:`")
-            if "paths:" in filters:
+            if "paths" in filters:
                 fail(f"{workflow.name}'s push: trigger must not carry a "
                      f"`paths:` allow-list: it stops the gate running on "
                      f"main after any unrelated change, and no pull request "
                      f"ever blocks to say so; deny-list with `paths-ignore:` "
                      f"instead")
-        elif any(re.match(r"\s*paths(-ignore)?:", line)
-                 or re.match(r"\s*['\"]paths(-ignore)?['\"]:", line)
+        elif any(re.match(r"\s*paths(-ignore)?\s*:", line)
+                 or re.match(r"\s*['\"]paths(-ignore)?['\"]\s*:", line)
                  for line in body[starts[0]:stop]):
             fail(f"{workflow.name}'s {trigger} trigger must carry no paths "
                  f"filter: a workflow with a required job that does not run "
