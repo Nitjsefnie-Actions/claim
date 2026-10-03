@@ -3382,6 +3382,7 @@ for workflow in carrying:
                      f"ever blocks to say so; deny-list with `paths-ignore:` "
                      f"instead")
         elif any(re.match(r"\s*paths(-ignore)?:", line)
+                 or re.match(r"\s*['\"]paths(-ignore)?['\"]:", line)
                  for line in body[starts[0]:stop]):
             fail(f"{workflow.name}'s {trigger} trigger must carry no paths "
                  f"filter: a workflow with a required job that does not run "
