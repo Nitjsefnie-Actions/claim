@@ -142,6 +142,7 @@ this repository's CI runs, per leg and per step:
 | --- | --- | --- | --- | --- |
 | Behavioral suite | yes | yes | no — stub limitation, below | yes |
 | ruff lint of claim.py | yes | yes | no | no |
+| pycodestyle, pylint and pyright | yes | yes | no | no |
 | Coverage measurement and gate | yes | no | no | no |
 | Merge-conflict marker check | yes | yes | yes | no |
 | Compile the claim script | yes | yes | yes | no |
