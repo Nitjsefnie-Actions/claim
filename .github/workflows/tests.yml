@@ -142,7 +142,7 @@ jobs:
           persist-credentials: false
 
       - name: Check no tracked file carries a merge-conflict marker
-        # a3363ac landed on main with ` and the `>>>>>>> 0d9bffc`
+        # a3363ac landed on main with `<<<<<<< HEAD` and the `>>>>>>> 0d9bffc`
         # line still in README.md, and three review rounds and every gate in
         # this repository read straight past them: a conflict marker is text
         # that looks like prose in a Markdown file, so only a mechanical check
