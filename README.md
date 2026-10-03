@@ -57,6 +57,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       issues: write
+      pull-requests: write
     steps:
       - uses: Nitjsefnie-Actions/claim@cf2aaae56eb3bb6c655b8c4bc35906dafc77a63e # v2.0.2
         with:
@@ -77,8 +78,18 @@ claim after 7 days. Omit the block and the action's defaults apply:
 an old comment does not trigger a claim. The job runs on Ubuntu with a
 five-minute timeout.
 
-The job's `permissions:` block grants the token only `issues: write`, which
-is needed to read issues, change assignees, and post replies. On a one-job
+The job's `permissions:` block grants the token `issues: write` and
+`pull-requests: write`. The `issues: write` grant is needed to read issues,
+change assignees, and post replies. The `pull-requests: write` grant exists
+for the pull-request decline: a command on a pull request must read the pull
+request and post its decline reply on the PR conversation, and GitHub refuses
+that to a token granted only `issues: write` with `Resource not accessible by
+integration` (HTTP 403) before any reply is posted. GitHub's REST
+documentation describes both calls as within the Issues permission — issue
+reads as Issues read, issue comments as Issues write or Pull requests write —
+so this grant exists because the observed refusal demands it, not because the
+docs ask for it. The decline keeps failing the run loudly; the grant is what
+delivers the action's own pull-request decline, not new behavior. On a one-job
 workflow, job level is the narrower equivalent of the same scope at workflow
 level: it applies only while the job runs. Workflow-level write scopes are
 what least-privilege audits flag — zizmor's pedantic persona reports the
@@ -176,7 +187,7 @@ commenter's identity and the issue and body from that comment event.
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `token` | `${{ github.token }}` | GitHub token with `issues: write`. |
+| `token` | `${{ github.token }}` | GitHub token with `issues: write` and `pull-requests: write`. |
 | `repository` | `${{ github.repository }}` | Repository in `owner/name` format. |
 | `issue` | `${{ github.event.issue.number }}` | Issue number. |
 | `actor` | `${{ github.event.comment.user.login }}` | Commenter's login. |
@@ -375,7 +386,9 @@ You posted a command and nothing happened. Work down this list.
   the log names where. The log line
   `gh: Resource not accessible by integration (HTTP 403)` is the
   token-permission signature: check the job's `permissions:` block grants
-  `issues: write` (the default `github.token` is sufficient).
+  `issues: write` and `pull-requests: write` (the default `github.token` is
+  sufficient). A pull-request command under an `issues: write`-only install
+  dies with exactly this signature before any reply is posted.
 - **The run succeeded and posted no reply.** By design, in three cases: the
   comment never started a line with a command word (a prose mention), the
   commenter is the token's own account, or the commenter's account type is

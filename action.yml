@@ -3,13 +3,14 @@ description: Let contributors claim an issue or give up their own assignment usi
 
 # GitHub has no built-in assignment slash command; this lets contributors take
 # an issue without repository write access or a maintainer using the assignee UI.
-# Callers own the event trigger and issues: write permission. This action only
-# talks to the API: no checkout or contents: read permission is needed.
+# Callers own the event trigger and the issues: write and pull-requests: write
+# permissions. This action only talks to the API: no checkout or
+# contents: read permission is needed.
 # Serialize per issue with cancel-in-progress: false so competing claimants both
 # receive an answer instead of one run being cancelled in the middle of a claim.
 inputs:
   token:
-    description: GitHub token with issues write permission.
+    description: GitHub token with issues write and pull-requests write permission.
     required: false
     default: ${{ github.token }}
   repository:
