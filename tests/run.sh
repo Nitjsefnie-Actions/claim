@@ -5709,6 +5709,15 @@ REFUSALS = [
     ("the chain id step removed",
      lambda w, m: planted(w, m, "wf", "        id: install_checks\n", ""),
      "expected exactly one step carrying `id: install_checks`"),
+    ("a second step carrying the chain id",
+     lambda w, m: planted(w, m, "wf",
+                          '          "$RUNNER_TEMP/checks-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/checks.txt"\n',
+                          '          "$RUNNER_TEMP/checks-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/checks.txt"\n'
+                          "\n"
+                          "      - name: Install the checks toolchain twice\n"
+                          "        id: install_checks\n"
+                          "        run: echo x\n"),
+     "[2 matching steps]"),
     ("the chain id step chained on itself",
      lambda w, m: planted(w, m, "wf", CHECKS_IF,
                           CHECKS_IF.replace(
@@ -5777,6 +5786,16 @@ REFUSALS = [
                           "| Put a python3 on PATH | no | no | yes | no |",
                           "| Put a python3 on PATH | no | no | maybe | no |"),
      "outside the yes/no grammar"),
+    ("a no-prefixed word that is not a no",
+     lambda w, m: planted(w, m, "md",
+                          "| Put a python3 on PATH | no | no | yes | no |",
+                          "| Put a python3 on PATH | no | no | nope | no |"),
+     "outside the yes/no grammar"),
+    ("a yes-prefixed word that is not a yes",
+     lambda w, m: planted(w, m, "md",
+                          "| Put a python3 on PATH | no | no | yes | no |",
+                          "| Put a python3 on PATH | no | no | yessir | no |"),
+     "outside the yes/no grammar"),
     ("a README row the mapping does not model",
      lambda w, m: planted(w, m, "md",
                           "| Put a python3 on PATH | no | no | yes | no |",
@@ -5842,6 +5861,30 @@ CHECKS_IF = ("        if: matrix.os != 'windows-latest'\n"
              "        run: |\n"
              "          python3 -m venv \"$RUNNER_TEMP/checks-venv\"")
 
+def consistent_macos_drop(wf, md):
+    # The derivation control's two halves must move together: the matrix
+    # loses macos and every README macos cell is updated to match, so a
+    # green verdict here proves the scoped spellings track the live matrix.
+    # The README flips accumulate on one text -- planted() always reads the
+    # pristine file, so each call through it would discard the last flip.
+    wf, _ = planted(wf, md, "wf", "        os: [ubuntu-latest, macos-latest]",
+                    "        os: [ubuntu-latest]")
+    for old, new in (
+        ("| Behavioral suite | yes | yes | no — stub limitation, below | yes |",
+         "| Behavioral suite | yes | no | no — stub limitation, below | yes |"),
+        ("| ruff lint of claim.py | yes | yes | no | no |",
+         "| ruff lint of claim.py | yes | no | no | no |"),
+        ("| pycodestyle, pylint and pyright | yes | yes | no | no |",
+         "| pycodestyle, pylint and pyright | yes | no | no | no |"),
+        ("| Merge-conflict marker check | yes | yes | yes | no |",
+         "| Merge-conflict marker check | yes | no | yes | no |"),
+        ("| Compile the claim script | yes | yes | yes | no |",
+         "| Compile the claim script | yes | no | yes | no |"),
+    ):
+        assert md.count(old) == 1, f"plant anchor not unique: {old!r}"
+        md = md.replace(old, new)
+    return wf, md
+
 REDS = [
     ("the lint step de-scoped to ubuntu",
      lambda w, m: planted(w, m, "wf", LINT_IF,
@@ -5866,7 +5909,7 @@ REDS = [
     ("macos dropped from the matrix os list",
      lambda w, m: planted(w, m, "wf", "        os: [ubuntu-latest, macos-latest]",
                           "        os: [ubuntu-latest]"),
-     "claims the `macos` leg"),
+     "the README row 'Behavioral suite' claims the `macos` leg"),
     ("the windows include entry dropped",
      lambda w, m: planted(w, m, "wf", "          - os: windows-latest\n", ""),
      "claims the `windows` leg"),
@@ -5903,12 +5946,20 @@ REDS = [
 # coverage steps unconditional while its two siblings stay ubuntu-only must
 # leave the row at {ubuntu} and stay green. Under a union derivation the row
 # would derive every matrix leg and this would red.
+#
+# The derivation control (issue 141 fix round 1): the modelled `if:`
+# spellings resolve against the LIVE matrix legs, so dropping macos from the
+# matrix with the README's macos cells updated to match must stay green --
+# under the constants this fix replaces, every scoped spelling would keep
+# claiming macos and this would red.
 GREENS = [
     ("one coverage step made unconditional",
      lambda w, m: planted(w, m, "wf",
                           "      - name: Record the coverage summary\n"
                           "        if: matrix.os == 'ubuntu-latest'\n",
                           "      - name: Record the coverage summary\n")),
+    ("a matrix macos drop with a consistent README update",
+     lambda w, m: consistent_macos_drop(w, m)),
 ]
 
 for name, plant in GREENS:

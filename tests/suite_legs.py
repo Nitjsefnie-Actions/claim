@@ -66,9 +66,14 @@ Legs, and how they are derived:
       no `if:` line     -> the matrix legs (the step runs on every leg the
                            matrix declares, so a leg dropped from the matrix
                            shrinks the step, and its row reds);
-      `runner.os == 'Windows'`                  -> {windows};
-      `matrix.os != 'windows-latest'`           -> {ubuntu, macos};
-      `matrix.os == 'ubuntu-latest'`            -> {ubuntu};
+      `runner.os == 'Windows'`  -> {windows};
+      `matrix.os != 'windows-latest'` -> the live matrix legs minus windows;
+      `matrix.os == 'ubuntu-latest'`  -> the live matrix legs that are ubuntu;
+      -- the last two derive rather than name constants, because the pin's
+      purpose is agreement surviving a changed matrix: constants would
+      false-red a consistent README update after a matrix edit and let the
+      drift through once the guard's own two messages had been remediated
+      row by row;
       `${{ !cancelled() && steps.install_checks.outcome == 'success' }}`
           -> the legs of the step carrying `id: install_checks`, resolved
           one level deep: the status functions suppress GitHub's implicit
@@ -271,10 +276,13 @@ def job_span(lines, anchor):
     """The lines from just after a job key to the next indent-2 line.
 
     The span is bounded by the job's own key column: a job body's deeper
-    lines stay inside and the next job's key ends the span. Nothing else in
-    this workflow sits at indent 2 ending in a colon, so a stray indent-2
-    key elsewhere (say under `on:`) would be picked up as a job anchor and
-    refused by the closed job-set check that consumes these spans.
+    lines stay inside and the next job's key ends the span. Within the
+    post-`jobs:` region this walk reads, nothing else sits at indent 2
+    ending in a colon, so a stray indent-2 key in a job body there would be
+    picked up as a job anchor and refused by the closed job-set check that
+    consumes these spans. (The `on:` block's `push:`/`pull_request:`/
+    `workflow_dispatch:` keys sit at indent 2 too, and are not picked up:
+    this walk starts after the `jobs:` anchor, so they are never read.)
     """
     tail = [entry for entry in lines if entry[0] > anchor[0]]
     for entry in tail:
@@ -371,6 +379,15 @@ def read_steps(job, job_name):
 def legs_for_if(step, matrix_legs, legs_by_id):
     """A step's leg set from its `if:` value, by operator semantics.
 
+    The spellings are resolved against the LIVE matrix legs, not against
+    constants: the pin's purpose is README-vs-workflow agreement surviving a
+    changed matrix, so `!= 'windows-latest'` means every leg the matrix
+    declares except windows, and `== 'ubuntu-latest'` means the ubuntu leg
+    when the matrix declares one. Constants here would false-red a fully
+    consistent README update after a matrix edit and -- worse -- would let
+    the drift this guard exists to name through once its own two messages
+    had been remediated row by row.
+
     The chain spelling is resolved to the id-step's legs: `!cancelled()`
     suppresses GitHub's implicit success() gate, so the chain's real
     condition is the id-step's outcome, and its real reach is the id-step's
@@ -383,9 +400,9 @@ def legs_for_if(step, matrix_legs, legs_by_id):
     if condition == WINDOWS_IF:
         return frozenset({"windows"})
     if condition == NOT_WINDOWS_IF:
-        return frozenset({"ubuntu", "macos"})
+        return frozenset(matrix_legs) - {"windows"}
     if condition == UBUNTU_IF:
-        return frozenset({"ubuntu"})
+        return frozenset(matrix_legs) & {"ubuntu"}
     if condition == CHAIN_IF:
         # The spelling itself names `steps.install_checks.outcome`, and
         # suites_legs() has already refused unless exactly one step carries
@@ -531,9 +548,12 @@ def read_table(text):
             refuse(line, "a duplicated README coverage row")
         row = {}
         for column, cell in zip(COLUMNS, cells[1:]):
-            if cell.startswith("yes"):
+            # Exact `yes`, exact `no`, or the landed `no — <reason>` prose.
+            # A prefix test admits `nope` as a claim, so the grammar is
+            # exact with one prose arm; anything else refuses.
+            if cell == "yes":
                 row[column] = True
-            elif cell.startswith("no"):
+            elif cell == "no" or cell.startswith("no —"):
                 row[column] = False
             else:
                 refuse(line, f"a `{column}` cell outside the yes/no grammar "
