@@ -185,9 +185,10 @@ jobs:
         # as well as for the code change.
         # Explicit `shell: bash` so the step also runs on the windows leg,
         # whose default shell is pwsh and cannot run this bash body; on the
-        # POSIX legs the explicit form adds only `-o pipefail`, and the body
-        # already guards `git grep` with `|| found=$?`, so no pipe here can
-        # turn "no match" into a failure the implicit shell would not have.
+        # POSIX legs the explicit form also adds --noprofile --norc, and
+        # pipefail is its only operative delta -- the body already guards
+        # `git grep` with `|| found=$?`, so no pipe here can turn "no match"
+        # into a failure the implicit shell would not have.
         shell: bash
         run: |
           # git grep exits 1 for "no match" and above 1 for an error it could
@@ -207,7 +208,8 @@ jobs:
       - name: Compile the claim script
         # Explicit `shell: bash` so the step also runs on the windows leg,
         # whose default shell is pwsh and cannot run this body; on the POSIX
-        # legs the explicit form adds only `-o pipefail`.
+        # legs the explicit form also adds --noprofile --norc, and pipefail
+        # is its only operative delta.
         shell: bash
         run: python3 -m py_compile claim.py
 
@@ -320,15 +322,18 @@ jobs:
 
       - name: Run the behavioral suite
         # POSIX legs only. tests/gh.sh is an extension-less bash script
-        # placed on PATH as `gh`, and claim.py starts it through Python's
-        # subprocess: on Windows that is CreateProcess, which launches only
-        # PE images -- it resolves `gh` to `gh.exe` and refuses a text file
-        # with error 193 (%1 is not a valid Win32 application), so the
-        # extension-less stub never executes and every stub-driven case
-        # fails loudly. Real consumers are unaffected: they run the real
-        # gh.exe on windows runners. This is a harness limitation, not a
-        # product defect; widening the leg needs a Windows-executable stub
-        # form, tracked in the issue tracker.
+        # placed on PATH as `gh`, and claim.py spawns `gh` by bare name: on
+        # Windows CreateProcess appends .exe before it searches PATH, so the
+        # extension-less stub is never selected at all -- with the image's
+        # real gh.exe on PATH the cases would run against it, and without
+        # one every case fails to start with WinError 2 (file not found).
+        # Either way the stub never executes, so the suite cannot run on
+        # Windows. (Error 193, %1 is not a valid Win32 application, is the
+        # explicit-path shape and does not arise for a bare-name spawn.)
+        # Real consumers are unaffected: they run the real gh.exe on
+        # windows runners. This is a harness limitation, not a product
+        # defect; widening the leg needs a Windows-executable stub form,
+        # tracked in the issue tracker.
         if: matrix.os != 'windows-latest'
         shell: bash
         run: tests/run.sh
