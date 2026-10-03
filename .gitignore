@@ -13,6 +13,10 @@ tests/*
 !tests/codeql_matrix.py
 !tests/gate_base_freshness.py
 !tests/identity.response
+!tests/diffcoverage/
+tests/diffcoverage/*
+!tests/diffcoverage/*.diff
+!tests/diffcoverage/*.xml
 !.coveragerc
 !pyrightconfig.json
 !.pylintrc

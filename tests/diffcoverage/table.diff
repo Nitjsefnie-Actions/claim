@@ -1,0 +1,13 @@
+diff --git a/claim.py b/claim.py
+index 0000000..1111111 100644
+--- a/claim.py
++++ b/claim.py
+@@ -10,2 +10,1 @@
+--- a removed line whose content begins with dashes
+-    gone = 1
++    kept = 1
+@@ -20,0 +21,4 @@
++    fresh_one = 1
++    fresh_two = 2
++    fresh_three = 3
++    fresh_four = 4

@@ -1,0 +1,22 @@
+<?xml version="1.0" ?>
+<coverage line-rate="1" version="7.16.2">
+  <sources/>
+  <packages>
+    <package>
+      <classes>
+        <class filename="claim.py" name="claim">
+          <methods/>
+          <lines>
+            <line number="1" hits="3"/>
+          </lines>
+        </class>
+        <class filename="claim.py" name="claim">
+          <methods/>
+          <lines>
+            <line number="1" hits="0"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>
