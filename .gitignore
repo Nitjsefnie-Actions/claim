@@ -14,6 +14,9 @@ tests/*
 !tests/gate_base_freshness.py
 !tests/identity.response
 !.coveragerc
+!pyrightconfig.json
+!.pylintrc
+!setup.cfg
 !README.md
 !SECURITY.md
 !.github/
