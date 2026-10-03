@@ -6,6 +6,42 @@ RUN="$(mktemp -d "$ROOT/tests/.run.XXXXXX")"
 mkdir "$RUN/bin"
 ln -s "$ROOT/tests/gh.sh" "$RUN/bin/gh"
 export PATH="$RUN/bin:$PATH"
+
+# Every case drives claim.py, and claim.py runs `gh` through a python
+# subprocess that resolves the name on PATH. That resolution is platform
+# shaped: on Windows a python subprocess resolves `gh` to `gh.exe` only, and
+# cannot execute an extension-less script at all, so the stub would never be
+# reached -- a GitHub-hosted Windows image ships a real `gh` that would take
+# every call with the stub token, leaving every expectation unmeetable and
+# the suite dependent on the absence of `gh` on the runner. This shell would
+# never notice: bash resolves the extension-less stub fine. So before the
+# first case, run the stub exactly the way claim.py will -- a subprocess
+# resolving the bare name on this PATH -- and refuse to run the suite when
+# what answers is not the stub.
+mkdir "$RUN/stub-probe"
+printf 'stub in the loop\n' > "$RUN/stub-probe/identity.response"
+if ! GH_CASE="$RUN/stub-probe" GH_IDENTITY="$RUN/stub-probe/identity.response" \
+    python3 - <<'PYSTUBPROBE'
+import subprocess, sys
+try:
+    probe = subprocess.run(
+        ["gh", "api", "user"], check=False, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+except OSError as error:
+    sys.stderr.write(f"stub probe: the python3 subprocess could not run gh: {error}\n")
+    sys.exit(1)
+if probe.stdout != "stub in the loop\n":
+    sys.stderr.write("stub probe: gh did not answer from the stub\n")
+    sys.exit(1)
+PYSTUBPROBE
+then
+  printf '%s\n' \
+    'tests/run.sh: refusing to run the suite: the gh stub did not answer a probe driven the way claim.py drives gh.' \
+    'On Windows a python subprocess resolves gh to gh.exe only and cannot execute the extension-less stub, so the cases' \
+    'would reach a real gh with the stub token and read green without the stub in the loop.' >&2
+  printf 'Artifacts: %s\n' "$RUN"
+  exit 1
+fi
 # GH_IDENTITY is the default answer for the stub's identity lookup
 # (`gh api user`); a case overrides it either by writing identity.response into
 # its own case directory or by assigning this variable — which is also how a
