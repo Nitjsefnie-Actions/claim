@@ -2318,6 +2318,13 @@ read_transport_status() {
 # re-pinned here: every expect_gh_failure row and every identity failure row
 # above is already one-response-then-loud-stub-failure, which is exactly what
 # decisiveness looks like, and none of them moves.
+#
+# The two marked classes each get two spellings — a 503 and a 500; a Post
+# and a Get transport failure — so a classifier narrowed to the first
+# spelling it saw reddens exactly the row the second spelling carries.
+# These rows run the real backoff sleeps, roughly twenty seconds added to
+# every suite run across them; they stay real because an injectable wait
+# would test the injection point, not the wait.
 identity_503_retried_then_succeeds() {
   local result=0
   # GitHub's own 503 message line, as gh writes it to stderr.
@@ -2419,6 +2426,47 @@ rate_limit_429_retried() {
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
   run_claim 0
+}
+
+status_500_retried() {
+  local result=0
+  body=/claim
+  # A second 5xx spelling: the marker arm reads the whole 5xx class, not
+  # the 503 the row above carries, so this pin is the (HTTP 500) form —
+  # a classifier narrowed to the first spelling seen would classify this
+  # one decisive and stop here.
+  expect_gh_failure 1 'gh: Server Error (HTTP 500)' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  {
+    printf '%s\n' '["api","user"]'
+    cat "$GH_CASE/expected.jsonl"
+  } > "$GH_CASE/expected.calls"
+  run_claim 0 || result=1
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+transport_get_error_retried() {
+  local result=0
+  body=/claim
+  # The transport arm's method is a wildcard, not the Post the row above
+  # carries: Go renders the method as sent, so the Get spelling of the same
+  # never-completed-connection shape must retry too.
+  expect_gh_failure 1 'gh: Get "https://api.github.com/repos/owner/project/issues/7": dial tcp 140.82.121.6:443: i/o timeout' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  {
+    printf '%s\n' '["api","user"]'
+    cat "$GH_CASE/expected.jsonl"
+  } > "$GH_CASE/expected.calls"
+  run_claim 0 || result=1
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
 }
 
 snapshot_warning_on_success_reaches_the_log() {
@@ -6537,12 +6585,14 @@ cases=(
   # Issue 159: a transient GitHub failure is retried a bounded number of
   # times before the run fails. One case per branch: the identity lookup and
   # the issue read each get a retried-then-succeeds row and an exhausted
-  # row, the unmarked transport shape and a 429 are pinned retryable, and a
+  # row, the unmarked transport shape and a 429 are pinned retryable, a
   # warning beside a healthy answer still reaches the log now that stderr
-  # is captured in order to be classified.
+  # is captured in order to be classified, and the 5xx and transport arms
+  # are pinned on two spellings each (a 503 and a 500; a Post and a Get).
   identity_503_retried_then_succeeds identity_503_exhausts_attempts
   snapshot_503_retried snapshot_503_exhausts
   transport_error_retried rate_limit_429_retried
+  status_500_retried transport_get_error_retried
   snapshot_warning_on_success_reaches_the_log
   # What the inputs are allowed to be.
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm

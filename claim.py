@@ -39,8 +39,8 @@ INSTALLATION_REFUSAL = "Resource not accessible by integration"
 # the defect in issue 159 is one such failure on one request failing the whole
 # run. The bound is stated here because it is why the generosity is safe:
 # three attempts with a pause of 2s then 4s adds at most 6s to any one API
-# call, far under the job's five-minute timeout, so the retry budget cannot
-# turn a slow GitHub into a hung run.
+# call, far under this repository's five-minute job timeout, so the retry
+# budget cannot turn a slow GitHub into a hung run.
 GH_ATTEMPTS = 3
 GH_RETRY_WAIT = 2
 
@@ -49,10 +49,14 @@ def transient_failure(stderr_text):
     """True when a failed gh call is the kind worth another attempt.
 
     GitHub says "try again" with an HTTP 5xx (an outage) and a 429
-    (throttling), and gh marks both `(HTTP NNN)` in the message line it
-    writes to stderr — the same channel INSTALLATION_REFUSAL is matched in.
-    A connection that never completed carries no marker at all: gh reports
-    it as `METHOD "url": cause`. Everything else is decisive — the
+    (throttling). The marker both are read by is the `(HTTP NNN)` suffix of
+    gh's stderr message line — the same channel INSTALLATION_REFUSAL is
+    matched in, and the shape every stub fixture in the suite states; this
+    reading has not been measured against a live gh here. A connection that
+    never completed carries no marker at all: it surfaces as Go's url.Error
+    rendering, `METHOD "url": cause`, and the shape matched below is the
+    one the suite's transport fixtures pin — again without a fresh
+    measurement. Everything else is decisive — the
     documented refusal is a marked 403, every other marked 4xx is GitHub's
     final answer, gh's exit-4 advice is configuration, and an unmarked
     failure that does not fit the transport shape is none of these, so it
@@ -101,7 +105,9 @@ def gh(*args, stdin=None):
     status, with the attempts named on stderr. A POST retried after a lost
     answer can apply twice: GitHub may have acted on a request whose reply
     never arrived, and no retry can tell that outcome from one that never
-    happened. OSError — no gh to execute — is not retried.
+    happened. OSError — no gh to execute — is not retried, though no case
+    pins the no-retry property itself: the suite's no-gh case drives the
+    entry point once and cannot stage a per-attempt failure.
     """
     argv = ["gh", "api", *args]
     probe, attempts = _gh_call(argv, stdin=stdin)
