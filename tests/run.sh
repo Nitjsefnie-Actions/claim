@@ -2308,6 +2308,132 @@ read_transport_status() {
   run_claim 42
 }
 
+# Issue 159: one transient GitHub failure — an HTTP 503, a 429, a connection
+# that never completed — used to fail the run on its first attempt, with no
+# retry and no reply. The retried-then-succeeds rows below pin the retry on
+# the two calls a run makes first (the identity lookup and the issue read)
+# against exhausted rows beside them, and a warning arriving beside a healthy
+# answer is pinned too, because stderr is now captured in order to be
+# classified and capture must not swallow it. The decisive direction is NOT
+# re-pinned here: every expect_gh_failure row and every identity failure row
+# above is already one-response-then-loud-stub-failure, which is exactly what
+# decisiveness looks like, and none of them moves.
+identity_503_retried_then_succeeds() {
+  local result=0
+  # GitHub's own 503 message line, as gh writes it to stderr.
+  local fifty3='gh: No server is currently available to service your request. Sorry about that. Please try resubmitting your request and contact us if the problem persists. (HTTP 503)'
+  body=/claim
+  # The identity answer as a sequence: a 503 on the first attempt, the
+  # account on the second. The empty body file IS the sequence switch as
+  # well as the answer: it states a probe that failed and wrote nothing to
+  # stdout, and the stub's sequence mode is switched on by
+  # identity.response.1 existing at all.
+  : > "$GH_CASE/identity.response.1"
+  printf '%s\n' "$fifty3" > "$GH_CASE/identity.response.1.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.1.status"
+  printf '%s\n' '{"login":"octo-claimant","type":"User"}' > "$GH_CASE/identity.response.2"
+  run_claim 0 "commenter is the token's own account: octo-claimant"$'\n' || result=1
+  # The raw call set is the retry's pin: exactly two identity calls, no
+  # ordinary call. A run that gave up after the first answer stops at one
+  # line; a run that retried anything else adds a line it never made.
+  printf '%s\n' '["api","user"]' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+identity_503_exhausts_attempts() {
+  local result=0
+  local fifty3='gh: No server is currently available to service your request. Sorry about that. Please try resubmitting your request and contact us if the problem persists. (HTTP 503)'
+  body=/claim
+  # The static answer serves the same 503 on every attempt — there is no
+  # sequence here — so the retries run out against one persistent outage,
+  # and the run fails naming the attempts it waited through.
+  printf '%s\n' "$fifty3" > "$GH_CASE/identity.response.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+  expected_error="cannot establish which account this token posts as: the /user lookup failed for a reason other than the documented installation-token refusal, after 3 attempts, and reported: $fifty3"
+  run_claim 1 || result=1
+  # Three identity calls and nothing else: the bound is exactly GH_ATTEMPTS.
+  printf '%s\n' '["api","user"]' '["api","user"]' '["api","user"]' > "$GH_CASE/expected.calls"
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+snapshot_503_retried() {
+  local result=0
+  local fifty3='gh: No server is currently available to service your request. Sorry about that. Please try resubmitting your request and contact us if the problem persists. (HTTP 503)'
+  body=/claim
+  # The ordinary sequence serves the retry: the first read answers 503, the
+  # second answers the issue, and the run carries on to the reply an
+  # already-claimed issue gets.
+  expect_gh_failure 1 "$fifty3" api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  # The raw call set gains the repeated identical line for the retried read:
+  # the sequence in expected.jsonl already carries both reads, so the pin is
+  # the identity line on top of it.
+  {
+    printf '%s\n' '["api","user"]'
+    cat "$GH_CASE/expected.jsonl"
+  } > "$GH_CASE/expected.calls"
+  run_claim 0 || result=1
+  if ! diff -u "$GH_CASE/expected.calls" "$GH_CASE/calls.jsonl"; then result=1; fi
+  return "$result"
+}
+
+snapshot_503_exhausts() {
+  local fifty3='gh: No server is currently available to service your request. Sorry about that. Please try resubmitting your request and contact us if the problem persists. (HTTP 503)'
+  body=/claim
+  # The same 503 on every attempt: three ordinals, one shape. A run that
+  # retried forever would hit exit 91 on a fourth call instead of failing
+  # with the three attempts named.
+  expect_gh_failure 1 "$fifty3" api repos/owner/project/issues/7
+  expect_gh_failure 1 "$fifty3" api repos/owner/project/issues/7
+  expect_gh_failure 1 "$fifty3" api repos/owner/project/issues/7
+  # gh's own words pass through, then the one new line naming the attempts.
+  expected_error=$fifty3$'\n'"gh api repos/owner/project/issues/7 failed after 3 attempts"
+  run_claim 1
+}
+
+transport_error_retried() {
+  body=/claim
+  # No `(HTTP NNN)` marker at all: a dropped connection is reported by gh as
+  # METHOD "url": cause, and that unmarked shape is what gets retried here.
+  expect_gh_failure 1 'gh: Post "https://api.github.com/repos/owner/project/issues/7": dial tcp 140.82.121.6:443: connect: connection refused' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+rate_limit_429_retried() {
+  body=/claim
+  # 429 is GitHub's throttling answer and is retried, where the 403
+  # rate-limit row in the identity table stays decisive: it is the marker
+  # the classifier reads, not the words.
+  expect_gh_failure 1 'gh: You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. (HTTP 429)' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  # Backticks here are Markdown in the expected comment, not shell substitutions.
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice, @bob. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0
+}
+
+snapshot_warning_on_success_reaches_the_log() {
+  body=/claim
+  # A 200 that carries a warning on stderr anyway: the answer is healthy,
+  # the run proceeds to the reply, and the warning still reaches the log —
+  # stderr is captured now so a failure can be classified, and capture must
+  # not swallow what gh wrote beside a healthy answer.
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
+  printf '%s\n' 'gh: the API answered 200 with a deprecation warning' > "$GH_CASE/response.1.stderr"
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you already have this one.' --silent
+  expected_error='gh: the API answered 200 with a deprecation warning'
+  run_claim 0
+}
+
 invalid_assignee_snapshot() {
   local assignees=$1 read=$2
   expected_error='issue snapshot assignees must be objects with string logins'
@@ -6408,6 +6534,16 @@ cases=(
   no_assignees_left_after_peer_removals
   # The transport: gh's refusals, and a failure to reach it at all.
   read_transport_status
+  # Issue 159: a transient GitHub failure is retried a bounded number of
+  # times before the run fails. One case per branch: the identity lookup and
+  # the issue read each get a retried-then-succeeds row and an exhausted
+  # row, the unmarked transport shape and a 429 are pinned retryable, and a
+  # warning beside a healthy answer still reaches the log now that stderr
+  # is captured in order to be classified.
+  identity_503_retried_then_succeeds identity_503_exhausts_attempts
+  snapshot_503_retried snapshot_503_exhausts
+  transport_error_retried rate_limit_429_retried
+  snapshot_warning_on_success_reaches_the_log
   # What the inputs are allowed to be.
   null_login_initial null_login_confirm null_assignee_initial null_assignee_confirm
   missing_login_initial missing_login_confirm
@@ -6491,6 +6627,7 @@ for case_name in "${cases[@]}"; do
   : > "$GH_CASE/expected.jsonl"
   : > "$GH_CASE/calls.jsonl"
   printf '0\n' > "$GH_CASE/sequence"
+  printf '0\n' > "$GH_CASE/identity-sequence"
   reset_case
   if "$case_name"; then
     printf 'PASS %s\n' "$case_name"

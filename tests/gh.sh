@@ -109,7 +109,43 @@ fi
 # state a stderr. With no body and no status and no stderr there is no answer at
 # all, and like the sequence path below the stub fails loudly instead of
 # inventing one.
+#
+# The identity lookup can also be answered from a SEQUENCE, the way the
+# ordinary sequence below answers later calls: when identity.response.1 exists
+# in the case directory, call N is answered from identity.response.N (with
+# .stderr and .status companions read beside it, the same companions the
+# static shape reads) counted in the case's identity-sequence file, which the
+# runner seeds at 0 beside `sequence`. This is what lets a case state one
+# answer for a first attempt and a different one for the retry that follows
+# it — the shape the transient-failure cases need. Every identity call is
+# still recorded above like any other call, so a case can pin the raw call
+# set exactly as elsewhere. No existing case names identity.response.1, so
+# the static shape is the only one they ever take. A call that runs past the
+# answers the case wrote — and an answer with neither body nor companion —
+# fails loudly with exit 91, exactly like the ordinary sequence: the stub
+# invents no answer.
 if [[ $# -eq 2 && $1 == api && $2 == user ]]; then
+  if [[ -f $GH_CASE/identity.response.1 ]]; then
+    identity_ordinal=$(( $(cat "$GH_CASE/identity-sequence") + 1 ))
+    printf '%s\n' "$identity_ordinal" > "$GH_CASE/identity-sequence"
+    answer=$GH_CASE/identity.response.$identity_ordinal
+    answer_status=$answer.status
+    answer_stderr=$answer.stderr
+    if [[ ! -f $answer && ! -f $answer_status && ! -f $answer_stderr ]]; then
+      printf 'unexpected gh invocation: %s\n' "$(cat "$GH_CASE/calls.jsonl")" >&2
+      exit 91
+    fi
+    if [[ -f $answer ]]; then
+      cat "$answer"
+    fi
+    if [[ -f $answer_stderr ]]; then
+      cat "$answer_stderr" >&2
+    fi
+    if [[ -f $answer_status ]]; then
+      exit "$(cat "$answer_status")"
+    fi
+    exit 0
+  fi
   answer=$GH_CASE/identity.response
   answer_status=$answer.status
   answer_stderr=$answer.stderr

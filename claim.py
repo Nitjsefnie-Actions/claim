@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 
 # GitHub refuses a comment body over 65,536 characters. Every reply in this
@@ -33,13 +34,93 @@ MAX_COMMENT = 65536
 # healthy 200 a refusal.
 INSTALLATION_REFUSAL = "Resource not accessible by integration"
 
+# A transient GitHub failure — an HTTP 5xx, a 429, or a connection that never
+# completed — is worth another attempt because GitHub usually answers it, and
+# the defect in issue 159 is one such failure on one request failing the whole
+# run. The bound is stated here because it is why the generosity is safe:
+# three attempts with a pause of 2s then 4s adds at most 6s to any one API
+# call, far under the job's five-minute timeout, so the retry budget cannot
+# turn a slow GitHub into a hung run.
+GH_ATTEMPTS = 3
+GH_RETRY_WAIT = 2
+
+
+def transient_failure(stderr_text):
+    """True when a failed gh call is the kind worth another attempt.
+
+    GitHub says "try again" with an HTTP 5xx (an outage) and a 429
+    (throttling), and gh marks both `(HTTP NNN)` in the message line it
+    writes to stderr — the same channel INSTALLATION_REFUSAL is matched in.
+    A connection that never completed carries no marker at all: gh reports
+    it as `METHOD "url": cause`. Everything else is decisive — the
+    documented refusal is a marked 403, every other marked 4xx is GitHub's
+    final answer, gh's exit-4 advice is configuration, and an unmarked
+    failure that does not fit the transport shape is none of these, so it
+    stays decisive rather than guessed at (the stub's exit-42 `gh:
+    transport unavailable` among them).
+    """
+    if re.search(r"\(HTTP (5\d\d|429)\)", stderr_text):
+        return True
+    # No `(HTTP NNN)` marker — the transport shape, or nothing. Requiring the
+    # quoted URL after the method keeps `gh: transport unavailable`, which
+    # says transport but names no URL, decisive.
+    return re.search(r'^gh: [A-Za-z]+ "https?://[^"]+": ',
+                     stderr_text, re.MULTILINE) is not None
+
+
+def _gh_call(argv, stdin=None):
+    """Run one gh argv up to GH_ATTEMPTS times, return (process, attempts).
+
+    An attempt is retried only while transient_failure(probe.stderr) holds
+    and attempts remain, sleeping GH_RETRY_WAIT * 2 ** (attempt - 1)
+    between attempts. OSError — no gh to execute — propagates immediately:
+    a missing program is not a GitHub hiccup, and retrying it is a delay in
+    front of a certain failure.
+    """
+    attempts = 0
+    while True:
+        attempts += 1
+        probe = subprocess.run(argv, check=False, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, input=stdin)
+        if probe.returncode == 0 or not transient_failure(probe.stderr):
+            return probe, attempts
+        if attempts >= GH_ATTEMPTS:
+            return probe, attempts
+        # Backoff for the pause between attempts: 2s after the first
+        # answer-less attempt, 4s after the second — the bound the
+        # constants above state.
+        time.sleep(GH_RETRY_WAIT * 2 ** (attempts - 1))
+
 
 def gh(*args, stdin=None):
-    """Leave authentication, HTTP errors, and rate limits to the CLI."""
-    return subprocess.run(
-        ["gh", "api", *args], check=True, input=stdin,
-        stdout=subprocess.PIPE, text=True
-    ).stdout
+    """Leave authentication, HTTP errors, and rate limits to the CLI.
+
+    A transient failure — an HTTP 5xx, a 429, or a connection that never
+    completed — is retried up to GH_ATTEMPTS times before this raises, so a
+    failure that survives the retries still fails the run, on gh's own exit
+    status, with the attempts named on stderr. A POST retried after a lost
+    answer can apply twice: GitHub may have acted on a request whose reply
+    never arrived, and no retry can tell that outcome from one that never
+    happened. OSError — no gh to execute — is not retried.
+    """
+    argv = ["gh", "api", *args]
+    probe, attempts = _gh_call(argv, stdin=stdin)
+    if probe.returncode != 0:
+        # All of gh's own words, not the first line: the run log is where a
+        # maintainer reads why this run stopped, and stderr was captured
+        # rather than passed through, so nothing else would put the reason
+        # anywhere.
+        sys.stderr.write(probe.stderr)
+        if attempts > 1:
+            # Named only when the run actually waited and retried: a single
+            # failure is gh's own words, unchanged.
+            sys.stderr.write(
+                f"{' '.join(argv)} failed after {attempts} attempts\n")
+        raise subprocess.CalledProcessError(probe.returncode, argv)
+    # gh's stderr was captured in order to be classified; a warning it wrote
+    # on a healthy call still reaches the log.
+    sys.stderr.write(probe.stderr)
+    return probe.stdout
 
 
 def own_identity():
@@ -51,13 +132,13 @@ def own_identity():
     Every other failure raises, because the caller skips the self-account
     guard on a None, and an action that cannot say which account its own
     token writes as must not go on to answer a comment from that account.
+    A transient failure is retried before any of that: one that survives
+    the retries raises with the attempts it waited through named in the
+    message, and one that does not raises exactly as it always did.
     A 200 whose body is unreadable is an error for the same reason: it too
     would compare the commenter against an identity never established.
     """
-    probe = subprocess.run(
-        ["gh", "api", "user"], check=False, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True,
-    )
+    probe, attempts = _gh_call(["gh", "api", "user"])
     if probe.returncode != 0:
         if INSTALLATION_REFUSAL in probe.stderr:
             return None
@@ -69,10 +150,14 @@ def own_identity():
         # (measured on gh 2.98.0) — and the second line of that pair is the
         # half that names the fix.
         detail = probe.stderr.strip().splitlines()
+        # The attempt count rides in the message only when the run actually
+        # waited and retried: with one attempt the message is byte-for-byte
+        # the one the identity table pins.
+        retried = "" if attempts == 1 else f", after {attempts} attempts"
         raise ValueError(
             "cannot establish which account this token posts as: the /user "
             "lookup failed for a reason other than the documented "
-            "installation-token refusal, and reported: "
+            f"installation-token refusal{retried}, and reported: "
             + ("\n".join(detail) if detail
                else f"nothing, exit status {probe.returncode}")
         )

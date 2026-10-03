@@ -211,11 +211,14 @@ does anything else, and the lookup has outcomes of its own:
   of its own, which GitHub refuses with `Resource not accessible by
   integration` — that one refusal means "there is no account to compare
   against", so the run carries on and every comment is processed normally;
-- anything else — a rate limit, a network error, a `5xx`, a `401`, a refusal
-  saying something other than the one above, or a `200` whose body carries no
-  login — which fails the run before anything is posted or assigned, because
-  an action that cannot say which account its own `token` writes as must not go
-  on to answer a comment from that account. The run log says so and carries
+- anything else — a rate limit, a `401`, a refusal saying something other
+  than the one above, or a `200` whose body carries no login — which fails
+  the run before anything is posted or assigned, because an action that
+  cannot say which account its own `token` writes as must not go on to answer
+  a comment from that account. The exceptions are the transient failures — a
+  `5xx`, a `429`, or a connection that never completed — each of which is
+  retried a bounded number of times (three attempts, with a growing pause)
+  before the run fails this same way. The run log says so and carries
   what `gh` reported.
 
 ### Per-role claim caps
@@ -383,7 +386,10 @@ You posted a command and nothing happened. Work down this list.
 - **The run failed.** Read its log. Every declined attempt fails the run
   and posts a reply on the issue; an API failure posts no reply at all. A
   red run with no reply on the issue died before it could post one, and
-  the log names where. The log line
+  the log names where. A transient GitHub failure — a `5xx`, a `429`, or a
+  dropped connection — is retried a bounded number of times first, so a
+  run that failed anyway saw the failure survive every retry, and the log
+  names the attempts it waited through. The log line
   `gh: Resource not accessible by integration (HTTP 403)` is the
   token-permission signature: check the job's `permissions:` block grants
   `issues: write` and `pull-requests: write` (the default `github.token` is
