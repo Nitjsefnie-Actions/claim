@@ -19,6 +19,13 @@ CONTRIBUTING tells a contributor to use — never the filename: zzz.yml naming
 itself `scorecard` makes `scorecard` a workflow-name scope, and a job- or
 step-level `name:` is indented and must not be collected.
 
+The tree itself is enumerated NUL-separated (`ls-tree -z`) and every path is
+decoded byte-exact, so the set reads the bytes HEAD tracks: under the
+default core.quotePath a newline-separated enumeration takes git's C-quoted
+display form (`".github/workflows/\303\274ber.yml"`) for the path, the
+quoted entry misses the workflow-file filter, and the workflow silently
+leaves the set — a false green this gate exists not to give.
+
 Only the OUTGOING range origin/main..HEAD is examined, and the green line
 says so. Already-merged history is what the check exists to stop repeating,
 not what it re-tries: re-judging the two `fix(tests)` commits above would
@@ -81,9 +88,16 @@ def git(root, *arguments, what):
     Every call goes through here because a guard that reads its own error as
     a clean tree is the false green this exists to prevent: a non-zero status
     is a refusal naming what was being attempted, never an empty answer.
+
+    stdout and stderr decode with surrogateescape so a path git prints raw —
+    `ls-tree -z` output carries non-UTF-8 filename bytes undecorated —
+    survives as the string it is; subprocess re-encodes every argument with
+    the filesystem encoding, so `cat-file blob HEAD:<path>` reads the same
+    bytes back.
     """
     command = ("git", "-C", str(root)) + arguments
-    done = subprocess.run(command, capture_output=True, text=True)
+    done = subprocess.run(command, capture_output=True, text=True,
+                          errors="surrogateescape")
     if done.returncode != 0:
         detail = done.stderr.strip() or "no output"
         raise GateError(
@@ -125,9 +139,16 @@ def skippable(line):
 
 
 def tracked_files(root):
+    # -z keeps the entries NUL-separated and raw. A newline-separated read
+    # hands back git's C-quoted DISPLAY form under the default
+    # core.quotePath — `".github/workflows/\303\274ber.yml"` — and the
+    # leading double quote misses the workflow-file filter below, so the
+    # workflow would leave the name set in silence and a commit naming it
+    # would pass green. Paths are decoded byte-exact (see git()), never
+    # unquoted back: the raw bytes ARE the path.
     return tuple(f for f in
-                 git(root, "ls-tree", "-r", "--name-only", "--full-tree", "HEAD",
-                     what="list the tracked tree").split("\n") if f)
+                 git(root, "ls-tree", "-z", "-r", "--name-only", "--full-tree", "HEAD",
+                     what="list the tracked tree").split("\0") if f)
 
 
 def workflow_files(files):
