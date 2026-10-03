@@ -11,6 +11,7 @@ tests/*
 !tests/gh.sh
 !tests/commit_scopes.py
 !tests/codeql_matrix.py
+!tests/suite_legs.py
 !tests/gate_base_freshness.py
 !tests/identity.response
 !tests/diffcoverage/
