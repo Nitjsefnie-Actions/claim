@@ -2904,6 +2904,162 @@ PYPLANT
   return "$result"
 }
 
+# Issue 144: the enumeration behind the derived set. Under git's default
+# `core.quotePath` a tracked name carrying non-ASCII bytes used to come back
+# C-quoted — `".github/workflows/\303\274ber.yml"`, opening with a literal `"` —
+# so it never matched the `.github/workflows/` prefix and left the gate in
+# silence: one workflow a stale base commit could touch without a red.
+# `gate_paths_derived_from_workflows` stays the ASCII control; the four cases
+# below cover the non-ASCII end to end and the rewritten ls-tree refusal
+# branches.
+gate_derived_paths_carry_non_ascii_workflow() {
+  local result=0 fixture=$GH_CASE/fixture tree derived
+  gate_fixture "$fixture"
+  tree=$fixture/tree
+  # A byte copy of scorecard.yml under a non-ASCII name. `gate_commit_all`'s
+  # `add -A -f` handles the deny-by-default `.gitignore` that would otherwise
+  # hide the copy.
+  cp "$tree/.github/workflows/scorecard.yml" "$tree/.github/workflows/über.yml"
+  gate_commit_all "$tree" 'a non-ASCII workflow lands'
+  derived=$(gate_derived_paths "$tree") || {
+    printf '  the derivation refused on a tree carrying a non-ASCII workflow name\n'
+    return 1
+  }
+  if ! grep -Fxq '.github/workflows/über.yml' <<< "$derived"; then
+    printf '  a tracked workflow with a non-ASCII name is absent from the derived\n'
+    printf '  set, so a stale base commit touching it lands without a red. The\n'
+    printf '  set carries these workflow spellings:\n'
+    grep 'workflows/' <<< "$derived" || true
+    result=1
+  fi
+  return "$result"
+}
+
+gate_freshness_reds_on_non_ascii_workflow() {
+  local result=0 fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
+  local tree=$fixture/tree status
+  gate_fixture "$fixture"
+  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Require this head to carry main's gate-defining commits" "$script"; then
+    printf '  the freshness step could not be extracted from tests.yml\n'
+    return 1
+  fi
+  # Both sides land the same new workflow as their own commit, mirroring a pull
+  # request that adds it while main moved too: each side holds a commit the
+  # other lacks, and main's touches the non-ASCII path. The refusal channel is
+  # stderr, so a refusal here is a failure, not the expected red — the red has
+  # to name main's commit on stdout and direct a rebase.
+  git -C "$tree" checkout --quiet head-branch
+  cp "$tree/.github/workflows/scorecard.yml" "$tree/.github/workflows/über.yml"
+  gate_commit_all "$tree" 'a non-ASCII workflow lands on the head'
+  git -C "$tree" checkout --quiet main
+  cp "$tree/.github/workflows/scorecard.yml" "$tree/.github/workflows/über.yml"
+  gate_commit_all "$tree" 'a non-ASCII workflow lands on main'
+  git -C "$tree" push --quiet origin main
+  git -C "$tree" checkout --quiet head-branch
+  gate_run_step "$fixture" "$script"
+  status=$(cat "$GH_CASE/status")
+  if [[ $status == 0 ]]; then
+    printf '  main holds a commit touching a non-ASCII workflow and the check\n'
+    printf '  exited 0 — the file dropped out of the derived set in silence:\n'
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'a non-ASCII workflow lands on main' "$GH_CASE/stdout"; then
+    printf '  the red did not name the commit main holds:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  if ! grep -Fq 'Rebase onto main' "$GH_CASE/stdout"; then
+    printf '  the red did not direct a rebase (a stderr refusal is not a red):\n'
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  return "$result"
+}
+
+# Pins the rewritten ls-tree error branch on a directory that is not a git
+# repository. GIT_CEILING_DIRECTORIES is what makes the directory genuinely
+# outside every repository for this run: the case directory itself sits inside
+# this repository, and without the ceiling git discovers the suite's own
+# checkout walking up and answers instead of refusing.
+gate_derivation_refuses_a_non_repository() {
+  local result=0 status=0
+  mkdir -p "$GH_CASE/not-a-repo"
+  GIT_CEILING_DIRECTORIES=$GH_CASE \
+    python3 "$ROOT/tests/gate_base_freshness.py" --root "$GH_CASE/not-a-repo" \
+    --print-paths > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
+  if [[ $status == 0 ]]; then
+    printf '  a non-repository root answered instead of refusing:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  elif ! grep -Fq 'ls-tree' "$GH_CASE/stderr" \
+    || ! grep -Fq 'exited' "$GH_CASE/stderr"; then
+    printf '  the refusal did not name the ls-tree command and its exit status:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  return "$result"
+}
+
+gate_derivation_refuses_an_undecodable_name() {
+  local result=0 fixture=$GH_CASE/fixture tree status=0 probe=0
+  gate_fixture "$fixture"
+  tree=$fixture/tree
+  # A tracked name carrying an invalid-UTF-8 byte (0xFF): committed through
+  # `gate_commit_all` like any other file, read back raw under `-z`. Under the
+  # old text-form enumeration this name came back C-quoted and ASCII-safe, so
+  # the run answered 0 with the name silently outside the set. Whether this
+  # filesystem can hold such a name at all is decided by a create-and-unlink
+  # probe, and the state branches on the probe's OUTCOME, never on a platform
+  # name: APFS (the required macos leg) refuses the byte outright (OSError,
+  # errno 92), and a fixture that cannot be built measures nothing. The probe
+  # cleans up after itself on both paths; a refusal prints one disclosure
+  # line and skips only this state -- never silently.
+  probe=0
+  python3 - "$tree" <<'PYUTF8PROBE' 2> "$GH_CASE/utf8probe.err" || probe=$?
+import os
+import sys
+
+target = sys.argv[1].encode("utf-8") + b"/\xffbad"
+try:
+    with open(target, "wb") as handle:
+        handle.write(b"x")
+except OSError as refusal:
+    sys.stderr.write(f"{type(refusal).__name__} errno {refusal.errno}: "
+                     f"{refusal.strerror}\n")
+    raise SystemExit(1)
+finally:
+    try:
+        os.unlink(target)
+    except FileNotFoundError:
+        pass
+PYUTF8PROBE
+  if [[ $probe != 0 ]]; then
+    printf '  this filesystem refused the raw 0xff filename (probe exit %s: %s); the undecodable-name refusal pin cannot run here and is skipped, disclosed\n' \
+      "$probe" "$(cat "$GH_CASE/utf8probe.err")"
+    return 0
+  fi
+  python3 - "$tree" <<'PYUTF8PLANT'
+import sys
+
+with open(sys.argv[1].encode("utf-8") + b"/\xffbad", "wb") as handle:
+    handle.write(b"x")
+PYUTF8PLANT
+  gate_commit_all "$tree" 'a tracked name with an invalid UTF-8 byte'
+  gate_derived_paths "$tree" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
+  if [[ $status == 0 ]]; then
+    printf '  a tracked name that is not valid UTF-8 answered instead of refusing:\n'
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  elif ! grep -Fqi 'utf-8' "$GH_CASE/stderr"; then
+    printf '  the refusal did not name the UTF-8 cause:\n'
+    cat "$GH_CASE/stderr"
+    result=1
+  fi
+  return "$result"
+}
+
 # The step is what makes the check a required status context rather than a
 # script nobody runs. Deleting it has to red this suite: the check would still
 # be here, still correct, and would never once run.
@@ -6220,6 +6376,12 @@ action_contract pr_gate_contract readme_quoted_replies
   gate_derivation_refuses_each_unmodelled_shape
   gate_merge_commit_is_reported_honestly
   gate_base_freshness_states
+  # Issue 144: the enumeration behind the derived set. The first two cover the
+  # non-ASCII workflow end to end (set membership; a real red through the
+  # extracted step), the second two pin the rewritten ls-tree refusal branches
+  # (non-repository root; undecodable name).
+  gate_derived_paths_carry_non_ascii_workflow gate_freshness_reds_on_non_ascii_workflow
+  gate_derivation_refuses_a_non_repository gate_derivation_refuses_an_undecodable_name
   # Issue 90: a workflow's name is a scope only with the ci type. The wiring
   # is the primary pin -- the rehearsal beside it extracts whatever the step
   # body says -- and the states are rehearsed by executing the step the way

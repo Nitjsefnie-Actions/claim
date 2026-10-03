@@ -375,9 +375,45 @@ def resolve(candidate, files):
 
 
 def tracked_files(root):
-    return tuple(f for f in
-                 git(root, "ls-tree", "-r", "--name-only", "--full-tree", "HEAD",
-                     what="list the tracked tree").split("\n") if f)
+    """The tracked paths at HEAD, enumerated in the form this gate can trust.
+
+    `-z` with a NUL split is the only enumeration git will not rewrite: in the
+    default text form a path carrying non-ASCII bytes comes back C-quoted
+    under `core.quotePath` — `".github/workflows/\\303\\274ber.yml"`, opening
+    with a literal `"` — so it never matches the `WORKFLOW_DIR` prefix, is
+    never parsed, and drops out of the derived set in silence: one workflow a
+    stale base commit can touch without this gate going red. A replacement
+    decode is not an option, because it would hand every later git call
+    (`cat-file`, the pathspec list) a path that resolves to nothing; a name
+    whose bytes are not valid UTF-8 is therefore a refusal naming the raw
+    bytes. This call sits outside the `git()` helper on purpose — bytes are
+    needed, and `stale_commits()` runs outside it for the same reason — while
+    a non-zero exit is refused in the helper's own style and for the helper's
+    own reason: a guard that reads its error as a clean tree is the false
+    green this script exists to prevent.
+    """
+    command = ("git", "-C", str(root), "ls-tree", "-z", "-r", "--name-only",
+               "--full-tree", "HEAD")
+    # Outside `git()` on purpose: bytes are needed. `stale_commits()` already
+    # does the same; see the docstring for the refusal style either way.
+    done = subprocess.run(command, capture_output=True)
+    if done.returncode != 0:
+        detail = done.stderr.strip().decode("utf-8", errors="replace")
+        raise GateError(
+            f"cannot list the tracked tree: `{' '.join(command)}` exited "
+            f"{done.returncode}: {detail or 'no output'}")
+    files = []
+    for raw in done.stdout.split(b"\0"):
+        if not raw:
+            continue
+        try:
+            files.append(raw.decode("utf-8"))
+        except UnicodeDecodeError as refusal:
+            raise GateError(
+                f"a tracked path is not valid UTF-8, so the paths this gate "
+                f"derives could not name it and every later git call would "
+                f"resolve a path to nothing: {raw!r}") from refusal
+    return tuple(files)
 
 
 def workflow_names(files):
