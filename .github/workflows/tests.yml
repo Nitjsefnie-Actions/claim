@@ -6,8 +6,10 @@ name: tests
 # The suite stays install-free by design (#87): everything it runs ships with
 # the images -- bash, python3, and shellcheck -- and tests/gh.sh supplies the
 # API stub. The file's only package installs are the workflow's own: the lint
-# step's hash-pinned ruff and the coverage cell's hash-pinned coverage, each
-# lifted out of the manifest into a throwaway venv, which no image preinstalls.
+# step's hash-pinned ruff, the type/lint steps' hash-pinned pylint,
+# pycodestyle and pyright, and the coverage cell's hash-pinned coverage --
+# three installs, each lifted out of the manifest into a throwaway venv,
+# which no image preinstalls.
 #
 # Coverage is measured on exactly one cell so the reported number names a
 # single reproducible environment. claim.py runs as a SUBPROCESS of the suite
@@ -198,6 +200,49 @@ jobs:
           awk '/^ruff==/{f=1} f{print; if ($0 !~ /\\$/) exit}' .github/workflows/requirements.txt > "$RUNNER_TEMP/ruff.txt"
           "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/ruff.txt"
           "$RUNNER_TEMP/lint-venv/bin/ruff" check --select E9,F63,F7,F82 claim.py
+
+      - name: Install the type and lint toolchain
+        id: install_checks
+        # Why the venv: both hosted images mark their system python externally
+        # managed (PEP 668), so a plain pip install fails on both legs, and
+        # this file has no setup-python step by design (preinstalled python3
+        # only).
+        # Why the awk lift: the manifest's PyYAML pin carries one hash, a
+        # cp313 manylinux x86_64 wheel, so installing the whole file with
+        # --require-hashes resolves nothing on macOS. The pylint block runs
+        # to EOF of the manifest, so the plain `{f=1}` lift takes the three
+        # tools and the nine dependencies they resolve, and the manifest
+        # stays the single source for the versions and hashes.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/checks-venv"
+          awk '/^pylint==/{f=1} f' .github/workflows/requirements.txt > "$RUNNER_TEMP/checks.txt"
+          "$RUNNER_TEMP/checks-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/checks.txt"
+
+      - name: pycodestyle
+        if: ${{ !cancelled() && steps.install_checks.outcome == 'success' }}
+        run: |
+          # pycodestyle reads setup.cfg from the working directory: the
+          # 100-column ceiling the tree observes lives there, not on this
+          # command line. This comment is also how the freshness
+          # derivation sees the file, the way .coveragerc enters its set.
+          git ls-files '*.py' | xargs "$RUNNER_TEMP/checks-venv/bin/pycodestyle"
+
+      - name: pylint
+        if: ${{ !cancelled() && steps.install_checks.outcome == 'success' }}
+        run: |
+          # .pylintrc turns the style categories off and leaves the error
+          # and warning checks on, and the exit code is the verdict --
+          # never the 10.00/10 score line, which reports nothing about
+          # what was found.
+          git ls-files '*.py' | xargs "$RUNNER_TEMP/checks-venv/bin/pylint" --rcfile=.pylintrc
+
+      - name: pyright
+        if: ${{ !cancelled() && steps.install_checks.outcome == 'success' }}
+        run: |
+          # Basic mode, with the include list (claim.py and tests/) in
+          # pyrightconfig.json. The exit code is the gate: no baseline and
+          # no ratchet, because the tree passes outright.
+          "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json
       # One install step, on the measured cell only: it lifts the coverage
       # block out of the hash-pinned manifest into a venv (PEP 668 marks both
       # hosted images' system python externally managed, so a plain pip
