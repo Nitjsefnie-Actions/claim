@@ -2824,6 +2824,7 @@ gate_paths_derived_from_workflows() {
 .github/workflows/audit.yml
 .github/workflows/claim.yml
 .github/workflows/codeql.yml
+.github/workflows/coverage-comment.yml
 .github/workflows/pr-gate.yml
 .github/workflows/requirements-pip-audit.txt
 .github/workflows/requirements.txt
