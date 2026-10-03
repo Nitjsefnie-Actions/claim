@@ -2856,7 +2856,8 @@ tests/diffcoverage/wholediff-utf8.diff
 tests/gate_base_freshness.py
 tests/gh.sh
 tests/identity.response
-tests/run.sh'
+tests/run.sh
+tests/suite_legs.py'
   if [[ $derived != "$expected" ]]; then
     printf '  the derived path set changed:\n'
     diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$derived") || true
@@ -5566,6 +5567,368 @@ if found != expected:
           f"uploading leg per name", file=sys.stderr)
     raise SystemExit(1)
 PYWIRE
+# Issue 141: the suite-legs pin lives in tests/suite_legs.py, in the
+# codeql_matrix shape -- a guard that reads the tests.yml matrix and every
+# step's `if:`, the README coverage table, and fails naming the row and the
+# legs when the two drift apart. The three cases below are its shipped pins:
+# green over the tree as it ships, one plant per refusal branch, and the
+# semantic reds both drift directions must produce.
+suite_legs_covers_readme() {
+  python3 "$ROOT/tests/suite_legs.py" "$ROOT"
+}
+
+suite_legs_refuses_each_unmodelled_shape() {
+  # One plant per refusal site of tests/suite_legs.py, each planted on
+  # in-memory copies of the real files, so a refusal arm that stops firing
+  # reds exactly its own row. A plant whose anchor is missing or ambiguous
+  # fails the case rather than passing vacuously, and every refusal must
+  # carry its row's distinguishing substring, so a refusal from some other
+  # site cannot pass for this one's. The real files are never written.
+  python3 - "$ROOT" <<'PYREFUSE'
+from pathlib import Path
+import importlib.util
+import sys
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "suite_legs", root / "tests" / "suite_legs.py")
+suite_legs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(suite_legs)
+REAL_WF = (root / suite_legs.WORKFLOW).read_text()
+REAL_MD = (root / suite_legs.README).read_text()
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+def planted(wf, md, which, anchor, replacement):
+    real = REAL_WF if which == "wf" else REAL_MD
+    assert real.count(anchor) == 1, f"plant anchor not unique: {anchor!r}"
+    if which == "wf":
+        return real.replace(anchor, replacement), md
+    return wf, real.replace(anchor, replacement)
+
+
+LINT_IF = ("        if: matrix.os != 'windows-latest'\n"
+           "        run: |\n"
+           "          python3 -m venv \"$RUNNER_TEMP/lint-venv\"")
+CHECKS_IF = ("        if: matrix.os != 'windows-latest'\n"
+             "        run: |\n"
+             "          python3 -m venv \"$RUNNER_TEMP/checks-venv\"")
+COVERAGE_IF = ("        if: matrix.os == 'ubuntu-latest'\n"
+               "        run: |\n"
+               "          python3 -m coverage combine")
+PV_SUITE = ("      - name: Run the behavioral suite\n"
+            "        shell: bash\n"
+            "        run: tests/run.sh\n")
+
+REFUSALS = [
+    ("a valued strategy anchor",
+     lambda w, m: planted(w, m, "wf", "  suites:\n    strategy:\n",
+                          "  suites:\n    strategy: |\n"),
+     "`strategy:` must be a bare key"),
+    ("a missing matrix anchor",
+     lambda w, m: planted(w, m, "wf",
+                          "      matrix:\n        os: [ubuntu-latest, macos-latest]",
+                          "        os: [ubuntu-latest, macos-latest]"),
+     "exactly one bare `matrix:` line"),
+    ("a duplicated steps anchor",
+     lambda w, m: planted(w, m, "wf", "  python-versions:\n",
+                          "    steps:\n  python-versions:\n"),
+     "exactly one bare `steps:` line"),
+    ("a multi-line os flow list",
+     lambda w, m: planted(w, m, "wf", "        os: [ubuntu-latest, macos-latest]",
+                          "        os: [ubuntu-latest,\n          macos-latest]"),
+     "not the one-line flow list"),
+    ("a quoted os item",
+     lambda w, m: planted(w, m, "wf", "        os: [ubuntu-latest, macos-latest]",
+                          "        os: [ubuntu-latest, 'macos-latest']"),
+     "`os item` carries a value this pin does not model"),
+    ("an os value with no README column",
+     lambda w, m: planted(w, m, "wf", "        os: [ubuntu-latest, macos-latest]",
+                          "        os: [ubuntu-latest, macos-latest, linux-latest]"),
+     "with no README column to answer it"),
+    ("an include entry keyed other than os",
+     lambda w, m: planted(w, m, "wf", "          - os: windows-latest",
+                          "          - runner: windows-latest"),
+     "a matrix entry line this pin does not model"),
+    ("a stray line inside the include block",
+     lambda w, m: planted(w, m, "wf", "        include:\n",
+                          "        include:\n            straggler: x\n"),
+     "not an entry"),
+    ("the include block ahead of the os list",
+     lambda w, m: planted(w, m, "wf",
+                          "        os: [ubuntu-latest, macos-latest]\n        include:",
+                          "        include:\n          - os: windows-latest\n"
+                          "        os: [ubuntu-latest, macos-latest]"),
+     "must follow the `os:` list"),
+    ("a tab in a line's indentation",
+     lambda w, m: planted(w, m, "wf", "      - name: pycodestyle",
+                          "\t - name: pycodestyle"),
+     "tab in a line's indentation"),
+    ("a fourth job under jobs:",
+     lambda w, m: planted(w, m, "wf", "  suites:\n", "  suites:\n  extra:\n"),
+     "expected exactly the `shellcheck`"),
+    ("the suites job renamed",
+     lambda w, m: planted(w, m, "wf", "  suites:\n", "  suite-matrix:\n"),
+     "expected exactly the `shellcheck`"),
+    ("a near-miss if naming windows equality",
+     lambda w, m: planted(w, m, "wf", "        if: runner.os == 'Windows'",
+                          "        if: matrix.os == 'windows-latest'"),
+     "a step `if:` this pin does not model"),
+    ("a near-miss if with a double-quoted operand",
+     lambda w, m: planted(w, m, "wf", COVERAGE_IF,
+                          COVERAGE_IF.replace("'ubuntu-latest'",
+                                              '"ubuntu-latest"')),
+     'a step `if:` this pin does not model'),
+    ("an if carrying no value",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Compile the claim script\n        # Explicit",
+                          "      - name: Compile the claim script\n        if:\n"
+                          "        # Explicit"),
+     "carries an `if:` with no value"),
+    ("an if on the nameless suites checkout",
+     lambda w, m: planted(w, m, "wf",
+                          "        persist-credentials: false\n\n      - name: Put a python3 on PATH",
+                          "        persist-credentials: false\n        if: matrix.os == 'ubuntu-latest'\n\n      - name: Put a python3 on PATH"),
+     "conditioned step with no `name:`"),
+    ("a name on the dash and in the body",
+     lambda w, m: planted(w, m, "wf", "      - name: pycodestyle\n        if:",
+                          "      - name: pycodestyle\n        name: pycodestyle\n        if:"),
+     "both on its dash and in its body"),
+    ("a step dash carrying an unmodelled key",
+     lambda w, m: planted(w, m, "wf", "      - name: pylint\n",
+                          "      - timeout: 5\n"),
+     "a step dash carrying a key other than"),
+    ("a body line between the dash and the step-key column",
+     lambda w, m: planted(w, m, "wf", "      - name: pycodestyle\n",
+                          "      - name: pycodestyle\n       stray: x\n"),
+     "an indent this pin does not model"),
+    ("the chain id step removed",
+     lambda w, m: planted(w, m, "wf", "        id: install_checks\n", ""),
+     "expected exactly one step carrying `id: install_checks`"),
+    ("the chain id step chained on itself",
+     lambda w, m: planted(w, m, "wf", CHECKS_IF,
+                          CHECKS_IF.replace(
+                              "if: matrix.os != 'windows-latest'",
+                              "if: ${{ !cancelled() && "
+                              "steps.install_checks.outcome == 'success' }}")),
+     "chains on its own outcome"),
+    ("a fourth step in python-versions",
+     lambda w, m: planted(w, m, "wf", PV_SUITE, PV_SUITE
+                          + "      - name: Extra step\n        run: echo x\n"),
+     "expected exactly three steps"),
+    ("a renamed checkout step in python-versions",
+     lambda w, m: planted(w, m, "wf", PV_SUITE,
+                          PV_SUITE.replace("Run the behavioral suite",
+                                           "Run the tests")),
+     "expected the python-versions job's behavioral-suite step"),
+    ("an if on the python-versions behavioral suite",
+     lambda w, m: planted(w, m, "wf", PV_SUITE,
+                          PV_SUITE.replace("        shell: bash\n",
+                                           "        if: matrix.os == 'ubuntu-latest'\n"
+                                           "        shell: bash\n")),
+     "carries an `if:` this pin does not model"),
+    ("the python-versions setup step named",
+     lambda w, m: planted(w, m, "wf",
+                          "      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0",
+                          "      - name: Set up Python\n"
+                          "        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"),
+     "carries a name or condition this pin does not model"),
+    ("the README header row deleted",
+     lambda w, m: planted(w, m, "md",
+                          "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |\n", ""),
+     "exactly one `| Check |` table header row"),
+    ("a second README header row",
+     lambda w, m: planted(w, m, "md", "| --- | --- | --- | --- | --- |",
+                          "| --- | --- | --- | --- | --- |\n"
+                          "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |"),
+     "exactly one `| Check |` table header row"),
+    ("a renamed header column",
+     lambda w, m: planted(w, m, "md",
+                          "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |",
+                          "| Check | ubuntu | macos | win | 3.11–3.14 (ubuntu) |"),
+     "columns are not the ones this pin reads"),
+    ("a malformed separator row",
+     lambda w, m: planted(w, m, "md", "| --- | --- | --- | --- | --- |",
+                          "| x | --- | --- | --- | --- |"),
+     "separator row is not"),
+    ("a missing separator row",
+     lambda w, m: planted(w, m, "md",
+                          "| --- | --- | --- | --- | --- |\n"
+                          "| Behavioral suite | yes | yes | no — stub limitation, below | yes |\n"
+                          "| ruff lint of claim.py | yes | yes | no | no |\n"
+                          "| pycodestyle, pylint and pyright | yes | yes | no | no |\n"
+                          "| Coverage measurement and gate | yes | no | no | no |\n"
+                          "| Merge-conflict marker check | yes | yes | yes | no |\n"
+                          "| Compile the claim script | yes | yes | yes | no |\n"
+                          "| Put a python3 on PATH | no | no | yes | no |\n",
+                          ""),
+     "carries no separator row"),
+    ("a ragged table row",
+     lambda w, m: planted(w, m, "md",
+                          "| Put a python3 on PATH | no | no | yes | no |",
+                          "| Put a python3 on PATH | no | yes | no |"),
+     "cell count this pin does not model"),
+    ("a cell outside the yes/no grammar",
+     lambda w, m: planted(w, m, "md",
+                          "| Put a python3 on PATH | no | no | yes | no |",
+                          "| Put a python3 on PATH | no | no | maybe | no |"),
+     "outside the yes/no grammar"),
+    ("a README row the mapping does not model",
+     lambda w, m: planted(w, m, "md",
+                          "| Put a python3 on PATH | no | no | yes | no |",
+                          "| Put a python3 on PATH | no | no | yes | no |\n"
+                          "| New check row | yes | no | no | no |"),
+     "a README coverage row this pin does not model"),
+    ("a duplicated README row",
+     lambda w, m: planted(w, m, "md",
+                          "| Compile the claim script | yes | yes | yes | no |",
+                          "| Compile the claim script | yes | yes | yes | no |\n"
+                          "| Compile the claim script | no | no | no | no |"),
+     "a duplicated README coverage row"),
+]
+
+for name, plant, expected in REFUSALS:
+    wf, md = plant(REAL_WF, REAL_MD)
+    try:
+        suite_legs.covers(wf, md)
+    except suite_legs.Refused as refusal:
+        if expected not in str(refusal):
+            fail(f"{name}: the refusal did not name {expected!r}: {refusal}")
+        continue
+    fail(f"{name}: the planted shape was read instead of refused")
+PYREFUSE
+}
+
+suite_legs_reddens_on_de_scoped_step() {
+  # The semantic reds: workflow-only re-scopes, README-only edits, and the
+  # runs-on consumption, each naming its own drift direction. Each red must
+  # name the row, the leg and the step involved -- a red that names neither
+  # direction is indistinguishable from a crash.
+  python3 - "$ROOT" <<'PYRED'
+from pathlib import Path
+import importlib.util
+import sys
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "suite_legs", root / "tests" / "suite_legs.py")
+suite_legs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(suite_legs)
+REAL_WF = (root / suite_legs.WORKFLOW).read_text()
+REAL_MD = (root / suite_legs.README).read_text()
+
+
+def fail(message):
+    print(f"  {message}")
+    raise SystemExit(1)
+
+
+def planted(wf, md, which, anchor, replacement):
+    real = REAL_WF if which == "wf" else REAL_MD
+    assert real.count(anchor) == 1, f"plant anchor not unique: {anchor!r}"
+    if which == "wf":
+        return real.replace(anchor, replacement), md
+    return wf, real.replace(anchor, replacement)
+
+
+LINT_IF = ("        if: matrix.os != 'windows-latest'\n"
+           "        run: |\n"
+           "          python3 -m venv \"$RUNNER_TEMP/lint-venv\"")
+CHECKS_IF = ("        if: matrix.os != 'windows-latest'\n"
+             "        run: |\n"
+             "          python3 -m venv \"$RUNNER_TEMP/checks-venv\"")
+
+REDS = [
+    ("the lint step de-scoped to ubuntu",
+     lambda w, m: planted(w, m, "wf", LINT_IF,
+                          LINT_IF.replace("if: matrix.os != 'windows-latest'",
+                                          "if: matrix.os == 'ubuntu-latest'")),
+     "claims the `macos` leg"),
+    ("the README compile cell flipped to no",
+     lambda w, m: planted(w, m, "md",
+                          "| Compile the claim script | yes | yes | yes | no |",
+                          "| Compile the claim script | yes | yes | no | no |"),
+     "on the `windows` leg, but the README cell denies it"),
+    ("the README behavioral versions cell flipped to no",
+     lambda w, m: planted(w, m, "md",
+                          "| Behavioral suite | yes | yes | no — stub limitation, below | yes |",
+                          "| Behavioral suite | yes | yes | no — stub limitation, below | no |"),
+     "on the `versions` leg, but the README cell denies it"),
+    ("the README ruff row claiming the versions column",
+     lambda w, m: planted(w, m, "md",
+                          "| ruff lint of claim.py | yes | yes | no | no |",
+                          "| ruff lint of claim.py | yes | yes | no | yes |"),
+     "claims the `versions` leg"),
+    ("macos dropped from the matrix os list",
+     lambda w, m: planted(w, m, "wf", "        os: [ubuntu-latest, macos-latest]",
+                          "        os: [ubuntu-latest]"),
+     "claims the `macos` leg"),
+    ("the windows include entry dropped",
+     lambda w, m: planted(w, m, "wf", "          - os: windows-latest\n", ""),
+     "claims the `windows` leg"),
+    ("a README row deleted",
+     lambda w, m: planted(w, m, "md",
+                          "| Compile the claim script | yes | yes | yes | no |\n", ""),
+     "coverage table no longer carries"),
+    ("a mapped step renamed in the workflow",
+     lambda w, m: planted(w, m, "wf", "      - name: Lint the claim script",
+                          "      - name: Ruff the claim script"),
+     "maps to workflow steps"),
+    ("the install step re-scoped, shrinking the chain",
+     lambda w, m: planted(w, m, "wf", CHECKS_IF,
+                          CHECKS_IF.replace("if: matrix.os != 'windows-latest'",
+                                            "if: matrix.os == 'ubuntu-latest'")),
+     "claims the `macos` leg"),
+    ("runs-on no longer consuming the matrix",
+     lambda w, m: planted(w, m, "wf", "    runs-on: ${{ matrix.os }}",
+                          "    runs-on: ubuntu-latest"),
+     "the suites job runs on"),
+    ("a conditioned step no row claims",
+     lambda w, m: planted(w, m, "wf",
+                          "        run: python3 -m py_compile claim.py\n",
+                          "        run: python3 -m py_compile claim.py\n"
+                          "      - name: Compile the claim script twice\n"
+                          "        if: matrix.os == 'ubuntu-latest'\n"
+                          "        shell: bash\n"
+                          "        run: python3 -m py_compile claim.py\n"),
+     "with an `if:` that no README row claims"),
+]
+
+# The intersection control: a multi-step row derives the INTERSECTION of its
+# steps' legs (the row promises the whole check), so making one of the three
+# coverage steps unconditional while its two siblings stay ubuntu-only must
+# leave the row at {ubuntu} and stay green. Under a union derivation the row
+# would derive every matrix leg and this would red.
+GREENS = [
+    ("one coverage step made unconditional",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Record the coverage summary\n"
+                          "        if: matrix.os == 'ubuntu-latest'\n",
+                          "      - name: Record the coverage summary\n")),
+]
+
+for name, plant in GREENS:
+    wf, md = plant(REAL_WF, REAL_MD)
+    try:
+        suite_legs.covers(wf, md)
+    except (AssertionError, suite_legs.Refused) as fired:
+        fail(f"{name}: the guard fired where the intersection semantics say "
+             f"it must stay green: {fired}")
+
+for name, plant, expected in REDS:
+    wf, md = plant(REAL_WF, REAL_MD)
+    try:
+        suite_legs.covers(wf, md)
+    except AssertionError as red:
+        if expected not in str(red):
+            fail(f"{name}: the red did not name {expected!r}: {red}")
+        continue
+    fail(f"{name}: the planted drift was accepted")
+PYRED
 }
 
 # The suite, grouped by what it is about. #45, #50 and #51 are the branch;
@@ -5682,6 +6045,11 @@ cases=(
 action_contract pr_gate_contract readme_quoted_replies
   readme_install_block_matches_claim_yml codeql_matrix_covers_python
   codeql_matrix_refuses_each_unmodelled_shape codeql_matrix_reddens_on_a_planted_matrix
+  # Issue 141: the suite-legs pin -- tests.yml leg scoping held against the
+  # README coverage table, with one plant per refusal branch and a red per
+  # drift direction.
+  suite_legs_covers_readme suite_legs_refuses_each_unmodelled_shape
+  suite_legs_reddens_on_de_scoped_step
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
   gate_derivation_handles_every_spelling
