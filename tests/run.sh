@@ -5452,6 +5452,7 @@ expected = {
     "jobs/gate/steps/0/with/repository": "${{ github.repository }}",
     "jobs/gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
     "jobs/gate/steps/0/with/pull-request-author": "${{ github.event.pull_request.user.login }}",
+    "jobs/gate/steps/0/with/require-commit-attribution": "true",
 }
 expected = {tuple(key.split("/")): value for key, value in expected.items()}
 for node in list(expected):
@@ -5471,7 +5472,6 @@ for node, value in expected.items():
     assert actual == value, f"wrong workflow value at {'/'.join(node)}: {actual!r} != {value!r}"
 PY
 }
-
 # The CodeQL matrix pin lives in tests/codeql_matrix.py: a guard that reads
 # only the lines it depends on and refuses rather than parses. Issue #87
 # deleted the block-layout YAML reader that used to walk the whole workflow
