@@ -5446,8 +5446,9 @@ expected = {
         "github.event.pull_request.user.type != 'Bot' && github.event.pull_request.draft == false",
     "jobs/gate/runs-on": "ubuntu-latest",
     "jobs/gate/timeout-minutes": 5,
-    "jobs/gate/steps/0/uses":
-        "Nitjsefnie-Actions/pr-gate@829cef9e10e31b48ce1590181d5cf82d6b5cbfa9",
+    # Any release, pinned by full commit SHA: the value is checked by shape
+    # below, so an upgrade never has to edit this test.
+    "jobs/gate/steps/0/uses": "Nitjsefnie-Actions/pr-gate@<40-hex commit SHA>",
     "jobs/gate/steps/0/with/github-token": "${{ github.token }}",
     "jobs/gate/steps/0/with/repository": "${{ github.repository }}",
     "jobs/gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
@@ -5458,10 +5459,20 @@ expected = {tuple(key.split("/")): value for key, value in expected.items()}
 for node in list(expected):
     for length in range(1, len(node)):
         expected.setdefault(node[:length], None)
-assert set(nodes) == set(expected), \
-    f"unexpected workflow structure: extra={set(nodes) - set(expected)}, missing={set(expected) - set(nodes)}"
+# Inputs beyond the required ones are the action's own options (an upgrade
+# may add some); they are allowed as leaves of the step's with: block only.
+inputs = ("jobs", "gate", "steps", "0", "with")
+extra = {node for node in set(nodes) - set(expected)
+         if not (node[:-1] == inputs and nodes[node] is not None)}
+missing = set(expected) - set(nodes)
+assert not extra and not missing, \
+    f"unexpected workflow structure: extra={extra}, missing={missing}"
 for node, value in expected.items():
     actual = nodes[node]
+    if node == ("jobs", "gate", "steps", "0", "uses"):
+        assert re.fullmatch(r"Nitjsefnie-Actions/pr-gate@[0-9a-f]{40}", actual), \
+            f"pr-gate must be pinned by full commit SHA: {actual!r}"
+        continue
     if node == ("on", "pull_request_target", "types"):
         assert actual.startswith("[") and actual.endswith("]"), "expected explicit activity list"
         actual = "[" + ", ".join(quoted_scalar(part.strip()) for part in actual[1:-1].split(",")) + "]"
