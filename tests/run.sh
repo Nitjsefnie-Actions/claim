@@ -5905,6 +5905,7 @@ suite_legs_refuses_each_unmodelled_shape() {
   python3 - "$ROOT" <<'PYREFUSE'
 from pathlib import Path
 import importlib.util
+import re
 import sys
 
 root = Path(sys.argv[1])
@@ -5915,6 +5916,16 @@ spec.loader.exec_module(suite_legs)
 REAL_WF = (root / suite_legs.WORKFLOW).read_text()
 REAL_MD = (root / suite_legs.README).read_text()
 
+# Issue 170: an anchor that names an action release vanishes on the next
+# Dependabot bump and reds the case on the uniqueness assert, so the
+# pin-carrying anchor is read from the shipped workflow instead -- the shape
+# stays pinned, never which release (Nitjsefnie-Actions/pr-gate#77's rule for
+# its own workflow tests).
+SETUP_MATCH = re.search(
+    r"      - uses: actions/setup-python@([0-9a-f]{40}) # \S+\n", REAL_WF)
+assert SETUP_MATCH, "the python-versions setup step is not the modelled shape"
+SETUP_STEP_LINE = SETUP_MATCH.group(0).rstrip("\n")
+SETUP_SHA = SETUP_MATCH.group(1)
 
 def fail(message):
     print(f"  {message}")
@@ -6120,9 +6131,9 @@ REFUSALS = [
      "carries an `if:` this pin does not model"),
     ("the python-versions setup step named",
      lambda w, m: planted(w, m, "wf",
-                          "      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0",
+                          SETUP_STEP_LINE,
                           "      - name: Set up Python\n"
-                          "        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"),
+                          "        uses: actions/setup-python@" + SETUP_SHA),
      "carries a name or condition this pin does not model"),
     ("the README header row deleted",
      lambda w, m: planted(w, m, "md",
@@ -6208,6 +6219,7 @@ suite_legs_reddens_on_de_scoped_step() {
   python3 - "$ROOT" <<'PYRED'
 from pathlib import Path
 import importlib.util
+import re
 import sys
 
 root = Path(sys.argv[1])
@@ -6217,6 +6229,24 @@ suite_legs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(suite_legs)
 REAL_WF = (root / suite_legs.WORKFLOW).read_text()
 REAL_MD = (root / suite_legs.README).read_text()
+
+# Issue 170: an anchor that names an action release vanishes on the next
+# Dependabot bump and reds the case on the uniqueness assert, so the
+# pin-carrying anchor is read from the shipped workflow instead -- the shape
+# stays pinned, never which release (Nitjsefnie-Actions/pr-gate#77's rule for
+# its own workflow tests).
+COVERAGE_XML_MATCH = re.search(
+    r"      - name: Upload the coverage XML\n"
+    r"        # actions/upload-artifact \S+\n"
+    r"        if: matrix\.os == 'ubuntu-latest'\n"
+    r"        uses: actions/upload-artifact@[0-9a-f]{40} # \S+\n"
+    r"        with:\n"
+    r"          name: coverage-xml\n"
+    r"          path: coverage\.xml\n"
+    r"          if-no-files-found: error\n",
+    REAL_WF)
+assert COVERAGE_XML_MATCH, "the coverage XML upload step is not the modelled shape"
+COVERAGE_XML_STEP = COVERAGE_XML_MATCH.group(0)
 
 
 def fail(message):
@@ -6356,14 +6386,7 @@ REDS = [
      "with an `if:` that no README row claims"),
     ("a coverage XML step removed",
      lambda w, m: planted(w, m, "wf",
-                          "      - name: Upload the coverage XML\n"
-                          "        # actions/upload-artifact v7.0.1\n"
-                          "        if: matrix.os == 'ubuntu-latest'\n"
-                          "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
-                          "        with:\n"
-                          "          name: coverage-xml\n"
-                          "          path: coverage.xml\n"
-                          "          if-no-files-found: error\n",
+                          COVERAGE_XML_STEP,
                           ""),
      "maps to workflow steps"),
 ]
