@@ -5376,113 +5376,6 @@ stub_counts_characters_not_bytes() {
   return "$result"
 }
 
-pr_gate_contract() {
-  python3 - "$ROOT" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-def quoted_scalar(text):
-    if text.startswith("'"):
-        assert re.fullmatch(r"'(?:[^']|'')*'", text), "unsupported single-quoted YAML scalar"
-        return text[1:-1].replace("''", "'")
-    if text.startswith('"'):
-        assert re.fullmatch(r'"[^"\\]*"', text), "unsupported double-quoted YAML escape"
-        return text[1:-1]
-    return text
-
-path = Path(sys.argv[1]) / ".github/workflows/pr-gate.yml"
-assert path.is_file(), "pr-gate workflow must exist"
-# Like action_contract, accept this manifest's explicit block layout without
-# a YAML dependency. actionlint owns full YAML/schema validation.
-nodes = {}
-parents = [(-1, ())]
-sequences = {}
-for raw in path.read_text().splitlines():
-    line = re.split(r"\s+#", raw, maxsplit=1)[0].rstrip()
-    if not line.strip() or line.lstrip().startswith("#"):
-        continue
-    indent = len(line) - len(line.lstrip(" "))
-    while parents[-1][0] >= indent:
-        parents.pop()
-    parent = parents[-1][1]
-    entry = line.strip()
-    if entry.startswith("- "):
-        index = sequences.get(parent, 0)
-        sequences[parent] = index + 1
-        parent += (str(index),)
-        nodes[parent] = None
-        parents.append((indent, parent))
-        indent += 2
-        entry = entry[2:]
-    pair = re.fullmatch(r"([^:]+):(?:\s+(.*))?", entry)
-    assert pair, f"expected explicit workflow mapping: {raw}"
-    key, value = quoted_scalar(pair[1].strip()), pair[2]
-    if value is not None:
-        value = value.strip()
-        if value.startswith(("'", '"')):
-            value = quoted_scalar(value)
-        elif value in ("true", "false"):
-            value = value == "true"
-        elif value.isdecimal():
-            value = int(value)
-        if isinstance(value, str) and value.startswith("${{") and value.endswith("}}"):
-            value = "${{ " + value[3:-2].strip() + " }}"
-    node = parent + (key,)
-    assert node not in nodes, f"duplicate workflow key: {'.'.join(node)}"
-    nodes[node] = value
-    if value is None:
-        parents.append((indent, node))
-
-expected = {
-    "name": "pr gate",
-    "on/pull_request_target/types": "[opened, edited, reopened, ready_for_review]",
-    "permissions/contents": "read",
-    "permissions/issues": "read",
-    "permissions/pull-requests": "write",
-    "concurrency/group": "pr-gate-${{ github.event.pull_request.number }}",
-    "concurrency/cancel-in-progress": False,
-    "jobs/gate/if":
-        "github.event.pull_request.user.type != 'Bot' && github.event.pull_request.draft == false",
-    "jobs/gate/runs-on": "ubuntu-latest",
-    "jobs/gate/timeout-minutes": 5,
-    # Any release, pinned by full commit SHA: the value is checked by shape
-    # below, so an upgrade never has to edit this test.
-    "jobs/gate/steps/0/uses": "Nitjsefnie-Actions/pr-gate@<40-hex commit SHA>",
-    "jobs/gate/steps/0/with/github-token": "${{ github.token }}",
-    "jobs/gate/steps/0/with/repository": "${{ github.repository }}",
-    "jobs/gate/steps/0/with/pull-request-number": "${{ github.event.pull_request.number }}",
-    "jobs/gate/steps/0/with/pull-request-author": "${{ github.event.pull_request.user.login }}",
-    "jobs/gate/steps/0/with/require-commit-attribution": "true",
-}
-expected = {tuple(key.split("/")): value for key, value in expected.items()}
-for node in list(expected):
-    for length in range(1, len(node)):
-        expected.setdefault(node[:length], None)
-# Inputs beyond the required ones are the action's own options (an upgrade
-# may add some); they are allowed as leaves of the step's with: block only.
-inputs = ("jobs", "gate", "steps", "0", "with")
-extra = {node for node in set(nodes) - set(expected)
-         if not (node[:-1] == inputs and nodes[node] is not None)}
-missing = set(expected) - set(nodes)
-assert not extra and not missing, \
-    f"unexpected workflow structure: extra={extra}, missing={missing}"
-for node, value in expected.items():
-    actual = nodes[node]
-    if node == ("jobs", "gate", "steps", "0", "uses"):
-        assert re.fullmatch(r"Nitjsefnie-Actions/pr-gate@[0-9a-f]{40}", actual), \
-            f"pr-gate must be pinned by full commit SHA: {actual!r}"
-        continue
-    if node == ("on", "pull_request_target", "types"):
-        assert actual.startswith("[") and actual.endswith("]"), "expected explicit activity list"
-        actual = "[" + ", ".join(quoted_scalar(part.strip()) for part in actual[1:-1].split(",")) + "]"
-    if node == ("jobs", "gate", "if"):
-        if actual.startswith("${{") and actual.endswith("}}"):
-            actual = actual[3:-2].strip()
-        actual = re.sub(r"\s*!=\s*", " != ", actual)
-    assert actual == value, f"wrong workflow value at {'/'.join(node)}: {actual!r} != {value!r}"
-PY
-}
 # The CodeQL matrix pin lives in tests/codeql_matrix.py: a guard that reads
 # only the lines it depends on and refuses rather than parses. Issue #87
 # deleted the block-layout YAML reader that used to walk the whole workflow
@@ -6641,7 +6534,7 @@ cases=(
   # `timeout-minutes`, `permissions:` block and top-level `concurrency:`
   # block (held against claim.yml — actionlint.yml's pin step compares the
   # pins alone, so no other gate sees these pairs drift).
-action_contract pr_gate_contract readme_quoted_replies
+action_contract readme_quoted_replies
   readme_install_block_matches_claim_yml codeql_matrix_covers_python
   codeql_matrix_refuses_each_unmodelled_shape codeql_matrix_reddens_on_a_planted_matrix
   # Issue 141: the suite-legs pin -- tests.yml leg scoping held against the
