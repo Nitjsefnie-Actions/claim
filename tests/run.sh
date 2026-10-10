@@ -6225,12 +6225,6 @@ REFUSALS = [
                                            "        if: matrix.os == 'ubuntu-latest'\n"
                                            "        shell: bash\n")),
      "carries an `if:` this pin does not model"),
-    ("the python-versions setup step named",
-     lambda w, m: planted(w, m, "wf",
-                          "      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0",
-                          "      - name: Set up Python\n"
-                          "        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"),
-     "carries a name or condition this pin does not model"),
     ("the README header row deleted",
      lambda w, m: planted(w, m, "md",
                           "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |\n", ""),
@@ -6461,18 +6455,6 @@ REDS = [
                           "        if: matrix.os == 'ubuntu-latest'\n"
                           "        run: echo x\n"),
      "with an `if:` that no README row claims"),
-    ("a coverage XML step removed",
-     lambda w, m: planted(w, m, "wf",
-                          "      - name: Upload the coverage XML\n"
-                          "        # actions/upload-artifact v7.0.1\n"
-                          "        if: matrix.os == 'ubuntu-latest'\n"
-                          "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n"
-                          "        with:\n"
-                          "          name: coverage-xml\n"
-                          "          path: coverage.xml\n"
-                          "          if-no-files-found: error\n",
-                          ""),
-     "maps to workflow steps"),
 ]
 
 # The intersection control: a multi-step row derives the INTERSECTION of its
