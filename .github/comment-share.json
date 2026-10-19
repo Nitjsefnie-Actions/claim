@@ -1,0 +1,82 @@
+{
+  ".github/dependabot.yml": [
+    931,
+    1347
+  ],
+  ".github/scripts/diff_coverage.py": [
+    4737,
+    11522
+  ],
+  ".github/scripts/ratchet_thresholds.py": [
+    665,
+    2238
+  ],
+  ".github/workflows/actionlint.yml": [
+    4333,
+    6859
+  ],
+  ".github/workflows/audit.yml": [
+    3527,
+    5463
+  ],
+  ".github/workflows/codeql.yml": [
+    1783,
+    2616
+  ],
+  ".github/workflows/coverage-comment.yml": [
+    3309,
+    9273
+  ],
+  ".github/workflows/pr-gate.yml": [
+    459,
+    1113
+  ],
+  ".github/workflows/ratchet-push.yml": [
+    2486,
+    9156
+  ],
+  ".github/workflows/scorecard.yml": [
+    593,
+    1587
+  ],
+  ".github/workflows/secrets.yml": [
+    2162,
+    2863
+  ],
+  ".github/workflows/tests.yml": [
+    14138,
+    21074
+  ],
+  "action.yml": [
+    614,
+    2018
+  ],
+  "claim.py": [
+    18867,
+    32642
+  ],
+  "tests/codeql_matrix.py": [
+    6933,
+    12853
+  ],
+  "tests/commit_scopes.py": [
+    7376,
+    13011
+  ],
+  "tests/gate_base_freshness.py": [
+    11115,
+    20743
+  ],
+  "tests/gh.sh": [
+    4534,
+    6921
+  ],
+  "tests/run.sh": [
+    70965,
+    268139
+  ],
+  "tests/suite_legs.py": [
+    13152,
+    27509
+  ]
+}
