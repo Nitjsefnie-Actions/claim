@@ -3127,6 +3127,7 @@ gate_paths_derived_from_workflows() {
 .github/workflows/codeql.yml
 .github/workflows/coverage-comment.yml
 .github/workflows/pr-gate.yml
+.github/workflows/ratchet-push.yml
 .github/workflows/requirements-pip-audit.txt
 .github/workflows/requirements.txt
 .github/workflows/scorecard.yml
