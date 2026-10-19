@@ -60,8 +60,8 @@
     12853
   ],
   "tests/commit_scopes.py": [
-    7376,
-    13011
+    7351,
+    12984
   ],
   "tests/gate_base_freshness.py": [
     11115,
@@ -72,8 +72,8 @@
     6921
   ],
   "tests/run.sh": [
-    71133,
-    274920
+    71912,
+    281052
   ],
   "tests/suite_legs.py": [
     13152,
