@@ -6303,6 +6303,20 @@ REFUSALS = [
                           "      - name: Record the ratchet data\n"
                           "        if: matrix.os == 'ubuntu-latest'\n"),
      "a ratchet step must carry the push-only `if:` spelling"),
+    ("the record ratchet step missing its condition",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Record the ratchet data\n"
+                          "        if: matrix.os == 'ubuntu-latest' && "
+                          "github.event_name == 'push'\n",
+                          "      - name: Record the ratchet data\n"),
+     "a ratchet step must carry the push-only `if:` spelling: 'Record the ratchet data'"),
+    ("the upload ratchet step missing its condition",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Upload the ratchet data\n"
+                          "        if: matrix.os == 'ubuntu-latest' && "
+                          "github.event_name == 'push'\n",
+                          "      - name: Upload the ratchet data\n"),
+     "a ratchet step must carry the push-only `if:` spelling: 'Upload the ratchet data'"),
     ("an if carrying no value",
      lambda w, m: planted(w, m, "wf",
                           "      - name: Compile the claim script\n        # Explicit",
