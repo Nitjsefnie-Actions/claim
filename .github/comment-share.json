@@ -32,8 +32,8 @@
     1113
   ],
   ".github/workflows/ratchet-push.yml": [
-    2486,
-    9156
+    2657,
+    10029
   ],
   ".github/workflows/scorecard.yml": [
     593,
@@ -72,8 +72,8 @@
     6921
   ],
   "tests/run.sh": [
-    70965,
-    268139
+    71156,
+    273622
   ],
   "tests/suite_legs.py": [
     13152,
