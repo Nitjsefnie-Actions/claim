@@ -439,12 +439,12 @@ def legs_for_if(step, matrix_legs, legs_by_id):
     -- wherever that step ran and succeeded. One level of indirection is
     modelled; a chain resolved through another chain refuses upstream.
     """
-    if step["if"] is None:
-        return frozenset(matrix_legs)
-    condition = normalise(step["if"])
+    condition = normalise(step["if"]) if step["if"] is not None else None
     if step["name"] in ("Record the ratchet data", "Upload the ratchet data"):
         if condition != UBUNTU_PUSH_IF:
-            refuse(step["if"], "a ratchet step must carry the push-only `if:` spelling")
+            refuse(step["name"], "a ratchet step must carry the push-only `if:` spelling")
+    if step["if"] is None:
+        return frozenset(matrix_legs)
     if condition == UBUNTU_PUSH_IF:
         # The event term restricts runs, not OS legs: this table models
         # runner coverage, so it still derives the live ubuntu intersection.
