@@ -8,8 +8,8 @@
     11522
   ],
   ".github/scripts/ratchet_thresholds.py": [
-    665,
-    2238
+    611,
+    2653
   ],
   ".github/workflows/actionlint.yml": [
     4333,
@@ -72,8 +72,8 @@
     6921
   ],
   "tests/run.sh": [
-    71156,
-    273622
+    71133,
+    274384
   ],
   "tests/suite_legs.py": [
     13152,
