@@ -2630,6 +2630,128 @@ ratchet_refuses_invalid_record_numbers() {
   done
 }
 
+# A fetched module must never reach a validator beside the key. The fixture
+# also poisons the runner cwd, so isolation remains pinned independently of
+# bare Git plumbing. Only authentication is doubled; Git and validators run.
+ratchet_push_excludes_fetched_code() {
+  python3 - "$ROOT" "$GH_CASE" <<'PYPUSHBOUNDARY'
+from pathlib import Path
+import json
+import os
+import subprocess
+import sys
+
+root, scratch = map(Path, sys.argv[1:3])
+workflow = (root / ".github/workflows/ratchet-push.yml").read_text().splitlines()
+name = "      - name: Push the tightened record to main"
+anchors = [i for i, line in enumerate(workflow) if line == name]
+assert len(anchors) == 1, "the named ratchet push step is missing or ambiguous"
+start = anchors[0] + 1
+stop = next((i for i in range(start, len(workflow))
+             if workflow[i].strip() and not workflow[i].lstrip().startswith("#")
+             and len(workflow[i]) - len(workflow[i].lstrip()) <= 6), len(workflow))
+runs = [i for i in range(start, stop) if workflow[i] == "        run: |"]
+assert len(runs) == 1, "the push step must carry exactly one literal shell block"
+body = workflow[runs[0] + 1:stop]
+assert all(not line.strip() or line.startswith("          ") for line in body)
+script = "\n".join(line[10:] for line in body) + "\n"
+# The standard SSH directory is redirected into this fixture alone. These
+# three authentication doubles start no process and contact no SSH server.
+script = script.replace("~/.ssh", '\"$PROBE_SSH/.ssh\"')
+auth = """ssh-agent() { printf 'SSH_AGENT_PID=99999999; export SSH_AGENT_PID;\\n'; }
+ssh-add() { cat "$1" >/dev/null; }
+kill() { :; }
+"""
+poison = ("import os\n"
+          "open(os.environ['SHADOW_SENTINEL'], 'w').write("
+          "str(bool(os.environ.get('MASTER_PUSH_DEPLOY_KEY'))))\n"
+          "raise RuntimeError('fetched json.py executed beside dummy deploy key')\n")
+
+def git(directory, *args):
+    return subprocess.run(["git", "-C", str(directory), *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+for mode in ("thresholds", "records", "both", "missing-thresholds", "missing-records", "absent"):
+    folder = scratch / mode
+    source = folder / "source"
+    source.mkdir(parents=True)
+    (source / ".github").mkdir()
+    thresholds = {"schema_version": 1, "coverage": {"python": {
+        "floor": 96.2, "measured": 96.2, "cell": "ubuntu-latest"}}}
+    records = {"a.py": [40, 100]}
+    (source / ".github/ci-thresholds.json").write_text(json.dumps(thresholds) + "\n")
+    (source / ".github/comment-share.json").write_text(json.dumps(records) + "\n")
+    (source / "json.py").write_text(poison)
+    git(source, "init", "-q", "-b", "main")
+    # Fixture commits must not depend on the runner's global Git identity.
+    git(source, "config", "user.name", "fixture")
+    git(source, "config", "user.email", "fixture@example.invalid")
+    git(source, "add", ".github/ci-thresholds.json", ".github/comment-share.json", "json.py")
+    git(source, "commit", "-q", "-m", "local ratchet fixture")
+    base = git(source, "rev-parse", "HEAD")
+    origin = folder / "origin.git"
+    git(source, "clone", "--quiet", "--bare", str(source), str(origin))
+    runner = folder / "runner"
+    runner.mkdir()
+    (runner / "json.py").write_text(poison)
+    thresholds_selected = mode in ("thresholds", "both", "missing-thresholds")
+    records_selected = mode in ("records", "both", "missing-records")
+    for selected, directory, filename, value in (
+            (thresholds_selected, "ratchet-data", "ci-thresholds.json", {
+                "schema_version": 1, "coverage": {"python": {
+                    "floor": 96.4, "measured": 96.4, "cell": "ubuntu-latest"}}}),
+            (records_selected, "comment-share-data", "comment-share.json", {"a.py": [35, 100]})):
+        if selected:
+            data = runner / directory
+            data.mkdir()
+            (data / "base.txt").write_text(base + "\n")
+            if not mode.startswith("missing-"):
+                (data / filename).write_text(json.dumps(value) + "\n")
+    bin_dir = folder / "bin"
+    bin_dir.mkdir()
+    ssh = bin_dir / "ssh"
+    ssh.write_text("#!/bin/sh\nexit 97\n")
+    ssh.chmod(0o755)
+    env = dict(os.environ, RUNNER_TEMP=str(runner), PROBE_SSH=str(folder / "ssh"),
+               MASTER_PUSH_DEPLOY_KEY="dummy-key-only", REPO="local/fixture",
+               RATCHET_SELECTED=str(thresholds_selected).lower(),
+               RECORDS_SELECTED=str(records_selected).lower(),
+               GITHUB_STEP_SUMMARY=str(folder / "summary"),
+               SHADOW_SENTINEL=str(folder / "executed"),
+               PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+               GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0=f"url.{origin}.insteadOf",
+               GIT_CONFIG_VALUE_0="git@github.com:local/fixture.git",
+               PYTHONPATH=str(source))
+    # Prove the sentinel's import oracle is live without touching a real key.
+    control_env = dict(env, SHADOW_SENTINEL=str(folder / "control-executed"))
+    control = subprocess.run(["python3", "-B", "-c", "import json"], cwd=source,
+                             env=control_env, check=False, capture_output=True, text=True)
+    assert control.returncode != 0 and (folder / "control-executed").read_text() == "True"
+    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", auth + script],
+                            cwd=folder, env=env, check=False, capture_output=True, text=True)
+    assert not (folder / "executed").exists(), f"{mode}: planted json.py executed"
+    expected_status = 1 if mode.startswith("missing-") else 0
+    assert result.returncode == expected_status, (mode, result.stdout, result.stderr)
+    tip = git(origin, "rev-parse", "main")
+    if mode.startswith("missing-"):
+        artifact, payload = (("ratchet-push", "ci-thresholds.json")
+                             if mode == "missing-thresholds" else
+                             ("comment-share-ratchet", "comment-share.json"))
+        assert artifact in result.stderr and payload in result.stderr, result.stderr
+        assert tip == base, f"{mode}: malformed handoff published a commit"
+    else:
+        bare = runner / "ratchet-repo"
+        assert git(bare, "rev-parse", "--is-bare-repository") == "true"
+        assert not (bare / "json.py").exists(), "fetched source was materialized"
+        assert (tip != base) == (mode != "absent"), f"{mode}: wrong publication outcome"
+        actual = json.loads(git(origin, "show", "main:.github/ci-thresholds.json"))
+        assert actual["coverage"]["python"]["floor"] == (96.4 if thresholds_selected else 96.2)
+        actual = json.loads(git(origin, "show", "main:.github/comment-share.json"))
+        assert actual == {"a.py": [35 if records_selected else 40, 100]}
+    print(f"  {mode}: exit {result.returncode}; shadow absent; publication verified")
+PYPUSHBOUNDARY
+}
+
 # --- the base-freshness check and the fixtures that drive it ---------------
 #
 # The check is executable code reached through a CI step, so it is rehearsed by
@@ -6709,6 +6831,7 @@ action_contract readme_quoted_replies
   ratchet_refuses_non_numeric_measurement ratchet_refuses_non_finite_measurement
   ratchet_refuses_schema ratchet_refuses_missing_or_boolean_schema ratchet_refuses_cell
   ratchet_refuses_missing_fields ratchet_refuses_invalid_record_numbers
+  ratchet_push_excludes_fetched_code
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
   gate_derivation_handles_every_spelling
