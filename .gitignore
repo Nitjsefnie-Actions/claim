@@ -47,5 +47,6 @@ tests/diffcoverage/*
 !.github/workflows/secrets.yml
 !.github/workflows/audit.yml
 !.github/workflows/coverage-comment.yml
+!.github/workflows/ratchet-push.yml
 !.github/workflows/requirements.txt
 !.github/workflows/requirements-pip-audit.txt
