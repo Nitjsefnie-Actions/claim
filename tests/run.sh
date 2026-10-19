@@ -2505,12 +2505,13 @@ missing_login_initial() { invalid_assignee_snapshot '[{}]' initial; }
 missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 
 # --- automatic coverage-floor ratchet: real command, observable data --------
-# A >= comparator writes on equality; a reversed comparator loosens the floor;
-# missing validation accepts broken records. Drive those branches as subprocesses
+# Comparing to the floor raises inside the hysteresis; a zero gap reds the
+# first dip after a raise. Drive those branches as subprocesses
 # so a source-text pin cannot stay green while the operator changes.
 ratchet_case() {
   python3 - "$ROOT" "$GH_CASE" "$1" <<'PYRATCHET'
 from pathlib import Path
+from decimal import Decimal
 import json
 import subprocess
 import sys
@@ -2520,18 +2521,26 @@ case = sys.argv[3]
 record = {
     "schema_version": 1,
     "coverage": {"python": {
-        "floor": 96.2, "measured": 96.2, "cell": "ubuntu-latest"}},
+        "floor": 94.7, "measured": 96.2, "cell": "ubuntu-latest"}},
 }
 thresholds = scratch / "thresholds.json"
 out = scratch / "not-created"
-measured = "96.26"
+measured = "97.8"
+expected_floor = Decimal("96.3")
 refused = False
 if case == "equal":
     measured = "96.2"
 elif case == "lower":
     measured = "95.9"
-elif case == "rounded_equal":
-    measured = "96.24"
+elif case == "within_hysteresis":
+    measured = "97.6"
+elif case == "below_boundary":
+    measured = "97.69999999999999"
+elif case == "boundary":
+    measured = "97.7"
+elif case == "decimal_raise":
+    measured = "97.71"
+    expected_floor = Decimal("96.21")
 elif case == "malformed":
     refused = True
 elif case.startswith("measured:"):
@@ -2573,35 +2582,40 @@ else:
     assert result.returncode == 0, f"{case}: exit {result.returncode}: {result.stderr}"
     assert not result.stderr, result.stderr
     assert len(result.stdout.splitlines()) == 1, "expected one decision line"
-    if case == "better":
-        assert out.is_dir(), "strictly better measurement staged no record"
+    if case in ("better", "decimal_raise"):
+        assert out.is_dir(), "gain above the hysteresis staged no record"
         assert sorted(p.name for p in out.iterdir()) == ["ci-thresholds.json"]
         staged = out / "ci-thresholds.json"
-        assert json.loads(staged.read_text()) == {
+        assert json.loads(staged.read_text(), parse_float=Decimal) == {
             "schema_version": 1,
             "coverage": {"python": {
-                "floor": 96.3, "measured": 96.3, "cell": "ubuntu-latest"}},
-        }, "the rounded raise or record metadata is wrong"
+                "floor": expected_floor, "measured": Decimal(measured),
+                "cell": "ubuntu-latest"}},
+        }, "the calibration gap, exact measurement or record metadata is wrong"
         assert staged.read_text() == """{
   "schema_version": 1,
   "coverage": {
     "python": {
-      "floor": 96.3,
-      "measured": 96.3,
+      "floor": FLOOR,
+      "measured": MEASURED,
       "cell": "ubuntu-latest"
     }
   }
 }
-""", "staged JSON does not use the committed two-space layout"
+""".replace("FLOOR", str(expected_floor)).replace("MEASURED", measured), \
+            "staged JSON does not use the committed two-space layout"
     else:
         assert not out.exists(), f"{case}: no raise justified, but the out-dir was created"
 PYRATCHET
 }
 
-ratchet_strictly_better() { ratchet_case better; }
+ratchet_above_hysteresis_keeps_calibration_gap() { ratchet_case better; }
 ratchet_equal_writes_nothing() { ratchet_case equal; }
 ratchet_lower_never_loosens() { ratchet_case lower; }
-ratchet_rounding_matches_gate() { ratchet_case rounded_equal; }
+ratchet_within_hysteresis_writes_nothing() { ratchet_case within_hysteresis; }
+ratchet_below_hysteresis_boundary_writes_nothing() { ratchet_case below_boundary; }
+ratchet_exact_hysteresis_boundary_writes_nothing() { ratchet_case boundary; }
+ratchet_raise_uses_decimal_values() { ratchet_case decimal_raise; }
 ratchet_refuses_malformed_json() { ratchet_case malformed; }
 ratchet_refuses_non_numeric_measurement() { ratchet_case measured:garbage; }
 ratchet_refuses_non_finite_measurement() {
@@ -6826,8 +6840,11 @@ action_contract readme_quoted_replies
   # drift direction.
   suite_legs_covers_readme suite_legs_refuses_each_unmodelled_shape
   suite_legs_reddens_on_de_scoped_step
-  ratchet_strictly_better ratchet_equal_writes_nothing ratchet_lower_never_loosens
-  ratchet_rounding_matches_gate ratchet_refuses_malformed_json
+  ratchet_above_hysteresis_keeps_calibration_gap ratchet_equal_writes_nothing
+  ratchet_lower_never_loosens ratchet_within_hysteresis_writes_nothing
+  ratchet_below_hysteresis_boundary_writes_nothing
+  ratchet_exact_hysteresis_boundary_writes_nothing ratchet_raise_uses_decimal_values
+  ratchet_refuses_malformed_json
   ratchet_refuses_non_numeric_measurement ratchet_refuses_non_finite_measurement
   ratchet_refuses_schema ratchet_refuses_missing_or_boolean_schema ratchet_refuses_cell
   ratchet_refuses_missing_fields ratchet_refuses_invalid_record_numbers
