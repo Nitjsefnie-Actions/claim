@@ -2503,6 +2503,132 @@ null_assignee_confirm() { invalid_assignee_snapshot '[null]' confirm; }
 missing_login_initial() { invalid_assignee_snapshot '[{}]' initial; }
 missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 
+# --- automatic coverage-floor ratchet: real command, observable data --------
+# A >= comparator writes on equality; a reversed comparator loosens the floor;
+# missing validation accepts broken records. Drive those branches as subprocesses
+# so a source-text pin cannot stay green while the operator changes.
+ratchet_case() {
+  python3 - "$ROOT" "$GH_CASE" "$1" <<'PYRATCHET'
+from pathlib import Path
+import json
+import subprocess
+import sys
+
+root, scratch = map(Path, sys.argv[1:3])
+case = sys.argv[3]
+record = {
+    "schema_version": 1,
+    "coverage": {"python": {
+        "floor": 96.2, "measured": 96.2, "cell": "ubuntu-latest"}},
+}
+thresholds = scratch / "thresholds.json"
+out = scratch / "not-created"
+measured = "96.26"
+refused = False
+if case == "equal":
+    measured = "96.2"
+elif case == "lower":
+    measured = "95.9"
+elif case == "rounded_equal":
+    measured = "96.24"
+elif case == "malformed":
+    refused = True
+elif case.startswith("measured:"):
+    measured = case.split(":", 1)[1]
+    refused = True
+elif case == "schema":
+    record["schema_version"] = 2
+    refused = True
+elif case == "missing_schema":
+    del record["schema_version"]
+    refused = True
+elif case == "boolean_schema":
+    record["schema_version"] = True
+    refused = True
+elif case == "cell":
+    record["coverage"]["python"]["cell"] = "macos-latest"
+    refused = True
+elif case.startswith("missing:"):
+    del record["coverage"]["python"][case.split(":", 1)[1]]
+    refused = True
+elif case.startswith("invalid:"):
+    field, value = case.split(":")[1:]
+    record["coverage"]["python"][field] = json.loads(value)
+    refused = True
+elif case != "better":
+    raise AssertionError(f"unmodelled ratchet case: {case}")
+thresholds.write_text("{broken" if case == "malformed" else json.dumps(record))
+before = thresholds.read_bytes()
+result = subprocess.run(
+    ["python3", str(root / ".github/scripts/ratchet_thresholds.py"),
+     f"--measured={measured}", "--thresholds", str(thresholds), "--out-dir", str(out)],
+    check=False, capture_output=True, text=True)
+assert thresholds.read_bytes() == before, "the measuring script edited the input record"
+if refused:
+    assert result.returncode != 0, f"{case}: invalid input accepted: {result.stdout}"
+    assert str(thresholds) in result.stderr, f"{case}: refusal did not name {thresholds}"
+    assert not out.exists(), f"{case}: refusal staged data"
+else:
+    assert result.returncode == 0, f"{case}: exit {result.returncode}: {result.stderr}"
+    assert not result.stderr, result.stderr
+    assert len(result.stdout.splitlines()) == 1, "expected one decision line"
+    if case == "better":
+        assert out.is_dir(), "strictly better measurement staged no record"
+        assert sorted(p.name for p in out.iterdir()) == ["ci-thresholds.json"]
+        staged = out / "ci-thresholds.json"
+        assert json.loads(staged.read_text()) == {
+            "schema_version": 1,
+            "coverage": {"python": {
+                "floor": 96.3, "measured": 96.3, "cell": "ubuntu-latest"}},
+        }, "the rounded raise or record metadata is wrong"
+        assert staged.read_text() == """{
+  "schema_version": 1,
+  "coverage": {
+    "python": {
+      "floor": 96.3,
+      "measured": 96.3,
+      "cell": "ubuntu-latest"
+    }
+  }
+}
+""", "staged JSON does not use the committed two-space layout"
+    else:
+        assert not out.exists(), f"{case}: no raise justified, but the out-dir was created"
+PYRATCHET
+}
+
+ratchet_strictly_better() { ratchet_case better; }
+ratchet_equal_writes_nothing() { ratchet_case equal; }
+ratchet_lower_never_loosens() { ratchet_case lower; }
+ratchet_rounding_matches_gate() { ratchet_case rounded_equal; }
+ratchet_refuses_malformed_json() { ratchet_case malformed; }
+ratchet_refuses_non_numeric_measurement() { ratchet_case measured:garbage; }
+ratchet_refuses_non_finite_measurement() {
+  local value
+  for value in NaN inf -inf; do
+    ratchet_case "measured:$value" || return 1
+  done
+}
+ratchet_refuses_schema() { ratchet_case schema; }
+ratchet_refuses_missing_or_boolean_schema() {
+  ratchet_case missing_schema && ratchet_case boolean_schema
+}
+ratchet_refuses_cell() { ratchet_case cell; }
+ratchet_refuses_missing_fields() {
+  local field
+  for field in floor measured cell; do
+    ratchet_case "missing:$field" || return 1
+  done
+}
+ratchet_refuses_invalid_record_numbers() {
+  local field value
+  for field in floor measured; do
+    for value in '"96.2"' null true NaN Infinity; do
+      ratchet_case "invalid:$field:$value" || return 1
+    done
+  done
+}
+
 # --- the base-freshness check and the fixtures that drive it ---------------
 #
 # The check is executable code reached through a CI step, so it is rehearsed by
@@ -2994,6 +3120,7 @@ gate_paths_derived_from_workflows() {
   }
   local expected='.coveragerc
 .github/ci-thresholds.json
+.github/scripts/ratchet_thresholds.py
 .github/workflows/actionlint.yml
 .github/workflows/audit.yml
 .github/workflows/claim.yml
@@ -5859,9 +5986,9 @@ EOF
 diffcoverage_artifact_names_one_leg() {
   # A run's artifact names are one namespace shared by every job in it, so
   # the wiring must keep exactly one uploader per name: the ubuntu matrix
-  # leg alone uploads `coverage-xml`, and the diff-coverage job is the only
-  # other uploader. A second leg under either name would leave the download
-  # resolving the pair however it likes.
+  # leg alone uploads `coverage-xml` and (on pushes) `ratchet-push`; the
+  # diff-coverage job alone uploads its comment. A second leg under any
+  # name would leave the download resolving the pair however it likes.
   python3 - "$ROOT/.github/workflows/tests.yml" <<'PYWIRE'
 import re
 import sys
@@ -5876,6 +6003,7 @@ for block in re.split(r"\n(?=      - )", text):
     found.append((cond.group(1) if cond else None,
                   name.group(1) if name else None))
 expected = [("matrix.os == 'ubuntu-latest'", "coverage-xml"),
+            ("matrix.os == 'ubuntu-latest' && github.event_name == 'push'", "ratchet-push"),
             (None, "diff-coverage-comment")]
 if found != expected:
     print(f"tests.yml's upload-artifact steps are {found!r}, expected "
@@ -6028,6 +6156,14 @@ REFUSALS = [
                           COVERAGE_IF.replace("'ubuntu-latest'",
                                               '"ubuntu-latest"')),
      'a step `if:` this pin does not model'),
+    ("a ratchet if missing its event term",
+     lambda w, m: planted(w, m, "wf",
+                          "      - name: Record the ratchet data\n"
+                          "        if: matrix.os == 'ubuntu-latest' && "
+                          "github.event_name == 'push'\n",
+                          "      - name: Record the ratchet data\n"
+                          "        if: matrix.os == 'ubuntu-latest'\n"),
+     "a ratchet step must carry the push-only `if:` spelling"),
     ("an if carrying no value",
      lambda w, m: planted(w, m, "wf",
                           "      - name: Compile the claim script\n        # Explicit",
@@ -6565,6 +6701,11 @@ action_contract readme_quoted_replies
   # drift direction.
   suite_legs_covers_readme suite_legs_refuses_each_unmodelled_shape
   suite_legs_reddens_on_de_scoped_step
+  ratchet_strictly_better ratchet_equal_writes_nothing ratchet_lower_never_loosens
+  ratchet_rounding_matches_gate ratchet_refuses_malformed_json
+  ratchet_refuses_non_numeric_measurement ratchet_refuses_non_finite_measurement
+  ratchet_refuses_schema ratchet_refuses_missing_or_boolean_schema ratchet_refuses_cell
+  ratchet_refuses_missing_fields ratchet_refuses_invalid_record_numbers
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_paths_derived_from_workflows
   gate_derivation_handles_every_spelling

@@ -73,7 +73,10 @@ Legs, and how they are derived:
       `runner.os == 'Windows'`  -> {windows};
       `matrix.os != 'windows-latest'` -> the live matrix legs minus windows;
       `matrix.os == 'ubuntu-latest'`  -> the live matrix legs that are ubuntu;
-      -- the last two derive rather than name constants, because the pin's
+      `matrix.os == 'ubuntu-latest' && github.event_name == 'push'`
+          -> the live matrix legs that are ubuntu; the event term does not
+          change the OS-legs dimension this pin derives;
+      -- these matrix spellings derive rather than name constants, because the pin's
       purpose is agreement surviving a changed matrix: constants would
       false-red a consistent README update after a matrix edit and let the
       drift through once the guard's own two messages had been remediated
@@ -121,7 +124,9 @@ pin, not a row to skip. A mapping key whose row vanished from the README,
 and a mapped step that no longer exists in the workflow, fail semantically
 (exit 1), naming the drifted half. Every step carrying an `if:` must be
 mapped by some row or named in EXEMPT_STEPS -- membership exact, so a name
-merely containing an exempt name is not exempt; the two checkout steps carry
+merely containing an exempt name is not exempt. The two ratchet steps must
+carry the push-only spelling: their OS legs alone cannot detect a removed
+event term that would stage a PR merge tree. The two checkout steps carry
 no `if:` and sit outside the sweep.
 
 Shapes this pin refuses on a fine file, stated rather than assumed (the
@@ -167,10 +172,11 @@ LEG_FOR_OS = {
 COLUMNS = ("ubuntu", "macos", "windows", "versions")
 HEADER = ("ubuntu", "macos", "windows", "3.11–3.14 (ubuntu)")
 
-# The four landed `if:` spellings, matched against the normalised value.
+# The five landed `if:` spellings, matched against the normalised value.
 WINDOWS_IF = "runner.os == 'Windows'"
 NOT_WINDOWS_IF = "matrix.os != 'windows-latest'"
 UBUNTU_IF = "matrix.os == 'ubuntu-latest'"
+UBUNTU_PUSH_IF = "matrix.os == 'ubuntu-latest' && github.event_name == 'push'"
 CHAIN_IF = "${{ !cancelled() && steps.install_checks.outcome == 'success' }}"
 CHAIN_ID = "install_checks"
 DIFF_COVERAGE_IF = (
@@ -187,7 +193,8 @@ ROW_STEPS = {
     "Coverage measurement and gate": (
         "Install coverage tooling", "Record the coverage summary",
         "Coverage gate", "Write the coverage XML",
-        "Upload the coverage XML"),
+        "Upload the coverage XML", "Record the ratchet data",
+        "Upload the ratchet data"),
     "Merge-conflict marker check": (
         "Check no tracked file carries a merge-conflict marker",),
     "Compile the claim script": ("Compile the claim script",),
@@ -435,6 +442,13 @@ def legs_for_if(step, matrix_legs, legs_by_id):
     if step["if"] is None:
         return frozenset(matrix_legs)
     condition = normalise(step["if"])
+    if step["name"] in ("Record the ratchet data", "Upload the ratchet data"):
+        if condition != UBUNTU_PUSH_IF:
+            refuse(step["if"], "a ratchet step must carry the push-only `if:` spelling")
+    if condition == UBUNTU_PUSH_IF:
+        # The event term restricts runs, not OS legs: this table models
+        # runner coverage, so it still derives the live ubuntu intersection.
+        return frozenset(matrix_legs) & {"ubuntu"}
     if condition == WINDOWS_IF:
         return frozenset({"windows"})
     if condition == NOT_WINDOWS_IF:
