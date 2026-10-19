@@ -322,7 +322,7 @@ not_a_command_bigger_than_an_argument() {
   expect_not_a_command 32740 emoji
   run_claim 1 || result=$?
   posted=$(recorded_body_size "$GH_CASE/calls.jsonl" bytes)
-  if [[ ! $posted =~ ^[0-9]+$ ]]; then
+  if [[ -z $posted || $posted == *[!0-9]* ]]; then
     printf '  could not measure the posted reply: %s\n' "$posted"
     result=1
   elif (( posted <= 131072 )); then
@@ -1693,7 +1693,8 @@ claim_number_reply_length_bounded() {
   expect_over_length_reply
   run_claim 1 || result=$?
   long_len=$(posted_comment_length)
-  if [[ ! $short_len =~ ^[0-9]+$ || ! $long_len =~ ^[0-9]+$ ]]; then
+  if [[ -z $short_len || $short_len == *[!0-9]* ||
+          -z $long_len || $long_len == *[!0-9]* ]]; then
     printf '  reply length could not be measured: %s and %s\n' \
       "$short_len" "$long_len"
     result=1
@@ -5395,7 +5396,7 @@ stub_models_the_body_on_stdin() {
   # `unmeasured: unbound variable` instead of reaching the diagnostic below.
   # A measurement that did not happen is not a length that differs, and the
   # other two callers of recorded_body_size already say so before comparing.
-  if [[ ! $recorded =~ ^[0-9]+$ ]]; then
+  if [[ -z $recorded || $recorded == *[!0-9]* ]]; then
     printf '  could not measure what the stub recorded: %s\n' "$recorded"
     result=1
   elif (( status != 0 || recorded != 65536 )); then
