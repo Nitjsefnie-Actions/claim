@@ -34,10 +34,10 @@ red every fetch of main forever over commits nobody can amend.
 WHAT IT CANNOT SEE, and says so rather than guessing:
 
   - A subject that does not parse — a merge commit, a non-conforming
-    subject, anything without a lowercase type, a scope in parens and a
-    colon. It is not a failure: it is counted and listed on stdout, so a
-    green is never silent about what it skipped. Parsing it anyway would put
-    a guessed scope under a gate it never agreed to.
+    subject, anything without a lowercase type, a scope of words separated
+    by single spaces in parens and a colon. It is not a failure: it is counted
+    and listed on stdout, so a green is never silent about what it skipped.
+    Parsing it anyway would put a guessed scope under a gate it never agreed to.
   - A `name:` line this reader cannot read — quoted, anchored, a block
     scalar, a trailing comment, continued onto the next line, or missing
     entirely. Each is a refusal naming the file: an incomplete set is a
@@ -262,13 +262,13 @@ def fetch_base(root):
 
 
 # A Conventional-Commits-shaped subject: a lowercase type, an optional
-# breaking marker after the type and/or after the scope's closing paren, a
-# scope of non-parenthesis non-whitespace inside parens, and the colon
-# CONTRIBUTING requires. A type outside CONTRIBUTING's table is not this
-# regex's problem — the rule below flags any non-ci type on a workflow-name
-# scope, and a bad type is a defect under any scope.
+# breaking marker after the type and/or closing paren, a
+# scope of non-whitespace non-parenthesis words separated by single spaces
+# inside parens, and a colon. Types outside CONTRIBUTING's table are not this
+# regex's problem — the rule flags any non-ci type on a workflow-name scope;
+# a bad type is a defect under any scope.
 SUBJECT = re.compile(
-    r"^(?P<type>[a-z]+)!?\((?P<scope>[^()\s]+)\)!?:\s?(?P<summary>\S.*)?$")
+    r"^(?P<type>[a-z]+)!?\((?P<scope>[^\s()]+(?: [^\s()]+)*)\)!?:\s?(?P<summary>\S.*)?$")
 
 
 def outgoing_commits(root, base):
