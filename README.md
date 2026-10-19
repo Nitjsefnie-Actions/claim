@@ -40,7 +40,7 @@ SHA.
 ```yaml
 name: claim
 on:
-  issue_comment:
+  issue_comment:  # zizmor: ignore[dangerous-triggers]
     types: [created]
 concurrency:
   group: claim-${{ github.event.issue.number }}
@@ -64,6 +64,13 @@ jobs:
           max-claims: 'read=2, triage=4, write=6, maintain=10, admin=-1'
           expire: '7'
 ```
+
+zizmor 1.31.1 reports `issue_comment` triggers under its `dangerous-triggers`
+audit; 1.30.1 did not report this trigger. This job has no checkout or `run:`
+step, the comment body never becomes shell code, and its only call is the
+claim action against the GitHub API. The inline suppression records that
+judgment beside the block so a downstream repository copying it keeps a green
+zizmor gate on the upgrade.
 
 The `with:` block is the reference policy this repository's own
 `claim.yml` deploys: `max-claims` caps how many open issues one account
