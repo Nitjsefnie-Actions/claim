@@ -126,7 +126,8 @@ fi
 # invents no answer.
 if [[ $# -eq 2 && $1 == api && $2 == user ]]; then
   if [[ -f $GH_CASE/identity.response.1 ]]; then
-    identity_ordinal=$(( $(cat "$GH_CASE/identity-sequence") + 1 ))
+    identity_ordinal=$(cat "$GH_CASE/identity-sequence")
+    identity_ordinal=$(( identity_ordinal + 1 ))
     printf '%s\n' "$identity_ordinal" > "$GH_CASE/identity-sequence"
     answer=$GH_CASE/identity.response.$identity_ordinal
     answer_status=$answer.status
@@ -172,7 +173,8 @@ fi
 # answered outside the sequence — never shifts another call's number. The
 # counter needs its own file because calls.jsonl now carries a record the
 # sequence does not answer.
-ordinal=$(( $(cat "$GH_CASE/sequence") + 1 ))
+ordinal=$(cat "$GH_CASE/sequence")
+ordinal=$(( ordinal + 1 ))
 printf '%s\n' "$ordinal" > "$GH_CASE/sequence"
 response="$GH_CASE/response.$ordinal"
 if [[ ! -f $response ]]; then
