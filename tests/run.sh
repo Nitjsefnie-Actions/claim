@@ -4365,10 +4365,10 @@ YAML
     result=1
   fi
 
-  # Leading and doubled spaces stay outside the grammar. Each subject must
-  # be listed as skipped; each amend adds one examined subject for later states.
+  # Whitespace is captured verbatim: padded and unmatched doubled-space
+  # scopes are examined, but cannot borrow the single-space workflow name.
   printf 'a leading-space scope\n' >> "$tree/NOTES.md"
-  subject='fix( release audit): keep leading spaces out'
+  subject='fix( release audit): preserve the leading space'
   gate_commit_all "$tree" "$subject"
   gate_commit_in_range "$tree" "$subject" || return 1
   gate_run_step "$fixture" "$script"
@@ -4377,19 +4377,18 @@ YAML
     cat "$GH_CASE/stdout" "$GH_CASE/stderr"
     result=1
   fi
-  if ! grep -Fq 'Examined 3 commit subjects in origin/main..HEAD; 1 not examined.' "$GH_CASE/stdout" \
-    || ! grep -Fq "    $(git -C "$tree" rev-parse HEAD) $subject" "$GH_CASE/stdout" \
+  if ! grep -Fq 'Examined 4 commit subjects in origin/main..HEAD; 0 not examined.' "$GH_CASE/stdout" \
     || ! grep -Fq 'No commit pairs' "$GH_CASE/stdout"; then
-    printf '  the leading-space subject was not listed as unexamined:\n'
+    printf '  the leading-space scope was not examined and accepted verbatim:\n'
     cat "$GH_CASE/stdout"
     result=1
   fi
-  git -C "$tree" commit --quiet --amend -m 'docs(readme): keep leading spaces out'
-  subject='docs(readme): keep leading spaces out'
+  git -C "$tree" commit --quiet --amend -m 'docs(readme): preserve the leading space'
+  subject='docs(readme): preserve the leading space'
   gate_commit_in_range "$tree" "$subject" || return 1
 
   printf 'a doubled-space scope\n' >> "$tree/NOTES.md"
-  subject='fix(release  audit): keep doubled spaces out'
+  subject='fix(release  audit): check the release'
   gate_commit_all "$tree" "$subject"
   gate_commit_in_range "$tree" "$subject" || return 1
   gate_run_step "$fixture" "$script"
@@ -4398,15 +4397,124 @@ YAML
     cat "$GH_CASE/stdout" "$GH_CASE/stderr"
     result=1
   fi
-  if ! grep -Fq 'Examined 4 commit subjects in origin/main..HEAD; 1 not examined.' "$GH_CASE/stdout" \
-    || ! grep -Fq "    $(git -C "$tree" rev-parse HEAD) $subject" "$GH_CASE/stdout" \
+  if ! grep -Fq 'Examined 5 commit subjects in origin/main..HEAD; 0 not examined.' "$GH_CASE/stdout" \
     || ! grep -Fq 'No commit pairs' "$GH_CASE/stdout"; then
-    printf '  the doubled-space subject was not listed as unexamined:\n'
+    printf '  the unmatched doubled-space scope was not examined and accepted:\n'
     cat "$GH_CASE/stdout"
     result=1
   fi
-  git -C "$tree" commit --quiet --amend -m 'docs(readme): keep doubled spaces out'
-  subject='docs(readme): keep doubled spaces out'
+  git -C "$tree" commit --quiet --amend -m 'docs(readme): check the release'
+  subject='docs(readme): check the release'
+  gate_commit_in_range "$tree" "$subject" || return 1
+
+  # The same doubled-space spelling now names a real workflow: membership
+  # must use the exact capture, and both fix and ci must reach the type rule.
+  cat > "$tree/.github/workflows/doubled-space.yml" <<'YAML'
+name: release  audit
+on:
+  push:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YAML
+  subject='fix(release  audit): check the release'
+  gate_commit_all "$tree" "$subject"
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  doubled-space workflow: expected a non-zero exit, got 0\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # shellcheck disable=SC2016
+  if ! grep -Fq "$subject" "$GH_CASE/stdout" \
+    || ! grep -Fq 'scope `release  audit`' "$GH_CASE/stdout" \
+    || ! grep -Fq 'type `fix` is not `ci`' "$GH_CASE/stdout"; then
+    printf '  the doubled-space red did not name the subject, scope and type:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  git -C "$tree" commit --quiet --amend -m 'ci(release  audit): check the release'
+  subject='ci(release  audit): check the release'
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") != 0 ]]; then
+    printf '  ci(release  audit): expected exit 0, got %s\n' "$(cat "$GH_CASE/status")"
+    cat "$GH_CASE/stdout" "$GH_CASE/stderr"
+    result=1
+  fi
+  if ! grep -Fq 'Examined 6 commit subjects in origin/main..HEAD; 0 not examined.' "$GH_CASE/stdout"; then
+    printf '  the doubled-space ci subject was not examined:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+
+  # Non-ASCII whitespace is part of a name too. A U+00A0 between these words
+  # survives YAML and must not quietly remove the subject from the gate.
+  cat > "$tree/.github/workflows/nbsp.yml" <<'YAML'
+name: release audit
+on:
+  push:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YAML
+  subject='fix(release audit): check the nbsp workflow'
+  gate_commit_all "$tree" "$subject"
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  nbsp workflow: expected a non-zero exit, got 0\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # shellcheck disable=SC2016
+  if ! grep -Fq "$subject" "$GH_CASE/stdout" \
+    || ! grep -Fq 'scope `release audit`' "$GH_CASE/stdout" \
+    || ! grep -Fq 'type `fix` is not `ci`' "$GH_CASE/stdout"; then
+    printf '  the nbsp red did not name the subject, scope and type:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  git -C "$tree" commit --quiet --amend -m 'docs(readme): check the nbsp workflow'
+  subject='docs(readme): check the nbsp workflow'
+  gate_commit_in_range "$tree" "$subject" || return 1
+
+  # A third word must reach the same rule: admitting one separator alone
+  # would pass the two-word states while skipping this workflow's scope.
+  cat > "$tree/.github/workflows/three-word.yml" <<'YAML'
+name: release audit check
+on:
+  push:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YAML
+  subject='fix(release audit check): check three words'
+  gate_commit_all "$tree" "$subject"
+  gate_commit_in_range "$tree" "$subject" || return 1
+  gate_run_step "$fixture" "$script"
+  if [[ $(cat "$GH_CASE/status") == 0 ]]; then
+    printf '  three-word workflow: expected a non-zero exit, got 0\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  # shellcheck disable=SC2016
+  if ! grep -Fq "$subject" "$GH_CASE/stdout" \
+    || ! grep -Fq 'scope `release audit check`' "$GH_CASE/stdout" \
+    || ! grep -Fq 'type `fix` is not `ci`' "$GH_CASE/stdout"; then
+    printf '  the three-word red did not name the subject, scope and type:\n'
+    cat "$GH_CASE/stdout"
+    result=1
+  fi
+  git -C "$tree" commit --quiet --amend -m 'docs(readme): check three words'
+  subject='docs(readme): check three words'
   gate_commit_in_range "$tree" "$subject" || return 1
 
   # The claim exemption, in both directions: fix(claim) is exempt because
@@ -4425,8 +4533,8 @@ YAML
     cat "$GH_CASE/stdout" "$GH_CASE/stderr"
     result=1
   fi
-  if ! grep -Fq 'Examined 7' "$GH_CASE/stdout"; then
-    printf '  the green over the exempt scope does not say all seven subjects were examined:\n'
+  if ! grep -Fq 'Examined 10' "$GH_CASE/stdout"; then
+    printf '  the green over the exempt scope does not say all ten subjects were examined:\n'
     cat "$GH_CASE/stdout"
     result=1
   fi
@@ -4475,8 +4583,8 @@ YAML
     cat "$GH_CASE/stdout"
     result=1
   fi
-  if ! grep -Fq 'Examined 7' "$GH_CASE/stdout"; then
-    printf '  the green after the rebase does not say the seven replayed subjects were examined:\n'
+  if ! grep -Fq 'Examined 10' "$GH_CASE/stdout"; then
+    printf '  the green after the rebase does not say the ten replayed subjects were examined:\n'
     cat "$GH_CASE/stdout"
     result=1
   fi
@@ -4616,8 +4724,9 @@ PYRAWTRACKED
   # The negative space of the widening: with `audit` in the set only through
   # the non-ASCII-named file, an ASCII-scoped subject is still examined and
   # still green -- the widened set admits, it does not refuse. The count is
-  # the eleven examined subjects here: test(harness) pin,
-  # ci(tests), ci(release audit), two repaired space scopes, fix(claim),
+  # the fourteen examined subjects here: test(harness) pin,
+  # ci(tests), ci(release audit), two repaired space scopes,
+  # ci(release  audit), repaired nbsp and three-word scopes, fix(claim),
   # ci(claim), fix(zzz), the two repaired amends
   # (docs(readme) rename a job, docs(readme) outgoing workflow change) and
   # this commit; the two renames are listed, never examined.
@@ -4630,7 +4739,7 @@ PYRAWTRACKED
     cat "$GH_CASE/stdout" "$GH_CASE/stderr"
     result=1
   fi
-  if ! grep -Fq 'Examined 11' "$GH_CASE/stdout"; then
+  if ! grep -Fq 'Examined 14' "$GH_CASE/stdout"; then
     printf '  the ascii green does not state what it examined:\n'
     cat "$GH_CASE/stdout"
     result=1

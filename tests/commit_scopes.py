@@ -34,10 +34,11 @@ red every fetch of main forever over commits nobody can amend.
 WHAT IT CANNOT SEE, and says so rather than guessing:
 
   - A subject that does not parse — a merge commit, a non-conforming
-    subject, anything without a lowercase type, a scope of words separated
-    by single spaces in parens and a colon. It is not a failure: it is counted
-    and listed on stdout, so a green is never silent about what it skipped.
-    Parsing it anyway would put a guessed scope under a gate it never agreed to.
+    subject, or anything without a lowercase type, a non-empty scope of
+    non-parenthesis characters in parens and a colon. Workflow names with
+    parentheses cannot be spelled as scopes here and stay listed, not examined.
+    Skips are counted and listed, never failed: guessing a scope would gate
+    a parse the contributor never wrote.
   - A `name:` line this reader cannot read — quoted, anchored, a block
     scalar, a trailing comment, continued onto the next line, or missing
     entirely. Each is a refusal naming the file: an incomplete set is a
@@ -261,14 +262,12 @@ def fetch_base(root):
     git(root, *arguments, what=f"fetch origin/{BASE_BRANCH}")
 
 
-# A Conventional-Commits-shaped subject: a lowercase type, an optional
-# breaking marker after the type and/or closing paren, a
-# scope of non-whitespace non-parenthesis words separated by single spaces
-# inside parens, and a colon. Types outside CONTRIBUTING's table are not this
-# regex's problem — the rule flags any non-ci type on a workflow-name scope;
-# a bad type is a defect under any scope.
+# A Conventional-Commits-shaped subject: lowercase type, optional breaking
+# markers after type and/or scope, and a non-empty scope without parentheses,
+# followed by a colon. Capture whitespace verbatim for exact name membership.
+# Types are not enumerated here; the rule below checks workflow-name scopes.
 SUBJECT = re.compile(
-    r"^(?P<type>[a-z]+)!?\((?P<scope>[^\s()]+(?: [^\s()]+)*)\)!?:\s?(?P<summary>\S.*)?$")
+    r"^(?P<type>[a-z]+)!?\((?P<scope>[^()]+)\)!?:\s?(?P<summary>\S.*)?$")
 
 
 def outgoing_commits(root, base):
