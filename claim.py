@@ -45,6 +45,10 @@ GH_ATTEMPTS = 3
 GH_RETRY_WAIT = 2
 
 
+class IssueDeletedError(Exception):
+    """The issue no longer exists, so there is nothing left to act on."""
+
+
 def transient_failure(stderr_text):
     """True when a failed gh call is the kind worth another attempt.
 
@@ -97,7 +101,9 @@ def _gh_call(argv, stdin=None):
 
 
 def gh(*args, stdin=None):
-    """Leave authentication, HTTP errors, and rate limits to the CLI.
+    """Leave authentication, HTTP errors other than deletion, and rate limits to the CLI.
+
+    GitHub's explicit deletion message raises IssueDeletedError so the run can end successfully.
 
     A transient failure — an HTTP 5xx, a 429, or a connection that never
     completed — is retried up to GH_ATTEMPTS times before this raises, so a
@@ -117,6 +123,9 @@ def gh(*args, stdin=None):
         # rather than passed through, so nothing else would put the reason
         # anywhere.
         sys.stderr.write(probe.stderr)
+        if "This issue was deleted (HTTP 410)" in probe.stderr:
+            # A bare 410 does not establish deletion; GitHub's message does.
+            raise IssueDeletedError
         if attempts > 1:
             # Named only when the run actually waited and retried: a single
             # failure is gh's own words, unchanged.
@@ -866,6 +875,9 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except IssueDeletedError:
+        print("issue was deleted; nothing was claimed")
+        sys.exit(0)
     except subprocess.CalledProcessError as error:
         sys.exit(error.returncode)
     except json.JSONDecodeError as error:

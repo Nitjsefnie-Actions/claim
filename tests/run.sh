@@ -2309,6 +2309,54 @@ read_transport_status() {
   run_claim 42
 }
 
+deleted_issue() {
+  body=/claim
+  expected_error='gh: This issue was deleted (HTTP 410)'
+  expect_gh_failure 1 "$expected_error" api repos/owner/project/issues/7
+  run_claim 0 $'issue was deleted; nothing was claimed\n'
+}
+
+missing_issue_still_fails() {
+  body=/claim
+  expected_error='gh: Not Found (HTTP 404)'
+  expect_gh_failure 1 "$expected_error" api repos/owner/project/issues/7
+  run_claim 1
+}
+
+unrelated_gone_still_fails() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='gh: Gone (HTTP 410)'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh_failure 1 "$expected_error" \
+    api repos/owner/project/collaborators/octo-claimant/permission
+  run_claim 1
+}
+
+deleted_issue_after_read() {
+  body=/claim
+  MAX_CLAIMS='read=2'
+  expected_error='gh: This issue was deleted (HTTP 410)'
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh_failure 1 "$expected_error" \
+    api repos/owner/project/collaborators/octo-claimant/permission
+  run_claim 0 $'issue was deleted; nothing was claimed\n'
+}
+
+deleted_issue_unclaim() {
+  body=/unclaim
+  expected_error='gh: This issue was deleted (HTTP 410)'
+  expect_gh_failure 1 "$expected_error" api repos/owner/project/issues/7
+  run_claim 0 $'issue was deleted; nothing was claimed\n'
+}
+
+deleted_issue_release() {
+  body=/release
+  expected_error='gh: This issue was deleted (HTTP 410)'
+  expect_gh_failure 1 "$expected_error" api repos/owner/project/issues/7
+  run_claim 0 $'issue was deleted; nothing was claimed\n'
+}
+
 # Issue 159: one transient GitHub failure — an HTTP 503, a 429, a connection
 # that never completed — used to fail the run on its first attempt, with no
 # retry and no reply. The retried-then-succeeds rows below pin the retry on
@@ -6996,6 +7044,18 @@ cases=(
   no_assignees_left_after_peer_removals
   # The transport: gh's refusals, and a failure to reach it at all.
   read_transport_status
+  # Issue 198: deletion ends successfully with no retry, reply or assignment.
+  deleted_issue
+  # Issue 198: a neighbouring marked 4xx must still fail the run.
+  missing_issue_still_fails
+  # Issue 198: an unrelated 410 proves no deletion and must fail without writes.
+  unrelated_gone_still_fails
+  # Issue 198: deletion after a successful issue read still stops without writes.
+  deleted_issue_after_read
+  # Issue 198: deletion also ends an unclaim command successfully without writes.
+  deleted_issue_unclaim
+  # Issue 198: deletion also ends a release command successfully without writes.
+  deleted_issue_release
   # Issue 159: a transient GitHub failure is retried a bounded number of
   # times before the run fails. One case per branch: the identity lookup and
   # the issue read each get a retried-then-succeeds row and an exhausted
