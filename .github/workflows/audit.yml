@@ -56,7 +56,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: audit-${{ github.event.pull_request.number || github.ref }}
+  group: audit-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
