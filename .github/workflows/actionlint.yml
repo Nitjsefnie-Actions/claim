@@ -61,7 +61,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: actionlint-${{ github.ref }}
+  group: actionlint-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
