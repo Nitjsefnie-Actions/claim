@@ -35,7 +35,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: codeql-${{ github.ref }}
+  group: codeql-${{ github.event_name == 'push' && format('{0}-{1}', github.ref, github.sha) || github.ref }}
   cancel-in-progress: true
 
 jobs:
