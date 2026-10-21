@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: comment-share-${{ github.ref }}
+  group: comment-share-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 jobs:
   comment-share:
