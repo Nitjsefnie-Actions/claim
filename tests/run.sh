@@ -6826,23 +6826,19 @@ spec.loader.exec_module(suite_legs)
 REAL_WF = (root / suite_legs.WORKFLOW).read_text()
 REAL_MD = (root / suite_legs.README).read_text()
 
-# Issue 170: an anchor that names an action release vanishes on the next
-# Dependabot bump and reds the case on the uniqueness assert, so the
-# pin-carrying anchor is read from the shipped workflow instead -- the shape
-# stays pinned, never which release (Nitjsefnie-Actions/pr-gate#77's rule for
-# its own workflow tests).
+# Issue 170: read the pin-carrying step from the shipped workflow: the shape
+# stays pinned, never which release (Nitjsefnie-Actions/pr-gate#77's rule).
+# Anchor on its name and uploader, reading to a blank line or the next step
+# so uploader inputs and conditions do not become fixture requirements.
 COVERAGE_XML_MATCH = re.search(
-    r"      - name: Upload the coverage XML\n"
-    r"        # actions/upload-artifact \S+\n"
-    r"        if: matrix\.os == 'ubuntu-latest'\n"
-    r"        uses: actions/upload-artifact@[0-9a-f]{40} # \S+\n"
-    r"        with:\n"
-    r"          name: coverage-xml\n"
-    r"          path: coverage\.xml\n"
-    r"          if-no-files-found: error\n",
-    REAL_WF)
-assert COVERAGE_XML_MATCH, "the coverage XML upload step is not the modelled shape"
+    r"^      - name: Upload the coverage XML\n"
+    r"(?:(?![ \t]*\n|      - ).*\n)*",
+    REAL_WF, re.M)
+assert COVERAGE_XML_MATCH, "the coverage XML step name anchor is missing"
 COVERAGE_XML_STEP = COVERAGE_XML_MATCH.group(0)
+assert re.search(
+    r"^        uses: actions/upload-artifact@[0-9a-f]{40} # \S+$",
+    COVERAGE_XML_STEP, re.M), "the coverage XML uploader anchor is missing"
 
 
 def fail(message):
