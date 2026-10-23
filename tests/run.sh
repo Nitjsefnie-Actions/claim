@@ -5969,6 +5969,7 @@ codeql_matrix_refuses_each_unmodelled_shape() {
   python3 - "$ROOT" <<'PYREFUSE'
 from pathlib import Path
 import importlib.util
+import re
 import sys
 
 root = Path(sys.argv[1])
@@ -5977,6 +5978,33 @@ spec = importlib.util.spec_from_file_location(
 codeql_matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(codeql_matrix)
 REAL = (root / codeql_matrix.FILE).read_text()
+
+# Issue 215: a plant anchored on a `with:` value line dies on that value's
+# next honest edit (`queries: security-extended` ->
+# `security-and-quality`), before exercising its refusal arm. Locate the
+# step by its `name:` line -- the shape stays pinned, never an input
+# value, and never a `uses:` revision or pin shape (#219's rule) -- and
+# read the planted line out of the located step, so the anchor is the
+# key, not the value (the #211 rule for the coverage-upload fixture,
+# PR 214).
+def step_line(name, key):
+    anchors = re.findall(
+        r"^      - name: " + re.escape(name) + r"\n"
+        r"(?:(?![ \t]*\n|      - ).*\n)*",
+        REAL, re.M)
+    assert len(anchors) == 1, (
+        f"the {name!r} step anchor appears {len(anchors)} times")
+    found = re.findall(rf"^          {re.escape(key)}: .*\n",
+                       anchors[0], re.M)
+    assert len(found) == 1, (
+        f"the `{key}:` line appears {len(found)} times in the {name!r} step")
+    line = found[0]
+    assert REAL.count(line) == 1, f"plant anchor not unique: {line!r}"
+    return line
+
+
+INIT_QUERIES = step_line("Initialize CodeQL", "queries")
+INIT_LANGUAGES = step_line("Initialize CodeQL", "languages")
 
 
 def fail(message):
@@ -6041,8 +6069,7 @@ REFUSALS = [
      lambda t: planted(t, ENTRY_PYTHON, "\t" + ENTRY_PYTHON),
      "tab in a line's indentation"),
     ("a block scalar swallowing a with value",
-     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
-                       "          languages: |\n"),
+     lambda t: planted(t, INIT_LANGUAGES, "          languages: |\n"),
      "does not model"),
     ("a missing anchor",
      lambda t: planted(t, "      matrix:\n", ""),
@@ -6060,31 +6087,25 @@ REFUSALS = [
      lambda t: planted(t, "jobs:\n", "\tjobs:\n"),
      "tab in a line's indentation"),
     ("a block scalar hosting a pinned line in a guarded step",
-     lambda t: planted(t, "          queries: security-extended\n",
-                       "          queries: security-extended\n"
-                       "        run: |\n          inert: text\n"),
+     lambda t: planted(t, INIT_QUERIES,
+                       INIT_QUERIES
+                       + "        run: |\n          inert: text\n"),
      "does not model"),
     ("a top-level block scalar",
      lambda t: planted(t, "on:\n", "on: |\n"),
      "does not model"),
     ("a block scalar under a colon-bearing key",
-     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
-                       "").replace(
-         "          queries: security-extended\n",
-         "          queries: security-extended\n        ru:n: |\n"
-         "          languages: ${{ matrix.language }}\n"),
+     lambda t: planted(t, INIT_LANGUAGES, "").replace(
+         INIT_QUERIES,
+         INIT_QUERIES + "        ru:n: |\n" + INIT_LANGUAGES),
      "does not model"),
     ("a block scalar header carrying a comment",
-     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
-                       "").replace(
-         "          queries: security-extended\n",
-         "          queries: security-extended\n"
-         "        run: | # host: x\n"
-         "          languages: ${{ matrix.language }}\n"),
+     lambda t: planted(t, INIT_LANGUAGES, "").replace(
+         INIT_QUERIES,
+         INIT_QUERIES + "        run: | # host: x\n" + INIT_LANGUAGES),
      "does not model"),
     ("a trailing comment on a read value",
-     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
-                       "          languages: ${{ matrix.language }} # note\n"),
+     lambda t: planted(t, INIT_LANGUAGES, INIT_LANGUAGES[:-1] + " # note\n"),
      "trailing comment"),
     ("two mappings on one entry line",
      lambda t: planted(t, "          - language: actions",
@@ -6100,8 +6121,7 @@ REFUSALS = [
          "      - name: Initialize CodeQL\n", ""),
      "sits under no step"),
     ("a second bare with: in one guarded step",
-     lambda t: planted(t, "          queries: security-extended\n",
-                       "          queries: security-extended\n        with:\n"),
+     lambda t: planted(t, INIT_QUERIES, INIT_QUERIES + "        with:\n"),
      "exactly one bare `with:`"),
     ("a duplicated job name line",
      lambda t: planted(t, "    name: analyze (${{ matrix.language }})\n",
@@ -6109,9 +6129,7 @@ REFUSALS = [
                        "    name: analyze (${{ matrix.language }})\n"),
      "expected exactly one job `name:` line"),
     ("a duplicated with value in the init step",
-     lambda t: planted(t, "          languages: ${{ matrix.language }}\n",
-                       "          languages: ${{ matrix.language }}\n"
-                       "          languages: ${{ matrix.language }}\n"),
+     lambda t: planted(t, INIT_LANGUAGES, INIT_LANGUAGES * 2),
      "expected exactly one `languages:`"),
     ("the job name below the steps block",
      lambda t: planted(t, "    name: analyze (${{ matrix.language }})\n", "").replace(
@@ -6147,6 +6165,7 @@ codeql_matrix_reddens_on_a_planted_matrix() {
   python3 - "$ROOT" <<'PYRED'
 from pathlib import Path
 import importlib.util
+import re
 import sys
 
 root = Path(sys.argv[1])
@@ -6155,6 +6174,31 @@ spec = importlib.util.spec_from_file_location(
 codeql_matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(codeql_matrix)
 REAL = (root / codeql_matrix.FILE).read_text()
+
+# Issue 215: a plant anchored on a `with:` value line dies on that value's
+# next honest edit, before exercising its red arm. Locate the init languages
+# and analyze category steps by their `name:` lines -- the shape stays pinned,
+# never an input value, and never a `uses:` revision or pin shape (#219's
+# rule) -- and read each planted line by key inside its step (the #211 rule
+# for the coverage-upload fixture, PR 214).
+def step_line(name, key):
+    anchors = re.findall(
+        r"^      - name: " + re.escape(name) + r"\n"
+        r"(?:(?![ \t]*\n|      - ).*\n)*",
+        REAL, re.M)
+    assert len(anchors) == 1, (
+        f"the {name!r} step anchor appears {len(anchors)} times")
+    found = re.findall(rf"^          {re.escape(key)}: .*\n",
+                       anchors[0], re.M)
+    assert len(found) == 1, (
+        f"the `{key}:` line appears {len(found)} times in the {name!r} step")
+    line = found[0]
+    assert REAL.count(line) == 1, f"plant anchor not unique: {line!r}"
+    return line
+
+
+INIT_LANGUAGES = step_line("Initialize CodeQL", "languages")
+ANALYZE_CATEGORY = step_line("Analyze", "category")
 
 
 def fail(message):
@@ -6183,14 +6227,12 @@ REDS = [
          "    name: analyze\n"),
      "does not interpolate"),
     ("init reading a default language set",
-     lambda t: planted(
-         t, "          languages: ${{ matrix.language }}\n",
-         "          languages: ${{ matrix.build-mode }}\n"),
+     lambda t: planted(t, INIT_LANGUAGES,
+                       "          languages: ${{ matrix.build-mode }}\n"),
      "the init step's languages"),
     ("SARIF filed with no language category",
-     lambda t: planted(
-         t, "          category: /language:${{ matrix.language }}\n",
-         "          category: /language:python\n"),
+     lambda t: planted(t, ANALYZE_CATEGORY,
+                       "          category: /language:python\n"),
      "the analyze step's category"),
 ]
 
@@ -6431,10 +6473,8 @@ EOF
 
 diffcoverage_artifact_names_one_leg() {
   # A run's artifact names are one namespace shared by every job in it, so
-  # the wiring must keep exactly one uploader per name: the ubuntu matrix
-  # leg alone uploads `coverage-xml` and (on pushes) `ratchet-push`; the
-  # diff-coverage job alone uploads its comment. A second leg under any
-  # name would leave the download resolving the pair however it likes.
+  # the wiring must keep exactly one uploader per name. A second leg under
+  # the same name would leave the download resolving the pair however it likes.
   python3 - "$ROOT/.github/workflows/tests.yml" <<'PYWIRE'
 import re
 import sys
@@ -6444,17 +6484,20 @@ found = []
 for block in re.split(r"\n(?=      - )", text):
     if not re.search(r"^        uses: actions/upload-artifact@", block, re.M):
         continue
-    cond = re.search(r"^        if: (.+)$", block, re.M)
-    name = re.search(r"^          name: (\S+)", block, re.M)
-    found.append((cond.group(1) if cond else None,
-                  name.group(1) if name else None))
-expected = [("matrix.os == 'ubuntu-latest'", "coverage-xml"),
-            ("matrix.os == 'ubuntu-latest' && github.event_name == 'push'", "ratchet-push"),
-            (None, "diff-coverage-comment")]
-if found != expected:
-    print(f"tests.yml's upload-artifact steps are {found!r}, expected "
-          f"{expected!r}: one artifact namespace per run means exactly one "
-          f"uploading leg per name", file=sys.stderr)
+    names = re.findall(r"^          name: (\S+)", block, re.M)
+    if len(names) != 1:
+        print(f"tests.yml's uploading block carries {len(names)} name lines, "
+              "expected exactly one: an uploading leg without exactly one "
+              "name leaves the run's artifact namespace ambiguous",
+              file=sys.stderr)
+        raise SystemExit(1)
+    found.extend(names)
+duplicates = sorted({name for name in found if found.count(name) > 1})
+if duplicates:
+    print(f"tests.yml's upload-artifact steps duplicate names {duplicates!r}: "
+          "one artifact namespace per run means exactly one uploading leg "
+          "per name: a download would resolve the pair however it likes",
+          file=sys.stderr)
     raise SystemExit(1)
 PYWIRE
 }
