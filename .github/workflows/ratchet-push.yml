@@ -52,14 +52,14 @@ jobs:
         id: list
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
+          CLAIM_REPO: ${{ github.repository }}
+          CLAIM_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           # A failed API request must not look like an absent artifact:
           # the pipeline's failure is a refusal, not a no-raise decision.
           set -o pipefail
           names="$(gh api -H 'Cache-Control: no-cache' --paginate \
-            "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+            "repos/$CLAIM_REPO/actions/runs/$CLAIM_RUN_ID/artifacts" \
             --jq '.artifacts[] | select(.expired != true) | .name' \
             | sort -u)"
           ratchet=false
@@ -104,25 +104,25 @@ jobs:
       - name: Push the tightened record to main
         if: steps.list.outputs.any == 'true'
         env:
-          MASTER_PUSH_DEPLOY_KEY: ${{ secrets.MASTER_PUSH_DEPLOY_KEY }}
-          REPO: ${{ github.repository }}
-          RATCHET_SELECTED: ${{ steps.list.outputs.ratchet }}
-          RECORDS_SELECTED: ${{ steps.list.outputs.records }}
+          CLAIM_MASTER_PUSH_DEPLOY_KEY: ${{ secrets.MASTER_PUSH_DEPLOY_KEY }}
+          CLAIM_REPO: ${{ github.repository }}
+          CLAIM_RATCHET_SELECTED: ${{ steps.list.outputs.ratchet }}
+          CLAIM_RECORDS_SELECTED: ${{ steps.list.outputs.records }}
         run: |
           # Fail closed when the environment is missing its secret: with
           # no key there is nothing to authenticate the push with, and
           # the fallback must never be a token.
-          if [ -z "${MASTER_PUSH_DEPLOY_KEY:-}" ]; then
-            echo "MASTER_PUSH_DEPLOY_KEY is empty: the main-push environment is missing its secret" >&2
+          if [ -z "${CLAIM_MASTER_PUSH_DEPLOY_KEY:-}" ]; then
+            echo "CLAIM_MASTER_PUSH_DEPLOY_KEY is empty: the main-push environment is missing its secret" >&2
             exit 1
           fi
           # Absence of an artifact is the no-op signal; a selected artifact
           # without its promised JSON is a broken handoff, not a no-raise.
-          if [ "$RATCHET_SELECTED" = true ] && [ ! -f "$RUNNER_TEMP/ratchet-data/ci-thresholds.json" ]; then
+          if [ "$CLAIM_RATCHET_SELECTED" = true ] && [ ! -f "$RUNNER_TEMP/ratchet-data/ci-thresholds.json" ]; then
             echo "artifact ratchet-push is missing ci-thresholds.json" >&2
             exit 1
           fi
-          if [ "$RECORDS_SELECTED" = true ] && [ ! -f "$RUNNER_TEMP/comment-share-data/comment-share.json" ]; then
+          if [ "$CLAIM_RECORDS_SELECTED" = true ] && [ ! -f "$RUNNER_TEMP/comment-share-data/comment-share.json" ]; then
             echo "artifact comment-share-ratchet is missing comment-share.json" >&2
             exit 1
           fi
@@ -130,7 +130,7 @@ jobs:
           # The agent is stopped when this step ends, whatever its
           # outcome: the key never outlives the step that loaded it.
           trap 'kill "$SSH_AGENT_PID" 2>/dev/null || true' EXIT
-          ssh-add <(printf '%s\n' "$MASTER_PUSH_DEPLOY_KEY") >/dev/null
+          ssh-add <(printf '%s\n' "$CLAIM_MASTER_PUSH_DEPLOY_KEY") >/dev/null
           mkdir -p ~/.ssh
           # GitHub SSH host keys, published by GitHub's Meta endpoint:
           # https://docs.github.com/en/rest/meta/meta#get-github-meta-information
@@ -139,7 +139,7 @@ jobs:
             'github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=' \
             >> ~/.ssh/known_hosts
           export GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=yes'
-          remote="${PUSH_REMOTE:-git@github.com:${REPO}.git}"
+          remote="${PUSH_REMOTE:-git@github.com:${CLAIM_REPO}.git}"
           scratch="$RUNNER_TEMP/ratchet-repo"
           # Only plain data files enter this directory. Never enter a
           # fetched tree, even for standard-library JSON validation.
@@ -152,7 +152,7 @@ jobs:
           # both artifacts. No source is checked out by read-tree.
           git -C "$scratch" read-tree "$fetched"
           message='Ratchet ci-thresholds: raise the coverage floor (automated)'
-          if [ "$RATCHET_SELECTED" = true ]; then
+          if [ "$CLAIM_RATCHET_SELECTED" = true ]; then
             if [ ! -s "$RUNNER_TEMP/ratchet-data/base.txt" ]; then
               echo "the ratchet data carried no base; the measuring job is broken" >&2
               exit 1
@@ -194,7 +194,7 @@ jobs:
             blob="$(git -C "$scratch" hash-object -w "$current")"
             git -C "$scratch" update-index --add --cacheinfo 100644 "$blob" .github/ci-thresholds.json
           fi
-          if [ "$RECORDS_SELECTED" = true ]; then
+          if [ "$CLAIM_RECORDS_SELECTED" = true ]; then
             if [ ! -s "$RUNNER_TEMP/comment-share-data/base.txt" ]; then
               echo "the comment-share data carried no base; the measuring job is broken" >&2
               exit 1
