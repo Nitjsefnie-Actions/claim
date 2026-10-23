@@ -516,9 +516,9 @@ jobs:
         # Through env, never interpolation: the number is event data, and a
         # run: block that inlined it would be program text built from input.
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLAIM_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          printf '%s\n' "$PR_NUMBER" > pr-number.txt
+          printf '%s\n' "$CLAIM_PR_NUMBER" > pr-number.txt
 
       - name: Upload the comment for the trusted commenter
         # actions/upload-artifact v7.0.1
