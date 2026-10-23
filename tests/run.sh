@@ -2726,7 +2726,7 @@ kill() { :; }
 """
 poison = ("import os\n"
           "open(os.environ['SHADOW_SENTINEL'], 'w').write("
-          "str(bool(os.environ.get('MASTER_PUSH_DEPLOY_KEY'))))\n"
+          "str(bool(os.environ.get('CLAIM_MASTER_PUSH_DEPLOY_KEY'))))\n"
           "raise RuntimeError('fetched json.py executed beside dummy deploy key')\n")
 
 def git(directory, *args):
@@ -2775,9 +2775,9 @@ for mode in ("thresholds", "records", "both", "missing-thresholds", "missing-rec
     ssh.write_text("#!/bin/sh\nexit 97\n")
     ssh.chmod(0o755)
     env = dict(os.environ, RUNNER_TEMP=str(runner), PROBE_SSH=str(folder / "ssh"),
-               MASTER_PUSH_DEPLOY_KEY="dummy-key-only", REPO="local/fixture",
-               RATCHET_SELECTED=str(thresholds_selected).lower(),
-               RECORDS_SELECTED=str(records_selected).lower(),
+               CLAIM_MASTER_PUSH_DEPLOY_KEY="dummy-key-only", CLAIM_REPO="local/fixture",
+               CLAIM_RATCHET_SELECTED=str(thresholds_selected).lower(),
+               CLAIM_RECORDS_SELECTED=str(records_selected).lower(),
                GITHUB_STEP_SUMMARY=str(folder / "summary"),
                SHADOW_SENTINEL=str(folder / "executed"),
                PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
