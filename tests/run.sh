@@ -47,16 +47,16 @@ fi
 # its own case directory or by assigning this variable — which is also how a
 # case points it at a path with nothing behind it, or supplies the body itself.
 # The value is per-case state, set in reset_case below.
-export GH_TOKEN REPOSITORY ISSUE ACTOR ACTOR_TYPE GH_CASE GH_IDENTITY MAX_CLAIMS EXPIRE
+export GH_TOKEN CLAIM_REPOSITORY CLAIM_ISSUE CLAIM_ACTOR CLAIM_ACTOR_TYPE GH_CASE GH_IDENTITY CLAIM_MAX_CLAIMS CLAIM_EXPIRE
 
 reset_case() {
   GH_TOKEN=test-token
-  REPOSITORY=owner/project
-  ISSUE=7
-  ACTOR=octo-claimant
-  ACTOR_TYPE=User
-  MAX_CLAIMS=-1
-  EXPIRE=-1
+  CLAIM_REPOSITORY=owner/project
+  CLAIM_ISSUE=7
+  CLAIM_ACTOR=octo-claimant
+  CLAIM_ACTOR_TYPE=User
+  CLAIM_MAX_CLAIMS=-1
+  CLAIM_EXPIRE=-1
   GH_IDENTITY=$ROOT/tests/identity.response
   body=
   expected_error=
@@ -103,7 +103,7 @@ with open(sys.argv[1]) as recorded:
 
 run_claim() {
   local expected_status=$1 expected_output=${2-} status=0 failed=0
-  BODY="$body" python3 "$ROOT/claim.py" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
+  CLAIM_BODY="$body" python3 "$ROOT/claim.py" > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
   if [[ $status != "$expected_status" ]]; then
     printf '  exit status: expected %s, got %s\n' "$expected_status" "$status"
     failed=1
@@ -296,7 +296,7 @@ not_a_command_over_long() {
 # gets it posted.
 #
 # Both margins are deliberate: 105 bytes of headroom under what the
-# environment will hold for BODY, 75 over what one argument will hold for the
+# environment will hold for CLAIM_BODY, 75 over what one argument will hold for the
 # reply. The assertion at the end re-measures the posted reply, so a reply
 # template that grows or shrinks cannot quietly leave this case testing less
 # than it claims.
@@ -388,14 +388,14 @@ claim_accepted() {
   run_claim 0
 }
 
-# The disabled default costs nothing: with MAX_CLAIMS=-1 the exact
+# The disabled default costs nothing: with CLAIM_MAX_CLAIMS=-1 the exact
 # claim_accepted sequence runs, and the expected/recorded diff IS the
 # no-role-lookup and no-search assertion — the stub answers the role
 # endpoint and search only from the sequence, so any extra call fails the
 # case here.
 cap_disabled_no_search_call() {
   body=/claim
-  MAX_CLAIMS=-1
+  CLAIM_MAX_CLAIMS=-1
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
@@ -407,7 +407,7 @@ cap_disabled_no_search_call() {
 # knows that, and counting does not — no search, straight to the assignment.
 cap_unlimited_role_skips_counting() {
   body=/claim
-  MAX_CLAIMS='read=2, write=6'
+  CLAIM_MAX_CLAIMS='read=2, write=6'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
@@ -420,7 +420,7 @@ cap_unlimited_role_skips_counting() {
 # proceeds through POST, re-read and the assigned reply exactly as before.
 cap_under_limit_proceeds() {
   body=/claim
-  MAX_CLAIMS='read=2, write=6'
+  CLAIM_MAX_CLAIMS='read=2, write=6'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":5,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
@@ -436,7 +436,7 @@ cap_under_limit_proceeds() {
 # records the case never expects.
 cap_refuses_at_limit() {
   body=/claim
-  MAX_CLAIMS='read=2, write=6'
+  CLAIM_MAX_CLAIMS='read=2, write=6'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":6,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
@@ -450,7 +450,7 @@ cap_refuses_at_limit() {
 # search call and no assignment, with the maintainer escape named.
 cap_zero_forbids_role() {
   body=/claim
-  MAX_CLAIMS='read=0, write=6'
+  CLAIM_MAX_CLAIMS='read=0, write=6'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant claiming is disabled for your role (read) in this repository. A maintainer can still assign you by hand.' --silent
@@ -461,7 +461,7 @@ cap_zero_forbids_role() {
 # as usual.
 cap_minus_one_entry_is_unlimited() {
   body=/claim
-  MAX_CLAIMS='read=2, admin=-1'
+  CLAIM_MAX_CLAIMS='read=2, admin=-1'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
@@ -475,7 +475,7 @@ cap_minus_one_entry_is_unlimited() {
 # the map's triage=4 governs — under read's cap of 2 it would have refused.
 cap_triage_role() {
   body=/claim
-  MAX_CLAIMS='read=2, triage=4'
+  CLAIM_MAX_CLAIMS='read=2, triage=4'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read","role_name":"triage"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":3,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
@@ -490,7 +490,7 @@ cap_triage_role() {
 # counted under write, and at write's cap the refusal names (write).
 cap_custom_role_folds_to_base() {
   body=/claim
-  MAX_CLAIMS='read=2, write=6'
+  CLAIM_MAX_CLAIMS='read=2, write=6'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"release-manager"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":6,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
@@ -506,7 +506,7 @@ cap_custom_role_folds_to_base() {
 # the plain spelling runs.
 cap_whitespace_around_entries_accepted() {
   body=/claim
-  MAX_CLAIMS=' read=2 , write=6 '
+  CLAIM_MAX_CLAIMS=' read=2 , write=6 '
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":5,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
@@ -520,7 +520,7 @@ cap_whitespace_around_entries_accepted() {
 # spaces — so the entry grammar sees write=6 clean. Same proceed case.
 cap_tab_after_comma_accepted() {
   body=/claim
-  MAX_CLAIMS=$'read=2,\twrite=6'
+  CLAIM_MAX_CLAIMS=$'read=2,\twrite=6'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":5,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
@@ -538,21 +538,21 @@ cap_tab_after_comma_accepted() {
 # the empty expected/recorded diff pins that.
 cap_malformed_value_negative_cap() {
   body=/claim
-  MAX_CLAIMS='read=-2'
+  CLAIM_MAX_CLAIMS='read=-2'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
 
 cap_malformed_value_unknown_role() {
   body=/claim
-  MAX_CLAIMS='maintainer=3'
+  CLAIM_MAX_CLAIMS='maintainer=3'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
 
 cap_malformed_value_duplicate_key() {
   body=/claim
-  MAX_CLAIMS='read=1, read=2'
+  CLAIM_MAX_CLAIMS='read=1, read=2'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
@@ -562,7 +562,7 @@ cap_malformed_value_duplicate_key() {
 # would convert it at int() with a different, unhelpful message.
 cap_malformed_value_non_integer() {
   body=/claim
-  MAX_CLAIMS='read=two'
+  CLAIM_MAX_CLAIMS='read=two'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
@@ -571,7 +571,7 @@ cap_malformed_value_non_integer() {
 # the entry grammar like any other shape it cannot parse.
 cap_malformed_value_empty_entry() {
   body=/claim
-  MAX_CLAIMS='read=2,'
+  CLAIM_MAX_CLAIMS='read=2,'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
@@ -581,7 +581,7 @@ cap_malformed_value_empty_entry() {
 # the run cannot read.
 cap_space_inside_entry_refused() {
   body=/claim
-  MAX_CLAIMS='read =2'
+  CLAIM_MAX_CLAIMS='read =2'
   expected_error='invalid max-claims: expected -1 or comma-separated ROLE=CAP pairs'
   run_claim 1
 }
@@ -591,7 +591,7 @@ cap_space_inside_entry_refused() {
 # established. No comment, no search.
 cap_malformed_role_snapshot() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='role snapshot must contain a role_name string'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -602,7 +602,7 @@ cap_malformed_role_snapshot() {
 # the same refusal fires rather than a role being read out of it.
 cap_role_snapshot_not_an_object() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='role snapshot must contain a role_name string'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '[]' api repos/owner/project/collaborators/octo-claimant/permission
@@ -614,7 +614,7 @@ cap_role_snapshot_not_an_object() {
 # that was never established.
 cap_custom_role_base_unreadable() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='role snapshot must give a readable role'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"role_name":"release-manager","permission":"none"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -625,7 +625,7 @@ cap_custom_role_base_unreadable() {
 # before any comment or search, exactly like the other transport failures.
 cap_role_lookup_failure() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='gh: transport unavailable'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh_failure 42 'gh: transport unavailable' \
@@ -637,7 +637,7 @@ cap_role_lookup_failure() {
 # aborts the run before any assignment or comment.
 cap_malformed_search_response() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='search snapshot must contain a total_count integer'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -649,7 +649,7 @@ cap_malformed_search_response() {
 # any assignment or comment.
 cap_search_transport_failure() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='gh: transport unavailable'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -695,35 +695,35 @@ PYTIMELINE
 
 expire_malformed_zero() {
   body=/claim
-  EXPIRE=0
+  CLAIM_EXPIRE=0
   expected_error='invalid expire: expected -1 or a positive integer of days'
   run_claim 1
 }
 
 expire_malformed_below_minus_one() {
   body=/claim
-  EXPIRE=-2
+  CLAIM_EXPIRE=-2
   expected_error='invalid expire: expected -1 or a positive integer of days'
   run_claim 1
 }
 
 expire_malformed_unit_suffix() {
   body=/claim
-  EXPIRE=7d
+  CLAIM_EXPIRE=7d
   expected_error='invalid expire: expected -1 or a positive integer of days'
   run_claim 1
 }
 
 expire_malformed_not_a_number() {
   body=/claim
-  EXPIRE=abc
+  CLAIM_EXPIRE=abc
   expected_error='invalid expire: expected -1 or a positive integer of days'
   run_claim 1
 }
 
 expire_malformed_empty() {
   body=/claim
-  EXPIRE=
+  CLAIM_EXPIRE=
   expected_error='invalid expire: expected -1 or a positive integer of days'
   run_claim 1
 }
@@ -734,7 +734,7 @@ expire_malformed_empty() {
 # expected.
 expire_disabled_no_timeline_call() {
   body=/claim
-  EXPIRE=-1
+  CLAIM_EXPIRE=-1
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
@@ -746,7 +746,7 @@ expire_disabled_no_timeline_call() {
 # events read, no role lookup, no search.
 expire_fresh_claim_no_expiry_calls() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
@@ -757,7 +757,7 @@ expire_fresh_claim_no_expiry_calls() {
 # Seven days minus an hour: inside the window, today's refusal verbatim.
 expire_takeover_inside_window() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   # shellcheck disable=SC2016
@@ -771,7 +771,7 @@ expire_takeover_inside_window() {
 # the near side is pinned as close to the edge as determinism allows).
 expire_takeover_boundary_day() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|7:-0.5')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   # shellcheck disable=SC2016
@@ -783,7 +783,7 @@ expire_takeover_boundary_day() {
 # re-read confirms, and the reply names holder, age and actor.
 expire_takeover_expired() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|7:1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
@@ -797,7 +797,7 @@ expire_takeover_expired() {
 # each with its own age.
 expire_takeover_multiple_expired() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
@@ -813,8 +813,8 @@ expire_takeover_multiple_expired() {
 # removed.
 expire_takeover_cap_zero() {
   body=/claim
-  EXPIRE=7
-  MAX_CLAIMS='read=0'
+  CLAIM_EXPIRE=7
+  CLAIM_MAX_CLAIMS='read=0'
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -826,8 +826,8 @@ expire_takeover_cap_zero() {
 # deleted.
 expire_takeover_cap_reached() {
   body=/claim
-  EXPIRE=7
-  MAX_CLAIMS='read=1'
+  CLAIM_EXPIRE=7
+  CLAIM_MAX_CLAIMS='read=1'
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -843,8 +843,8 @@ expire_takeover_cap_reached() {
 # re-read and the reply.
 expire_takeover_cap_under_proceeds() {
   body=/claim
-  EXPIRE=7
-  MAX_CLAIMS='read=2'
+  CLAIM_EXPIRE=7
+  CLAIM_MAX_CLAIMS='read=2'
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
@@ -861,7 +861,7 @@ expire_takeover_cap_under_proceeds() {
 # this action's.
 expire_takeover_proof_fails() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline aaron-maintainer '800|alice|400')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   # shellcheck disable=SC2016
@@ -874,7 +874,7 @@ expire_takeover_proof_fails() {
 # read.
 expire_takeover_age_unreadable() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|none')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   # shellcheck disable=SC2016
@@ -887,7 +887,7 @@ expire_takeover_age_unreadable() {
 # and the run log names the holder it could not read.
 expire_takeover_mixed_created_at() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|8' '810|zoe-helper|none')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
@@ -902,7 +902,7 @@ expire_takeover_mixed_created_at() {
 # takeover that did not happen.
 expire_takeover_post_declined() {
   body=/claim
-  EXPIRE=7
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
@@ -915,8 +915,8 @@ expire_takeover_post_declined() {
 # no timeline call at all.
 expire_release_read_role_refused() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-maintainer/permission
   # shellcheck disable=SC2016
@@ -926,8 +926,8 @@ expire_release_read_role_refused() {
 
 expire_release_triage_role_refused() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"read","role_name":"triage"}' api repos/owner/project/collaborators/octo-maintainer/permission
   # shellcheck disable=SC2016
@@ -938,8 +938,8 @@ expire_release_triage_role_refused() {
 # write, maintain and admin may release someone else's expired claim.
 expire_release_write_role() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -950,8 +950,8 @@ expire_release_write_role() {
 
 expire_release_maintain_role() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"maintain","role_name":"maintain"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -962,8 +962,8 @@ expire_release_maintain_role() {
 
 expire_release_admin_role() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -979,8 +979,8 @@ expire_release_admin_role() {
 # expired subset, never the whole assignee list.
 expire_release_mixed_created_at() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|8' '810|zoe-helper|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -992,8 +992,8 @@ expire_release_mixed_created_at() {
 # write but pre-expiry: today's refusal, nothing removed.
 expire_release_write_role_inside_window() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -1006,8 +1006,8 @@ expire_release_write_role_inside_window() {
 # proof fails, nothing is removed.
 expire_release_proof_fails() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline aaron-maintainer '800|alice|400')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -1021,8 +1021,8 @@ expire_release_proof_fails() {
 # writes as — the proof holds and the expired claim is released.
 expire_release_integration_token() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
   printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
   printf '1\n' > "$GH_CASE/identity.response.status"
@@ -1038,8 +1038,8 @@ expire_release_integration_token() {
 # holder in login order.
 expire_release_multiple_expired() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
@@ -1053,8 +1053,8 @@ expire_release_multiple_expired() {
 # today's reply and no role lookup, no timeline call.
 expire_release_no_assignees() {
   body=/release
-  ACTOR=octo-maintainer
-  EXPIRE=7
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
@@ -1073,7 +1073,7 @@ expire_release_no_assignees() {
 # anti-regression).
 contested_winner_by_event_order() {
   body=/claim
-  ACTOR=yuki-dev
+  CLAIM_ACTOR=yuki-dev
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api repos/owner/project/issues/7
@@ -1089,7 +1089,7 @@ contested_winner_by_event_order() {
 # alone can express.
 contested_loser_by_event_order() {
   body=/claim
-  ACTOR=alice
+  CLAIM_ACTOR=alice
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=alice'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
@@ -1157,7 +1157,7 @@ assigned_login_spelling_decides() {
 # made zara-helper the winner and deleted yuki-dev instead.
 contested_assign_cycle_decides_current_event() {
   body=/claim
-  ACTOR=yuki-dev
+  CLAIM_ACTOR=yuki-dev
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"yuki-dev"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
   expect_gh '{"state":"open","assignees":[{"login":"yuki-dev"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
@@ -1204,7 +1204,7 @@ cannot_attribute_missing_event() {
 # shellcheck disable=SC2016
 bail_with_actor_absent() {
   body=/claim
-  ACTOR=octo-claimant
+  CLAIM_ACTOR=octo-claimant
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
@@ -1306,7 +1306,7 @@ contested_claim_loser_among_three() {
 # does not have.
 contested_removal_forbidden() {
   body=/claim
-  ACTOR=yuki-dev
+  CLAIM_ACTOR=yuki-dev
   expected_error='gh: Resource not accessible by integration (HTTP 403)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
@@ -1364,9 +1364,9 @@ malformed_events_object() {
 
 claim_accepted_elsewhere() {
   body=/claim
-  ACTOR=river-helper
-  REPOSITORY=other-team/widget.tools
-  ISSUE=42
+  CLAIM_ACTOR=river-helper
+  CLAIM_REPOSITORY=other-team/widget.tools
+  CLAIM_ISSUE=42
   expect_gh '{"state":"open","assignees":[]}' api repos/other-team/widget.tools/issues/42
   expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api -X POST repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper'
   expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
@@ -1609,7 +1609,7 @@ claim_number_mismatch_other_words() {
     'body=`/release 8` names issue 8, but this comment is on issue 7. Comment `/release` (or `/release 7`) to act on this issue.' \
     --silent
   run_claim 1 || result=$?
-  ISSUE=42
+  CLAIM_ISSUE=42
   body='/claim 8'
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/42/comments --input - \
@@ -1783,9 +1783,9 @@ unclaim_one_of_two() {
 
 release_one_of_two() {
   body=/release
-  ACTOR=river-helper
-  REPOSITORY=other-team/widget.tools
-  ISSUE=42
+  CLAIM_ACTOR=river-helper
+  CLAIM_REPOSITORY=other-team/widget.tools
+  CLAIM_ISSUE=42
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"river-helper"}]}' api repos/other-team/widget.tools/issues/42
   expect_gh '' api -X DELETE repos/other-team/widget.tools/issues/42/assignees -f 'assignees[]=river-helper' --silent
   expect_gh '' api repos/other-team/widget.tools/issues/42/comments --input - 'body=Unassigned @river-helper.' --silent
@@ -1824,32 +1824,32 @@ pull_request() {
 
 bot_actor() {
   body=/release
-  ACTOR_TYPE=Bot
+  CLAIM_ACTOR_TYPE=Bot
   run_claim 0 $'not a user: Bot\n'
 }
 
 organization_actor() {
   body=/claim
-  ACTOR_TYPE=Organization
+  CLAIM_ACTOR_TYPE=Organization
   run_claim 0 $'not a user: Organization\n'
 }
 
 mannequin_actor() {
   body=/claim
-  ACTOR_TYPE=Mannequin
+  CLAIM_ACTOR_TYPE=Mannequin
   run_claim 0 $'not a user: Mannequin\n'
 }
 
 empty_actor_type() {
   body=/claim
-  ACTOR_TYPE=
+  CLAIM_ACTOR_TYPE=
   expected_error='invalid actor-type: expected a nonempty account type'
   run_claim 1
 }
 
 multiline_actor_type() {
   body=/claim
-  ACTOR_TYPE=$'Bot\nUser'
+  CLAIM_ACTOR_TYPE=$'Bot\nUser'
   run_claim 0 $'not a user: Bot\n'
 }
 
@@ -1883,7 +1883,7 @@ token_commenter_declined() {
 # cases and still be the same account.
 token_commenter_declined_case_insensitive() {
   body=/claim
-  ACTOR=Octo-Claimant
+  CLAIM_ACTOR=Octo-Claimant
   printf '%s\n' '{"login":"octo-claimant","id":583271,"type":"User","node_id":"MDQ6VXNlcjU4MzI3MQ==","avatar_url":"https://avatars.githubusercontent.com/u/583271?v=4","html_url":"https://github.com/octo-claimant"}' > "$GH_CASE/identity.response"
   local result=0
   run_claim 0 "commenter is the token's own account: octo-claimant"$'\n' || result=1
@@ -1949,7 +1949,7 @@ identity_answer_missing_fails() {
 # the guard's position below the User check.
 bot_commenter_no_identity_call() {
   body=/claim
-  ACTOR_TYPE=Bot
+  CLAIM_ACTOR_TYPE=Bot
   local result=0
   run_claim 0 $'not a user: Bot\n' || result=1
   if [[ -s $GH_CASE/calls.jsonl ]]; then
@@ -2254,21 +2254,21 @@ post_response_without_assignees() {
 
 invalid_issue() {
   body=/claim
-  ISSUE='7/comments?x=1'
+  CLAIM_ISSUE='7/comments?x=1'
   expected_error='invalid issue: expected digits'
   run_claim 1
 }
 
 invalid_repository() {
   body=/claim
-  REPOSITORY='owner/project/issues'
+  CLAIM_REPOSITORY='owner/project/issues'
   expected_error='invalid repository: expected owner/name'
   run_claim 1
 }
 
 repository_query() {
   body=/claim
-  REPOSITORY='owner/project?x=1'
+  CLAIM_REPOSITORY='owner/project?x=1'
   expected_error='invalid repository: expected owner/name'
   run_claim 1
 }
@@ -2325,7 +2325,7 @@ missing_issue_still_fails() {
 
 unrelated_gone_still_fails() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='gh: Gone (HTTP 410)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh_failure 1 "$expected_error" \
@@ -2335,7 +2335,7 @@ unrelated_gone_still_fails() {
 
 deleted_issue_after_read() {
   body=/claim
-  MAX_CLAIMS='read=2'
+  CLAIM_MAX_CLAIMS='read=2'
   expected_error='gh: This issue was deleted (HTTP 410)'
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh_failure 1 "$expected_error" \
@@ -5132,6 +5132,67 @@ fail("a second top-level `name:` was tolerated instead of refused")
 PYNAME
 }
 
+prefixed_environment_only() {
+  python3 - "$ROOT" <<'PYENV'
+from pathlib import Path
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("claim", Path(sys.argv[1]) / "claim.py")
+claim = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(claim)
+os.environ.clear()
+for name in ("BODY", "ACTOR_TYPE", "ISSUE", "REPOSITORY", "ACTOR", "MAX_CLAIMS", "EXPIRE"):
+    for value in (f"prefixed-{name}", ""):
+        os.environ[f"CLAIM_{name}"] = value
+        assert claim.input_env(name) == value, f"{name}: prefixed value was not used"
+PYENV
+}
+
+legacy_environment_only() {
+  python3 - "$ROOT" <<'PYENV'
+from pathlib import Path
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("claim", Path(sys.argv[1]) / "claim.py")
+claim = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(claim)
+os.environ.clear()
+for name in ("BODY", "ACTOR_TYPE", "ISSUE", "REPOSITORY", "ACTOR", "MAX_CLAIMS", "EXPIRE"):
+    try:
+        claim.input_env(name)
+    except KeyError as error:
+        assert error.args == (name,), f"{name}: missing input changed its lookup error"
+    else:
+        raise AssertionError(f"{name}: missing input did not fail")
+    for value in (f"legacy-{name}", ""):
+        os.environ[name] = value
+        assert claim.input_env(name) == value, f"{name}: legacy fallback was not used"
+PYENV
+}
+
+prefixed_environment_wins() {
+  python3 - "$ROOT" <<'PYENV'
+from pathlib import Path
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("claim", Path(sys.argv[1]) / "claim.py")
+claim = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(claim)
+os.environ.clear()
+for name in ("BODY", "ACTOR_TYPE", "ISSUE", "REPOSITORY", "ACTOR", "MAX_CLAIMS", "EXPIRE"):
+    os.environ[name] = f"legacy-{name}"
+    for value in (f"prefixed-{name}", ""):
+        os.environ[f"CLAIM_{name}"] = value
+        assert claim.input_env(name) == value, f"{name}: prefixed value lost to legacy value"
+PYENV
+}
+
 action_contract() {
   python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -5162,10 +5223,10 @@ for line in step["env"].splitlines():
     env[name] = value
 script = ast.parse((root / "claim.py").read_text())
 script_variables = {
-    node.slice.value for node in ast.walk(script)
-    if isinstance(node, ast.Subscript)
-    and ast.unparse(node.value) == "os.environ"
-    and isinstance(node.slice, ast.Constant)
+    "CLAIM_" + node.args[0].value for node in ast.walk(script)
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Name) and node.func.id == "input_env"
+    and len(node.args) == 1 and isinstance(node.args[0], ast.Constant)
 }
 # GH_TOKEN is consumed by gh, the script's API client, through its environment.
 assert set(env) == script_variables | {"GH_TOKEN"}, "claim step env must match script dependencies"
@@ -5176,7 +5237,7 @@ expected_inputs = set()
 for name, value in env.items():
     binding = re.fullmatch(r"\$\{\{\s*inputs\.([a-z-]+)\s*\}\}", value)
     assert binding, f"{name} must bind an action input"
-    expected = "token" if name == "GH_TOKEN" else name.lower().replace("_", "-")
+    expected = "token" if name == "GH_TOKEN" else name.removeprefix("CLAIM_").lower().replace("_", "-")
     assert binding[1] == expected, f"{name} must bind inputs.{expected}"
     expected_inputs.add(expected)
     default = re.findall(r"^    default: (.+)$", specs[expected], re.M)
@@ -5827,8 +5888,8 @@ unreachable_api_reported_in_its_own_terms() {
   mkdir "$empty"
   # claim.py runs directly here: the runner puts the stub on PATH for every
   # other case, and this is the case that must not find it.
-  env -i PATH="$empty" GH_TOKEN=test-token REPOSITORY=owner/project ISSUE=7 \
-    ACTOR=octo-claimant ACTOR_TYPE=User BODY=/claim \
+  env -i PATH="$empty" GH_TOKEN=test-token CLAIM_REPOSITORY=owner/project CLAIM_ISSUE=7 \
+    CLAIM_ACTOR=octo-claimant CLAIM_ACTOR_TYPE=User CLAIM_BODY=/claim \
     "$(command -v python3)" "$ROOT/claim.py" \
     > "$GH_CASE/stdout" 2> "$GH_CASE/stderr" || status=$?
   if (( status != 1 )); then
@@ -6978,6 +7039,7 @@ PYRED
 # 187 bytes of framing over and above the filler — 131,147 bytes, past the
 # argument limit, with the body itself still 105 bytes under it.
 cases=(
+  prefixed_environment_only legacy_environment_only prefixed_environment_wins
   # The body's shape: prose, not a command — and the one line that starts a
   # command word, which is an attempt.
   sentence url_mention_ends_quietly multiline interior_cr metacharacters

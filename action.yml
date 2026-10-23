@@ -52,11 +52,11 @@ runs:
       # command after stripping carriage returns and trimming ASCII whitespace.
       env:
         GH_TOKEN: ${{ inputs.token }}
-        REPOSITORY: ${{ inputs.repository }}
-        ISSUE: ${{ inputs.issue }}
-        ACTOR: ${{ inputs.actor }}
-        ACTOR_TYPE: ${{ inputs.actor-type }}
-        BODY: ${{ inputs.body }}
-        MAX_CLAIMS: ${{ inputs.max-claims }}
-        EXPIRE: ${{ inputs.expire }}
+        CLAIM_REPOSITORY: ${{ inputs.repository }}
+        CLAIM_ISSUE: ${{ inputs.issue }}
+        CLAIM_ACTOR: ${{ inputs.actor }}
+        CLAIM_ACTOR_TYPE: ${{ inputs.actor-type }}
+        CLAIM_BODY: ${{ inputs.body }}
+        CLAIM_MAX_CLAIMS: ${{ inputs.max-claims }}
+        CLAIM_EXPIRE: ${{ inputs.expire }}
       run: 'python3 "$GITHUB_ACTION_PATH/claim.py"'
