@@ -474,20 +474,29 @@ def quote_attempt(text):
     return f"{run} {text} {run}"
 
 
+def input_env(name):
+    # Keep direct callers working while the action uses repository-prefixed names;
+    # presence matters because an explicitly empty input must still be validated.
+    prefixed = f"CLAIM_{name}"
+    if prefixed in os.environ:
+        return os.environ[prefixed]
+    return os.environ[name]
+
+
 def main():
     # Keep shell command recognition: remove CR, then trim only ASCII whitespace.
-    command = os.environ["BODY"].replace("\r", "").strip(" \t\n\r\v\f")
+    command = input_env("BODY").replace("\r", "").strip(" \t\n\r\v\f")
 
-    actor_type = os.environ["ACTOR_TYPE"]
+    actor_type = input_env("ACTOR_TYPE")
     if not actor_type:
         raise ValueError("invalid actor-type: expected a nonempty account type")
     if actor_type != "User":
         print("not a user: " + actor_type.splitlines()[0])
         return 0
 
-    issue = os.environ["ISSUE"]
-    repo = os.environ["REPOSITORY"]
-    actor = os.environ["ACTOR"]
+    issue = input_env("ISSUE")
+    repo = input_env("REPOSITORY")
+    actor = input_env("ACTOR")
 
     # Every reply is authored by the account the token posts as, so a caller
     # that configured a user token re-triggers this action with its own
@@ -525,7 +534,7 @@ def main():
             or repo.split("/", 1)[1] in (".", "..")):
         raise ValueError("invalid repository: expected owner/name")
 
-    raw = os.environ["MAX_CLAIMS"]
+    raw = input_env("MAX_CLAIMS")
     # A value this run cannot read must fail it loudly rather than cap
     # nothing, cap the wrong role, or let a repeated entry win silently.
     # The single token -1 is the disabled default; every other value is a
@@ -551,7 +560,7 @@ def main():
                 raise ValueError(malformed)
             caps[role] = None if cap == -1 else cap
 
-    raw_expire = os.environ["EXPIRE"]
+    raw_expire = input_env("EXPIRE")
     # The same grammar as max-claims: the single token -1 is the disabled
     # default, so with nothing configured no expiry code runs at all. The
     # unit is days. A 0 would expire every claim the moment it is made, so
