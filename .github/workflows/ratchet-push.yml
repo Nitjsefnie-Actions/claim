@@ -9,8 +9,9 @@ name: ratchet push
 # from RUNNER_TEMP, excluding fetched source and environment import paths.
 #
 # Only a fully successful gate run publishes its data. Main movement is
-# checked twice: three-way file merges preserve intervening hand-raised
-# thresholds and records, and conflicts or invalid JSON drop the run. A
+# checked three times: non-records tree movement drops the run before any
+# merge; three-way file merges preserve intervening hand-raised
+# thresholds and records; and conflicts or invalid JSON drop the run. A
 # rejected push while main stood still is an error; one after main moved
 # drops this run's data so the next main push measures and tightens instead.
 #
@@ -161,6 +162,17 @@ jobs:
             current="$RUNNER_TEMP/current-thresholds.json"
             git -C "$scratch" show "$fetched:.github/ci-thresholds.json" > "$current"
             if [ "$fetched" != "$base" ]; then
+              # The staged raise describes the tree the gate measured: a
+              # tracked path other than this records file moving since
+              # makes it stale, and drop it.
+              if [ -n "$(git -C "$scratch" diff --name-only "$base" "$fetched" -- ':/' ':(exclude).github/ci-thresholds.json')" ]; then
+                echo "::notice::Main moved under the measured tree; the next main push raises instead"
+                {
+                  echo "### Dropped: main moved under the measured tree"
+                  echo "This run's raise is dropped; the next main push measures and raises instead."
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
               # Merge the data alone: an intervening hand-raised floor must
               # survive, and a conflicting raise waits for a fresh measure.
               if ! git -C "$scratch" show "$base:.github/ci-thresholds.json" > "$RUNNER_TEMP/base.json"; then
@@ -208,6 +220,15 @@ jobs:
               exit 1
             fi
             if [ "$fetched" != "$base" ]; then
+              # Same staleness check as the thresholds branch.
+              if [ -n "$(git -C "$scratch" diff --name-only "$base" "$fetched" -- ':/' ':(exclude).github/comment-share.json')" ]; then
+                echo "::notice::Main moved under the measured tree; the next main push measures again"
+                {
+                  echo "### Dropped: main moved under the measured tree"
+                  echo "This run's tightening is dropped; the next main push measures again."
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
               if ! git -C "$scratch" show "$base:.github/comment-share.json" > "$RUNNER_TEMP/base-records.json"; then
                 echo "::notice::Ancestor records are unreadable; the next main push measures again"
                 {
