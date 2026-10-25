@@ -317,11 +317,10 @@ jobs:
       # The measured cell's coverage install lifts the coverage block out of
       # the hash-pinned manifest into a venv (the workflow installs nothing
       # into the setup-python interpreter), writes coverage's startup hook
-      # into that venv, and arms the three env vars the rest of the job
-      # inherits through GITHUB_ENV -- PATH first, so the suite's run step
+      # into that venv, arms two env vars through GITHUB_ENV, and puts the
+      # venv's bin on GITHUB_PATH, ahead of setup-python's, so the run step
       # and the coverage commands below resolve the venv's python3. The run
-      # step stays byte-for-byte what it was, and on every other cell the
-      # step is skipped, and the suite runs exactly as before.
+      # step is unchanged; on every other cell this step is skipped.
       - name: Install coverage tooling
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -331,8 +330,8 @@ jobs:
           site_dir="$("$RUNNER_TEMP/coverage-venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
           printf 'import coverage; coverage.process_startup()\n' > "$site_dir/00-claim-coverage-subprocess.pth"
           mkdir -p "$RUNNER_TEMP/claim-coverage"
+          echo "$RUNNER_TEMP/coverage-venv/bin" >> "$GITHUB_PATH"
           {
-            echo "PATH=$RUNNER_TEMP/coverage-venv/bin:$PATH"
             echo "COVERAGE_PROCESS_START=$PWD/.coveragerc"
             echo "COVERAGE_FILE=$RUNNER_TEMP/claim-coverage/.coverage"
           } >> "$GITHUB_ENV"
@@ -509,7 +508,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/coverage-venv"
           awk '/^coverage==/{f=1} f{print; if ($0 !~ /\\$/) exit}' .github/workflows/requirements.txt > "$RUNNER_TEMP/coverage.txt"
           "$RUNNER_TEMP/coverage-venv/bin/python" -m pip install --require-hashes -r "$RUNNER_TEMP/coverage.txt"
-          echo "PATH=$RUNNER_TEMP/coverage-venv/bin:$PATH" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/coverage-venv/bin" >> "$GITHUB_PATH"
 
       - name: Measure the coverage of this change
         # HEAD is the merge tree checked out above and HEAD^1 is, by
