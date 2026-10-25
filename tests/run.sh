@@ -2928,10 +2928,10 @@ for mode in ("thresholds", "records", "both", "all", "missing-thresholds",
     published = mode in ("thresholds", "records", "both", "all", "size",
                          "moved-own", "moved-own-thresholds", "moved-size-own")
     subject = git(origin, "log", "-1", "--format=%s", "main") if published else ""
-    tokens = (("coverage floor",) * thresholds_selected
-              + ("comment-share",) * records_selected
-              + ("size-baseline",) * size_selected)
-    assert not published or all(t in subject for t in tokens), (mode, subject)
+    for token, selected in (("coverage floor", thresholds_selected),
+                            ("comment-share", records_selected),
+                            ("size-baseline", size_selected)):
+        assert not published or (token in subject) == selected, (mode, subject, token)
     print(f"  {mode}: exit {result.returncode}; shadow absent; publication verified")
 PYPUSHBOUNDARY
 }
