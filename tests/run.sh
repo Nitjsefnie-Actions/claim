@@ -2743,7 +2743,9 @@ def git(directory, *args):
 
 for mode in ("thresholds", "records", "both", "missing-thresholds",
              "missing-records", "absent", "moved-source", "moved-records",
-             "moved-thresholds", "moved-own", "moved-own-thresholds"):
+             "moved-thresholds", "moved-own", "moved-own-thresholds",
+             "size", "missing-size", "missing-size-base",
+             "no-size-records-on-main", "moved-size", "moved-size-own"):
     folder = scratch / mode
     source = folder / "source"
     source.mkdir(parents=True)
@@ -2755,19 +2757,30 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
     # rewrites itself whole, so every movement merges as a conflict.
     (source / ".github/ci-thresholds.json").write_text(json.dumps(thresholds, indent=2) + "\n")
     (source / ".github/comment-share.json").write_text(json.dumps(records, indent=2) + "\n")
+    if mode != "no-size-records-on-main":
+        # The size gate's records, in the committed two-space layout the
+        # merge treats line by line. main's own move in moved-size-own drops
+        # a.py while the staged change names c.py, so an unchanged line sits
+        # between the two hunks and the three-way merge has one outcome.
+        size_records = {"schema_version": 1,
+                        "baseline": {"a.py": 601, "b.py": 600, "c.py": 905}}
+        (source / ".github/size-baseline.json").write_text(
+            json.dumps(size_records, indent=2) + "\n")
     (source / "json.py").write_text(poison)
     git(source, "init", "-q", "-b", "main")
     # Fixture commits must not depend on the runner's global Git identity.
     git(source, "config", "user.name", "fixture")
     git(source, "config", "user.email", "fixture@example.invalid")
-    git(source, "add", ".github/ci-thresholds.json", ".github/comment-share.json", "json.py")
+    size_paths = () if mode == "no-size-records-on-main" else (".github/size-baseline.json",)
+    git(source, "add", ".github/ci-thresholds.json", ".github/comment-share.json",
+        "json.py", *size_paths)
     git(source, "commit", "-q", "-m", "local ratchet fixture")
     base = git(source, "rev-parse", "HEAD")
     if mode.startswith("moved-"):
         # The gate measured at base; main then moved before the push run
         # fetched it, the window the issue describes. The move is committed
         # before the bare clone, so the remote's main already carries it.
-        if mode == "moved-source":
+        if mode in ("moved-source", "moved-size"):
             # A tracked path other than a records file moving is the
             # defect: the staged data no longer describes main.
             poisoned = (source / "json.py").read_text()
@@ -2781,15 +2794,26 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
             (source / ".github/comment-share.json").write_text(json.dumps(grown, indent=2) + "\n")
             git(source, "add", ".github/comment-share.json")
         elif mode in ("moved-thresholds", "moved-own-thresholds"):
-            # A sibling artifact's records file is the only thing that
-            # moved (drop case), or the thresholds file itself (the merge
-            # must land the raise beside main's added cell).
+            # A sibling artifact's records file is the main move (drop case
+            # for the merging arm), or the merging arm's own file (the merge
+            # must land the raise beside main's move).
             grown_thresholds = {"schema_version": 1, "coverage": {"python": {
                 "floor": 96.2, "measured": 96.2, "cell": "ubuntu-latest"},
                 "node": {"floor": 88.0, "measured": 88.0, "cell": "ubuntu-latest"}}}
             (source / ".github/ci-thresholds.json").write_text(
                 json.dumps(grown_thresholds, indent=2) + "\n")
             git(source, "add", ".github/ci-thresholds.json")
+        elif mode == "moved-size-own":
+            # The size arm's own records file is the only main move: a
+            # graduated entry (a.py at or under its ceiling) dropped by
+            # main's own tighten. The staged change names c.py, an unchanged
+            # line away, so the merge lands main's deletion beside the
+            # staged lowering.
+            size_graduated = {"schema_version": 1,
+                              "baseline": {"b.py": 600, "c.py": 905}}
+            (source / ".github/size-baseline.json").write_text(
+                json.dumps(size_graduated, indent=2) + "\n")
+            git(source, "add", ".github/size-baseline.json")
         git(source, "commit", "-q", "-m", "main moved under the measured tree")
         moved = git(source, "rev-parse", "HEAD")
     origin = folder / "origin.git"
@@ -2802,16 +2826,23 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
                                    "moved-own-thresholds")
     records_selected = mode in ("records", "both", "missing-records",
                                 "moved-thresholds", "moved-own")
+    size_selected = mode in ("size", "missing-size", "missing-size-base",
+                             "no-size-records-on-main", "moved-size",
+                             "moved-size-own")
     for selected, directory, filename, value in (
             (thresholds_selected, "ratchet-data", "ci-thresholds.json", {
                 "schema_version": 1, "coverage": {"python": {
                     "floor": 96.4, "measured": 96.4, "cell": "ubuntu-latest"}}}),
-            (records_selected, "comment-share-data", "comment-share.json", {"a.py": [35, 100]})):
+            (records_selected, "comment-share-data", "comment-share.json", {"a.py": [35, 100]}),
+            (size_selected, "size-data", "size-baseline.json", {
+                "schema_version": 1,
+                "baseline": {"a.py": 601, "b.py": 600, "c.py": 550}})):
         if selected:
             data = runner / directory
             data.mkdir()
-            (data / "base.txt").write_text(base + "\n")
-            if not mode.startswith("missing-"):
+            if not mode.endswith("-base"):
+                (data / "base.txt").write_text(base + "\n")
+            if not mode.startswith("missing-") or mode == "missing-size-base":
                 (data / filename).write_text(json.dumps(value, indent=2) + "\n")
     bin_dir = folder / "bin"
     bin_dir.mkdir()
@@ -2822,6 +2853,7 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
                CLAIM_MASTER_PUSH_DEPLOY_KEY="dummy-key-only", CLAIM_REPO="local/fixture",
                CLAIM_RATCHET_SELECTED=str(thresholds_selected).lower(),
                CLAIM_RECORDS_SELECTED=str(records_selected).lower(),
+               CLAIM_SIZE_SELECTED=str(size_selected).lower(),
                GITHUB_STEP_SUMMARY=str(folder / "summary"),
                SHADOW_SENTINEL=str(folder / "executed"),
                PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
@@ -2836,15 +2868,25 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
     result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", auth + script],
                             cwd=folder, env=env, check=False, capture_output=True, text=True)
     assert not (folder / "executed").exists(), f"{mode}: planted json.py executed"
-    expected_status = 1 if mode.startswith("missing-") else 0
+    expected_status = 1 if (mode.startswith("missing-")
+                            or mode == "no-size-records-on-main") else 0
     assert result.returncode == expected_status, (mode, result.stdout, result.stderr)
     tip = git(origin, "rev-parse", "main")
     if mode.startswith("missing-"):
-        artifact, payload = (("ratchet-push", "ci-thresholds.json")
-                             if mode == "missing-thresholds" else
-                             ("comment-share-ratchet", "comment-share.json"))
-        assert artifact in result.stderr and payload in result.stderr, result.stderr
+        if mode == "missing-size-base":
+            assert "carried no base; the measuring job is broken" in result.stderr, \
+                result.stderr
+        else:
+            artifact, payload = (("ratchet-push", "ci-thresholds.json")
+                                 if mode == "missing-thresholds" else
+                                 ("comment-share-ratchet", "comment-share.json")
+                                 if mode == "missing-records" else
+                                 ("size-baseline-ratchet", "size-baseline.json"))
+            assert artifact in result.stderr and payload in result.stderr, result.stderr
         assert tip == base, f"{mode}: malformed handoff published a commit"
+    elif mode == "no-size-records-on-main":
+        assert "deletion requires review" in result.stderr, result.stderr
+        assert tip == base, f"{mode}: a records deletion published a commit"
     else:
         bare = runner / "ratchet-repo"
         assert git(bare, "rev-parse", "--is-bare-repository") == "true"
@@ -2852,7 +2894,7 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
         if mode.startswith("moved-"):
             assert tip != base, f"{mode}: the move never reached the remote"
             summary = folder / "summary"
-            if mode in ("moved-own", "moved-own-thresholds"):
+            if mode in ("moved-own", "moved-own-thresholds", "moved-size-own"):
                 # Only that artifact's own records file moved, so the run
                 # still publishes on top of main's move: the positive
                 # control against a check that over-drops.
@@ -2860,10 +2902,16 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
                 if mode == "moved-own":
                     actual = json.loads(git(origin, "show", "main:.github/comment-share.json"))
                     assert actual == {"a.py": [35, 100], "b.py": [50, 100]}, actual
-                else:
+                elif mode == "moved-own-thresholds":
                     actual = json.loads(git(origin, "show", "main:.github/ci-thresholds.json"))
                     assert actual["coverage"]["python"]["floor"] == 96.4, actual
                     assert actual["coverage"]["node"]["floor"] == 88.0, actual
+                else:
+                    # main dropped the graduated a.py entry; the staged
+                    # lowering of c.py lands beside it.
+                    actual = json.loads(git(origin, "show", "main:.github/size-baseline.json"))
+                    assert actual == {"schema_version": 1,
+                                      "baseline": {"b.py": 600, "c.py": 550}}, actual
                 assert not summary.exists() or "Dropped" not in summary.read_text()
             else:
                 # A path other than the merging artifact's records file
@@ -2878,6 +2926,12 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
             assert actual["coverage"]["python"]["floor"] == (96.4 if thresholds_selected else 96.2)
             actual = json.loads(git(origin, "show", "main:.github/comment-share.json"))
             assert actual == {"a.py": [35 if records_selected else 40, 100]}
+            actual = json.loads(git(origin, "show", "main:.github/size-baseline.json"))
+            assert actual == ({"schema_version": 1,
+                               "baseline": {"a.py": 601, "b.py": 600, "c.py": 550}}
+                              if size_selected else
+                              {"schema_version": 1,
+                               "baseline": {"a.py": 601, "b.py": 600, "c.py": 905}}), actual
     print(f"  {mode}: exit {result.returncode}; shadow absent; publication verified")
 PYPUSHBOUNDARY
 }
@@ -3386,6 +3440,7 @@ gate_paths_derived_from_workflows() {
 .github/workflows/requirements.txt
 .github/workflows/scorecard.yml
 .github/workflows/secrets.yml
+.github/workflows/size-baseline.yml
 .github/workflows/tests.yml
 .pylintrc
 README.md
