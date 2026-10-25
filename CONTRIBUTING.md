@@ -95,10 +95,11 @@ On a push to main the measured cell stages a raise with
 `.github/scripts/ratchet_thresholds.py`, and the `ratchet push` workflow
 publishes it only after the measuring run has fully succeeded. The script
 raises only when a measurement beats the recorded `measured` by MORE than
-the 1.5-point hysteresis, and a raise writes `floor = measured - 1.5` — the
-fixed calibration gap that absorbs a small dip, so ordinary 0.1-point
-wobble never needs a hand edit. A lower or within-hysteresis measurement
-never loosens the record: `measured` moves only when a raise does.
+the 1.5-point hysteresis, and a raise writes the larger of the recorded
+`floor` and `measured - 1.5` — the fixed calibration gap that absorbs a
+small dip, so ordinary 0.1-point wobble never needs a hand edit. A lower
+or within-hysteresis measurement never loosens the record: `measured`
+moves only when a raise does, and a raise never lowers the recorded floor.
 
 A zero calibration gap — a record where `floor` equals `measured` — is a
 tolerated state, not a defect to hand-fix: the ratchet heals it upward by
