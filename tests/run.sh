@@ -2741,7 +2741,7 @@ def git(directory, *args):
     return subprocess.run(["git", "-C", str(directory), *args],
                           check=True, capture_output=True, text=True).stdout.strip()
 
-for mode in ("thresholds", "records", "both", "missing-thresholds",
+for mode in ("thresholds", "records", "both", "all", "missing-thresholds",
              "missing-records", "absent", "moved-source", "moved-records",
              "moved-thresholds", "moved-own", "moved-own-thresholds",
              "size", "missing-size", "missing-size-base",
@@ -2821,12 +2821,12 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
     runner = folder / "runner"
     runner.mkdir()
     (runner / "json.py").write_text(poison)
-    thresholds_selected = mode in ("thresholds", "both", "missing-thresholds",
+    thresholds_selected = mode in ("thresholds", "both", "all", "missing-thresholds",
                                    "moved-source", "moved-records",
                                    "moved-own-thresholds")
-    records_selected = mode in ("records", "both", "missing-records",
+    records_selected = mode in ("records", "both", "all", "missing-records",
                                 "moved-thresholds", "moved-own")
-    size_selected = mode in ("size", "missing-size", "missing-size-base",
+    size_selected = mode in ("size", "missing-size", "missing-size-base", "all",
                              "no-size-records-on-main", "moved-size",
                              "moved-size-own")
     for selected, directory, filename, value in (
@@ -2868,20 +2868,16 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
     result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", auth + script],
                             cwd=folder, env=env, check=False, capture_output=True, text=True)
     assert not (folder / "executed").exists(), f"{mode}: planted json.py executed"
-    expected_status = 1 if (mode.startswith("missing-")
-                            or mode == "no-size-records-on-main") else 0
+    expected_status = 1 if mode.startswith(("missing-", "no-")) else 0
     assert result.returncode == expected_status, (mode, result.stdout, result.stderr)
     tip = git(origin, "rev-parse", "main")
     if mode.startswith("missing-"):
         if mode == "missing-size-base":
-            assert "carried no base; the measuring job is broken" in result.stderr, \
-                result.stderr
+            assert "carried no base; the measuring job is broken" in result.stderr, result.stderr
         else:
-            artifact, payload = (("ratchet-push", "ci-thresholds.json")
-                                 if mode == "missing-thresholds" else
-                                 ("comment-share-ratchet", "comment-share.json")
-                                 if mode == "missing-records" else
-                                 ("size-baseline-ratchet", "size-baseline.json"))
+            artifact, payload = {"missing-thresholds": ("ratchet-push", "ci-thresholds.json"),
+                                 "missing-records": ("comment-share-ratchet", "comment-share.json"),
+                                 "missing-size": ("size-baseline-ratchet", "size-baseline.json")}[mode]
             assert artifact in result.stderr and payload in result.stderr, result.stderr
         assert tip == base, f"{mode}: malformed handoff published a commit"
     elif mode == "no-size-records-on-main":
@@ -2917,9 +2913,8 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
                 # A path other than the merging artifact's records file
                 # moved: the staged data is dropped, the issue's defect.
                 assert tip == moved, f"{mode}: stale data was published"
-                assert summary.exists() and \
-                    "Dropped: main moved under the measured tree" in summary.read_text(), \
-                    f"{mode}: the drop left no summary"
+                assert summary.exists() and "Dropped: main moved under the measured tree" \
+                    in summary.read_text(), f"{mode}: the drop left no summary"
         else:
             assert (tip != base) == (mode != "absent"), f"{mode}: wrong publication outcome"
             actual = json.loads(git(origin, "show", "main:.github/ci-thresholds.json"))
@@ -2927,11 +2922,16 @@ for mode in ("thresholds", "records", "both", "missing-thresholds",
             actual = json.loads(git(origin, "show", "main:.github/comment-share.json"))
             assert actual == {"a.py": [35 if records_selected else 40, 100]}
             actual = json.loads(git(origin, "show", "main:.github/size-baseline.json"))
-            assert actual == ({"schema_version": 1,
-                               "baseline": {"a.py": 601, "b.py": 600, "c.py": 550}}
-                              if size_selected else
-                              {"schema_version": 1,
-                               "baseline": {"a.py": 601, "b.py": 600, "c.py": 905}}), actual
+            expected_size = {"schema_version": 1, "baseline": {
+                "a.py": 601, "b.py": 600, "c.py": 550 if size_selected else 905}}
+            assert actual == expected_size, actual
+    published = mode in ("thresholds", "records", "both", "all", "size",
+                         "moved-own", "moved-own-thresholds", "moved-size-own")
+    subject = git(origin, "log", "-1", "--format=%s", "main") if published else ""
+    tokens = (("coverage floor",) * thresholds_selected
+              + ("comment-share",) * records_selected
+              + ("size-baseline",) * size_selected)
+    assert not published or all(t in subject for t in tokens), (mode, subject)
     print(f"  {mode}: exit {result.returncode}; shadow absent; publication verified")
 PYPUSHBOUNDARY
 }
