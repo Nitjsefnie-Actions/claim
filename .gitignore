@@ -12,6 +12,8 @@ tests/*
 !tests/commit_scopes.py
 !tests/codeql_matrix.py
 !tests/suite_legs.py
+!tests/suite_jobs.py
+!tests/action_contract.py
 !tests/gate_base_freshness.py
 !tests/identity.response
 !tests/diffcoverage/
