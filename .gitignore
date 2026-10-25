@@ -30,6 +30,7 @@ tests/diffcoverage/*
 !.github/dependabot.yml
 !.github/ci-thresholds.json
 !.github/comment-share.json
+!.github/size-baseline.json
 !.github/ISSUE_TEMPLATE/
 .github/ISSUE_TEMPLATE/*
 !.github/ISSUE_TEMPLATE/issue.md
@@ -50,5 +51,6 @@ tests/diffcoverage/*
 !.github/workflows/coverage-comment.yml
 !.github/workflows/comment-share.yml
 !.github/workflows/ratchet-push.yml
+!.github/workflows/size-baseline.yml
 !.github/workflows/requirements.txt
 !.github/workflows/requirements-pip-audit.txt
