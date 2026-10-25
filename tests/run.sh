@@ -6865,9 +6865,9 @@ REFUSALS = [
      "the diff-coverage step carrying `actions/setup-python@`"),
     ("the diff-coverage setup step removed",
      lambda w, m: planted(w, m, "wf",
-                          "      # report under the same Python that wrote it.\n"
+                          "the report reads as it was written.\n"
                           "      - uses: actions/setup-python@",
-                          "      # report under the same Python that wrote it.\n"
+                          "the report reads as it was written.\n"
                           "      - uses: actions/cache@"),
      "expected a dash-`uses:` actions/setup-python@ step as the diff-coverage job's third step"),
     ("the README header row deleted",
