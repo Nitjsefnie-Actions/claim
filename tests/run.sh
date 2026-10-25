@@ -2589,6 +2589,13 @@ elif case == "boundary":
 elif case == "decimal_raise":
     measured = "97.71"
     expected_floor = Decimal("96.21")
+elif case == "recorded_floor_wins":
+    # A record whose floor sits above measured - 1.5 (only a hand edit
+    # produces one): measuring 96.0 stages the recorded floor, not 94.5.
+    record["coverage"]["python"]["floor"] = 96.0
+    record["coverage"]["python"]["measured"] = 94.4
+    measured = "96.0"
+    expected_floor = Decimal("96.0")
 elif case == "malformed":
     refused = True
 elif case.startswith("measured:"):
@@ -2630,7 +2637,7 @@ else:
     assert result.returncode == 0, f"{case}: exit {result.returncode}: {result.stderr}"
     assert not result.stderr, result.stderr
     assert len(result.stdout.splitlines()) == 1, "expected one decision line"
-    if case in ("better", "decimal_raise"):
+    if case in ("better", "decimal_raise", "recorded_floor_wins"):
         assert out.is_dir(), "gain above the hysteresis staged no record"
         assert sorted(p.name for p in out.iterdir()) == ["ci-thresholds.json"]
         staged = out / "ci-thresholds.json"
@@ -2664,6 +2671,7 @@ ratchet_within_hysteresis_writes_nothing() { ratchet_case within_hysteresis; }
 ratchet_below_hysteresis_boundary_writes_nothing() { ratchet_case below_boundary; }
 ratchet_exact_hysteresis_boundary_writes_nothing() { ratchet_case boundary; }
 ratchet_raise_uses_decimal_values() { ratchet_case decimal_raise; }
+ratchet_recorded_floor_wins() { ratchet_case recorded_floor_wins; }
 ratchet_refuses_malformed_json() { ratchet_case malformed; }
 ratchet_refuses_non_numeric_measurement() { ratchet_case measured:garbage; }
 ratchet_refuses_non_finite_measurement() {
@@ -7274,6 +7282,7 @@ action_contract readme_quoted_replies
   ratchet_lower_never_loosens ratchet_within_hysteresis_writes_nothing
   ratchet_below_hysteresis_boundary_writes_nothing
   ratchet_exact_hysteresis_boundary_writes_nothing ratchet_raise_uses_decimal_values
+  ratchet_recorded_floor_wins
   ratchet_refuses_malformed_json
   ratchet_refuses_non_numeric_measurement ratchet_refuses_non_finite_measurement
   ratchet_refuses_schema ratchet_refuses_missing_or_boolean_schema ratchet_refuses_cell
