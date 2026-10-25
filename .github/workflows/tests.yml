@@ -7,11 +7,13 @@ name: tests
 # workflow's own bash steps -- the merge-conflict marker check, the
 # python3 PATH shim and the compile check -- while the behavioral suite
 # and the venv-backed checks stay scoped to the POSIX legs (see those
-# steps for why). The python-versions job runs the full suite on Python
-# 3.11-3.14 on ubuntu.
+# steps for why). Every leg runs on CPython 3.15.1 from setup-python, and
+# the python-versions job runs the full suite again on each version its
+# matrix lists, on ubuntu.
 #
-# The suite stays install-free by design (#87): everything it runs ships with
-# the images -- bash, python3, and shellcheck -- and tests/gh.sh supplies the
+# The suite stays install-free by design (#87): everything it runs is bash
+# and shellcheck from the images plus python3 from setup-python, which
+# installs an interpreter and never a package, and tests/gh.sh supplies the
 # API stub. The file's package installs are the workflow's own: the lint
 # step's hash-pinned ruff, the type/lint steps' hash-pinned pylint,
 # pycodestyle and pyright, and the hash-pinned coverage installed twice --
@@ -159,13 +161,22 @@ jobs:
           # .git/config lets any later step reuse it.
           persist-credentials: false
 
+      # Every leg runs on the interpreter the action itself provisions, so
+      # the suite, the lint, type and coverage tooling and the windows
+      # compile check all exercise the Python consumers run. Before the
+      # windows shim below, which forwards to the `python` this step puts on
+      # PATH.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15.1"
+
       - name: Put a python3 on PATH
-        # The windows image provides `python` but not `python3`, and the
-        # steps below and tests/run.sh all call `python3` by name. The shim
-        # is the suite's own install-free fix: a two-line sh script on PATH,
-        # no package install. `shell: bash` because the body is bash syntax
-        # -- on windows the default shell is pwsh, and Git Bash executes the
-        # extension-less shim where pwsh would not.
+        # setup-python's windows interpreter answers to `python` but not
+        # `python3`, and the steps below and tests/run.sh all call `python3`
+        # by name. The shim is the suite's own install-free fix: a two-line
+        # sh script on PATH, no package install. `shell: bash` because the
+        # body is bash syntax -- on windows the default shell is pwsh, and
+        # Git Bash executes the extension-less shim where pwsh would not.
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -230,17 +241,15 @@ jobs:
         # defect-oriented intersection set pr-gate gates, and
         # deliberately not plain F, whose F401 and F841 red CI on benign
         # refactors.
-        # Why the venv: both hosted images mark their system python externally
-        # managed (PEP 668), so a plain pip install fails on all legs. The
-        # suites job keeps the images' preinstalled python3; only the
-        # python-versions job runs setup-python, to pin the four explicit
-        # versions it covers, and setup-python installs an interpreter, never
-        # packages, so the suite stays install-free (#87).
-        # Why the awk extraction: the manifest's PyYAML pin carries one hash,
-        # a cp313 manylinux x86_64 wheel, so installing the whole file with
-        # --require-hashes resolves nothing on macOS. The ruff block alone is
-        # platform-complete; the manifest stays the single source for the
-        # version and hashes.
+        # Why the venv: the workflow installs nothing into the interpreter
+        # setup-python provides, so each tool gets a throwaway venv;
+        # setup-python installs an interpreter, never packages, so the suite
+        # stays install-free (#87).
+        # Why the awk extraction: the whole file would also install zizmor
+        # and build PyYAML from its sdist, the temporary source exception
+        # only actionlint.yml's zizmor install takes until a cp315 wheel
+        # ships. The ruff block alone is platform-complete; the manifest
+        # stays the single source for the version and hashes.
         # POSIX legs only: the venv's interpreter sits at venv/bin/python on
         # POSIX and venv/Scripts/python.exe on Windows, and this step is
         # written for the POSIX layout; extending it to Windows is future
@@ -254,22 +263,20 @@ jobs:
 
       - name: Install the type and lint toolchain
         id: install_checks
-        # Why the venv: both hosted images mark their system python externally
-        # managed (PEP 668), so a plain pip install fails on all legs. The
-        # suites job keeps the images' preinstalled python3; only the
-        # python-versions job runs setup-python, to pin the four explicit
-        # versions it covers, and setup-python installs an interpreter, never
-        # packages, so the suite stays install-free (#87).
-        # Why the awk lift: the manifest's PyYAML pin carries one hash, a
-        # cp313 manylinux x86_64 wheel, so installing the whole file with
-        # --require-hashes resolves nothing on macOS. The lift reaches from
-        # the coverage block to EOF, one plain range like every other lift
-        # in this workflow: the files these checks read import coverage
-        # (.github/scripts/diff_coverage.py), so the venv that lints the
-        # tree must resolve what the tree imports, and coverage sitting
-        # before pylint in the manifest puts both blocks plus pylint's
-        # dependencies inside the one range. The manifest stays the single
-        # source for the versions and hashes.
+        # Why the venv: the workflow installs nothing into the interpreter
+        # setup-python provides, so each tool gets a throwaway venv;
+        # setup-python installs an interpreter, never packages, so the suite
+        # stays install-free (#87).
+        # Why the awk lift: the whole file would also install zizmor and
+        # build PyYAML from its sdist, the temporary source exception only
+        # actionlint.yml's zizmor install takes until a cp315 wheel ships.
+        # The lift reaches from the coverage block to EOF, one plain range
+        # like every other lift in this workflow: the files these checks
+        # read import coverage (.github/scripts/diff_coverage.py), so the
+        # venv that lints the tree must resolve what the tree imports, and
+        # coverage sitting before pylint in the manifest puts both blocks
+        # plus pylint's dependencies inside the one range. The manifest
+        # stays the single source for the versions and hashes.
         # POSIX legs only: the venv's interpreter sits at venv/bin/python on
         # POSIX and venv/Scripts/python.exe on Windows, and this step is
         # written for the POSIX layout; extending it to Windows is future
@@ -308,14 +315,13 @@ jobs:
           # no ratchet, because the tree passes outright.
           "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json
       # The measured cell's coverage install lifts the coverage block out of
-      # the hash-pinned manifest into a venv (PEP 668 marks both hosted
-      # images' system python externally managed, so a plain pip install
-      # fails), writes coverage's startup hook into that venv, and arms the
-      # three env vars the rest of the job inherits through GITHUB_ENV --
-      # PATH first, so the suite's run step and the coverage commands below
-      # resolve the venv's python3. The run step stays byte-for-byte what it
-      # was, and on every other cell the step is skipped, and the suite runs
-      # exactly as before.
+      # the hash-pinned manifest into a venv (the workflow installs nothing
+      # into the setup-python interpreter), writes coverage's startup hook
+      # into that venv, and arms the three env vars the rest of the job
+      # inherits through GITHUB_ENV -- PATH first, so the suite's run step
+      # and the coverage commands below resolve the venv's python3. The run
+      # step stays byte-for-byte what it was, and on every other cell the
+      # step is skipped, and the suite runs exactly as before.
       - name: Install coverage tooling
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -416,8 +422,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  # The suites job pins OS coverage at each image's preinstalled python3;
-  # this job pins Python coverage at pr-gate's four supported versions.
+  # The suites job pins OS coverage at the action's own CPython 3.15.1;
+  # this job pins Python coverage at each version its matrix lists.
   # Informational, never required: a new job name is not a required status
   # context, and making one required is a ruleset edit the maintainer
   # makes, not this workflow.
@@ -425,7 +431,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        python: ["3.14", "3.15"]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -487,9 +493,15 @@ jobs:
         with:
           name: coverage-xml
 
+      # The interpreter the measured cell ran, so the analyzer reads the
+      # report under the same Python that wrote it.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15.1"
+
       # The same install the coverage cell makes, for the same reason: the
       # statement analyzer the script drives is coverage.py, which no image
-      # preinstalls and a PEP 668 system python refuses to take. No startup
+      # preinstalls and the setup-python interpreter does not carry. No startup
       # hook and no COVERAGE_PROCESS_START here -- no suite runs in this job,
       # so there is nothing to measure, only a report to read.
       - name: Install coverage tooling

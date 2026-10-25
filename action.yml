@@ -45,12 +45,20 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Set up Python
+      id: python
+      # update-environment: false leaves the caller's Python and PATH alone.
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.15.1"
+        update-environment: false
     - name: Claim or unclaim
       shell: bash
       # Public comment text is attacker-controlled: pass it as environment data,
       # never interpolate it into a shell program. The script accepts only an exact
       # command after stripping carriage returns and trimming ASCII whitespace.
       env:
+        CLAIM_PYTHON: ${{ steps.python.outputs.python-path }}
         GH_TOKEN: ${{ inputs.token }}
         CLAIM_REPOSITORY: ${{ inputs.repository }}
         CLAIM_ISSUE: ${{ inputs.issue }}
@@ -59,4 +67,4 @@ runs:
         CLAIM_BODY: ${{ inputs.body }}
         CLAIM_MAX_CLAIMS: ${{ inputs.max-claims }}
         CLAIM_EXPIRE: ${{ inputs.expire }}
-      run: 'python3 "$GITHUB_ACTION_PATH/claim.py"'
+      run: '"$CLAIM_PYTHON" "$GITHUB_ACTION_PATH/claim.py"'

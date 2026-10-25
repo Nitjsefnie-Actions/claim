@@ -65,11 +65,15 @@ you changed, check `git check-ignore -v` refuses that file, and check
 
 ## Getting it running
 
-Nothing to install but `shellcheck`. `bash`, `gh` and `python3` are what the
-action itself needs, and every GitHub-hosted runner has all three. Python uses
-only the standard library; the suite needs no package installation.
+Nothing to install but `shellcheck` and a Python 3.15 interpreter. The
+action needs `bash` and `gh` on the runner and provisions CPython 3.15.1 for
+itself through `actions/setup-python`; CI runs the suite on 3.15.1 and again
+on 3.14 and 3.15, so put a 3.15 (or 3.14) `python3` first on your PATH.
+Python uses only the standard library; the suite needs no package
+installation.
 
 ```bash
+python3 --version     # 3.15 (or 3.14)
 tests/run.sh          # the whole suite; its exit status is the verdict
 shellcheck tests/*.sh
 python3 -m py_compile claim.py

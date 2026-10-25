@@ -5331,19 +5331,35 @@ lines = "\n".join(line for line in action.splitlines()
                   if line.strip() and not line.lstrip().startswith("#"))
 inputs, runs = lines.split("\nruns:\n")
 inputs = inputs.split("\ninputs:\n")[1]
+# Two steps: the interpreter setup, whose `uses:` value and `with:` block are
+# left unread (Dependabot moves the pin, and the version is a review matter,
+# not a test literal), then the claim step that runs on the interpreter the
+# setup step reports.
 step = re.fullmatch(
-    r"  using: composite\n  steps:\n    - name: [^\n]+\n"
+    r"  using: composite\n  steps:\n"
+    r"    - name: [^\n]+\n      id: (?P<setup>[a-z][a-z0-9_-]*)\n"
+    r"      uses: actions/setup-python@[^\n]+\n"
+    r"      with:\n(?:        [^\n]+\n)+"
+    r"    - name: [^\n]+\n"
     r"      shell: bash\n      env:\n(?P<env>(?:        [^\n]+\n)+)"
     r"      run: (?P<run>[^\n]+)", runs)
-assert step, "expected one claim step with shell: bash and explicit env/run"
+assert step, ("expected an interpreter setup step with an id, then one claim"
+              " step with shell: bash and explicit env/run")
 assert "${{" not in step["run"], "expressions must not appear in run values"
-assert step["run"] == "'python3 \"$GITHUB_ACTION_PATH/claim.py\"'", \
-    "claim run must stay quoted and invoke Python with the quoted action path"
+assert step["run"] == "'\"$CLAIM_PYTHON\" \"$GITHUB_ACTION_PATH/claim.py\"'", \
+    "claim run must stay quoted and invoke the quoted interpreter path with the quoted action path"
 env = {}
 for line in step["env"].splitlines():
     name, value = line.strip().split(": ", 1)
     assert name not in env, f"duplicate environment name: {name}"
     env[name] = value
+# The interpreter reaches the run value as environment data bound to the
+# setup step's reported path, never as program text.
+interpreter = env.pop("CLAIM_PYTHON", None)
+assert interpreter is not None, "the claim step must receive the interpreter path as CLAIM_PYTHON"
+assert re.fullmatch(r"\$\{\{\s*steps\." + re.escape(step["setup"])
+                    + r"\.outputs\.python-path\s*\}\}", interpreter), \
+    "CLAIM_PYTHON must bind the setup step's python-path output"
 script = ast.parse((root / "claim.py").read_text())
 script_variables = {
     "CLAIM_" + node.args[0].value for node in ast.walk(script)
@@ -6661,11 +6677,23 @@ REAL_MD = (root / suite_legs.README).read_text()
 # pin-carrying anchor is read from the shipped workflow instead -- the shape
 # stays pinned, never which release (Nitjsefnie-Actions/pr-gate#77's rule for
 # its own workflow tests).
-SETUP_MATCH = re.search(
-    r"      - uses: actions/setup-python@([0-9a-f]{40}) # \S+\n", REAL_WF)
+# The suites and diff-coverage jobs carry the same setup line, so the search
+# starts at the python-versions job key and the plant splices that one
+# occurrence by position.
+SETUP_MATCH = re.compile(
+    r"      - uses: actions/setup-python@([0-9a-f]{40}) # \S+\n").search(
+        REAL_WF, REAL_WF.index("\n  python-versions:\n"))
 assert SETUP_MATCH, "the python-versions setup step is not the modelled shape"
-SETUP_STEP_LINE = SETUP_MATCH.group(0).rstrip("\n")
 SETUP_SHA = SETUP_MATCH.group(1)
+DIFF_SETUP_MATCH = re.compile(
+    r"      - uses: actions/setup-python@[0-9a-f]{40} # \S+\n").search(
+        REAL_WF, REAL_WF.index("\n  diff-coverage:\n"))
+assert DIFF_SETUP_MATCH, "the diff-coverage setup step is not the modelled shape"
+# The README header and the python-versions matrix line, read from the
+# shipped files so no case restates the version list.
+HEADER_ROW = next(line for line in REAL_MD.splitlines()
+                  if line.startswith("| Check |"))
+MATRIX_LINE = re.search(r'^        python: \[[^\n]*\]$', REAL_WF, re.M).group(0)
 
 def fail(message):
     print(f"  {message}")
@@ -6798,8 +6826,8 @@ REFUSALS = [
      "carries an `if:` with no value"),
     ("an if on the nameless suites checkout",
      lambda w, m: planted(w, m, "wf",
-                          "        persist-credentials: false\n\n      - name: Put a python3 on PATH",
-                          "        persist-credentials: false\n        if: matrix.os == 'ubuntu-latest'\n\n      - name: Put a python3 on PATH"),
+                          "        persist-credentials: false\n\n      # Every leg runs on",
+                          "        persist-credentials: false\n        if: matrix.os == 'ubuntu-latest'\n\n      # Every leg runs on"),
      "conditioned step with no `name:`"),
     ("a name on the dash and in the body",
      lambda w, m: planted(w, m, "wf", "      - name: pycodestyle\n        if:",
@@ -6892,25 +6920,56 @@ REFUSALS = [
                                            "        shell: bash\n")),
      "carries an `if:` this pin does not model"),
     ("the python-versions setup step named",
-     lambda w, m: planted(w, m, "wf",
-                          SETUP_STEP_LINE,
-                          "      - name: Set up Python\n"
-                          "        uses: actions/setup-python@" + SETUP_SHA),
+     lambda w, m: (REAL_WF[:SETUP_MATCH.start()]
+                   + "      - name: Set up Python\n"
+                   "        uses: actions/setup-python@" + SETUP_SHA + "\n"
+                   + REAL_WF[SETUP_MATCH.end():], m),
      "carries a name or condition this pin does not model"),
+    ("a named setup step in diff-coverage",
+     lambda w, m: (REAL_WF[:DIFF_SETUP_MATCH.end()]
+                   + "        name: Set up Python\n"
+                   + REAL_WF[DIFF_SETUP_MATCH.end():], m),
+     "the diff-coverage step carrying `actions/setup-python@`"),
+    ("the diff-coverage setup step removed",
+     lambda w, m: planted(w, m, "wf",
+                          "      # report under the same Python that wrote it.\n"
+                          "      - uses: actions/setup-python@",
+                          "      # report under the same Python that wrote it.\n"
+                          "      - uses: actions/cache@"),
+     "expected a dash-`uses:` actions/setup-python@ step as the diff-coverage job's third step"),
     ("the README header row deleted",
-     lambda w, m: planted(w, m, "md",
-                          "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |\n", ""),
+     lambda w, m: planted(w, m, "md", HEADER_ROW + "\n", ""),
      "exactly one `| Check |` table header row"),
     ("a second README header row",
      lambda w, m: planted(w, m, "md", "| --- | --- | --- | --- | --- |",
-                          "| --- | --- | --- | --- | --- |\n"
-                          "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |"),
+                          "| --- | --- | --- | --- | --- |\n" + HEADER_ROW),
      "exactly one `| Check |` table header row"),
     ("a renamed header column",
-     lambda w, m: planted(w, m, "md",
-                          "| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |",
-                          "| Check | ubuntu | macos | win | 3.11–3.14 (ubuntu) |"),
+     lambda w, m: planted(w, m, "md", HEADER_ROW,
+                          HEADER_ROW.replace("| windows |", "| win |")),
      "columns are not the ones this pin reads"),
+    ("a versions header the matrix does not name",
+     lambda w, m: planted(w, m, "md", HEADER_ROW,
+                          HEADER_ROW.replace(" (ubuntu) |", " (ubuntu, all) |")),
+     "columns are not the ones this pin reads"),
+    ("a matrix version the README header does not name",
+     lambda w, m: planted(w, m, "wf", MATRIX_LINE,
+                          re.sub(r'"(\d+)\.(\d+)"\]$',
+                                 lambda v: f'"{v[1]}.{v[2]}", '
+                                           f'"{v[1]}.{int(v[2]) + 1}"]',
+                                 MATRIX_LINE)),
+     "columns are not the ones this pin reads"),
+    ("a matrix that skips a minor version",
+     lambda w, m: planted(w, m, "wf", MATRIX_LINE,
+                          re.sub(r'"(\d+)\.(\d+)"\]$',
+                                 lambda v: f'"{v[1]}.{v[2]}", '
+                                           f'"{v[1]}.{int(v[2]) + 2}"]',
+                                 MATRIX_LINE)),
+     "does not ascend by one minor version"),
+    ("an unquoted matrix version",
+     lambda w, m: planted(w, m, "wf", MATRIX_LINE,
+                          MATRIX_LINE.replace('"', "")),
+     "one-line list of double-quoted X.Y versions"),
     ("a malformed separator row",
      lambda w, m: planted(w, m, "md", "| --- | --- | --- | --- | --- |",
                           "| x | --- | --- | --- | --- |"),
