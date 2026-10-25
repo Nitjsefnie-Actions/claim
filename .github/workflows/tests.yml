@@ -7,19 +7,17 @@ name: tests
 # workflow's own bash steps -- the merge-conflict marker check, the
 # python3 PATH shim and the compile check -- while the behavioral suite
 # and the venv-backed checks stay scoped to the POSIX legs (see those
-# steps for why). Every leg runs on CPython 3.15.1 from setup-python, and
-# the python-versions job runs the full suite again on each version its
-# matrix lists, on ubuntu.
+# steps for why). Every leg runs on CPython 3.15.1 from setup-python; the
+# python-versions job reruns the suite on each matrix version, on ubuntu.
 #
-# The suite stays install-free by design (#87): everything it runs is bash
-# and shellcheck from the images plus python3 from setup-python, which
-# installs an interpreter and never a package, and tests/gh.sh supplies the
-# API stub. The file's package installs are the workflow's own: the lint
-# step's hash-pinned ruff, the type/lint steps' hash-pinned pylint,
-# pycodestyle and pyright, and the hash-pinned coverage installed twice --
-# in the coverage cell and again in the diff-coverage job, which never runs
-# a suite and needs only the statement analyzer -- each lifted out of the
-# manifest into a throwaway venv, which no image preinstalls.
+# The suite stays install-free by design (#87): it runs the images' bash and
+# shellcheck, setup-python's python3 (an interpreter, never a package) and
+# the tests/gh.sh API stub. The file's package installs are the workflow's
+# own: the lint step's hash-pinned ruff, the type/lint steps' hash-pinned
+# pylint, pycodestyle and pyright, and the hash-pinned coverage installed
+# twice -- in the coverage cell and again in the diff-coverage job, which
+# never runs a suite and needs only the statement analyzer -- each lifted
+# out of the manifest into a throwaway venv, which no image preinstalls.
 #
 # Coverage is measured on exactly one cell so the reported number names a
 # single reproducible environment. claim.py runs as a SUBPROCESS of the suite
@@ -165,11 +163,7 @@ jobs:
           # .git/config lets any later step reuse it.
           persist-credentials: false
 
-      # Every leg runs on the interpreter the action itself provisions, so
-      # the suite, the lint, type and coverage tooling and the windows
-      # compile check all exercise the Python consumers run. Before the
-      # windows shim below, which forwards to the `python` this step puts on
-      # PATH.
+      # Every leg runs on the action's interpreter; the windows shim wraps it.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.15.1"
@@ -245,15 +239,12 @@ jobs:
         # defect-oriented intersection set pr-gate gates, and
         # deliberately not plain F, whose F401 and F841 red CI on benign
         # refactors.
-        # Why the venv: the workflow installs nothing into the interpreter
-        # setup-python provides, so each tool gets a throwaway venv;
-        # setup-python installs an interpreter, never packages, so the suite
-        # stays install-free (#87).
+        # Why the venv: setup-python installs an interpreter, never packages,
+        # so each tool gets a throwaway venv and the suite stays install-free.
         # Why the awk extraction: the whole file would also install zizmor
-        # and build PyYAML from its sdist, the temporary source exception
-        # only actionlint.yml's zizmor install takes until a cp315 wheel
-        # ships. The ruff block alone is platform-complete; the manifest
-        # stays the single source for the version and hashes.
+        # and build PyYAML from its sdist, actionlint.yml's exception until a
+        # cp315 wheel ships. The ruff block alone is platform-complete; the
+        # manifest stays the single source for the version and hashes.
         # POSIX legs only: the venv's interpreter sits at venv/bin/python on
         # POSIX and venv/Scripts/python.exe on Windows, and this step is
         # written for the POSIX layout; extending it to Windows is future
@@ -267,20 +258,17 @@ jobs:
 
       - name: Install the type and lint toolchain
         id: install_checks
-        # Why the venv: the workflow installs nothing into the interpreter
-        # setup-python provides, so each tool gets a throwaway venv;
-        # setup-python installs an interpreter, never packages, so the suite
-        # stays install-free (#87).
-        # Why the awk lift: the whole file would also install zizmor and
-        # build PyYAML from its sdist, the temporary source exception only
-        # actionlint.yml's zizmor install takes until a cp315 wheel ships.
-        # The lift reaches from the coverage block to EOF, one plain range
-        # like every other lift in this workflow: the files these checks
-        # read import coverage (.github/scripts/diff_coverage.py), so the
-        # venv that lints the tree must resolve what the tree imports, and
-        # coverage sitting before pylint in the manifest puts both blocks
-        # plus pylint's dependencies inside the one range. The manifest
-        # stays the single source for the versions and hashes.
+        # Why the venv: setup-python installs an interpreter, never packages,
+        # so each tool gets a throwaway venv and the suite stays install-free.
+        # Why the awk lift: the whole file would also install zizmor and build
+        # PyYAML from its sdist, actionlint.yml's exception until a cp315
+        # wheel ships. The lift reaches from the coverage block to EOF, one
+        # plain range like every other lift in this workflow: the files these
+        # checks read import coverage (.github/scripts/diff_coverage.py), so
+        # the venv that lints the tree must resolve what the tree imports, and
+        # coverage sitting before pylint in the manifest puts both blocks plus
+        # pylint's dependencies inside the one range. The manifest stays the
+        # single source for the versions and hashes.
         # POSIX legs only: the venv's interpreter sits at venv/bin/python on
         # POSIX and venv/Scripts/python.exe on Windows, and this step is
         # written for the POSIX layout; extending it to Windows is future
@@ -318,13 +306,11 @@ jobs:
           # pyrightconfig.json. The exit code is the gate: no baseline and
           # no ratchet, because the tree passes outright.
           "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json
-      # The measured cell's coverage install lifts the coverage block out of
-      # the hash-pinned manifest into a venv (the workflow installs nothing
-      # into the setup-python interpreter), writes coverage's startup hook
-      # into that venv, arms two env vars through GITHUB_ENV, and puts the
-      # venv's bin on GITHUB_PATH, ahead of setup-python's, so the run step
-      # and the coverage commands below resolve the venv's python3. The run
-      # step is unchanged; on every other cell this step is skipped.
+      # The measured cell lifts the manifest's coverage block into a venv,
+      # writes coverage's startup hook there, arms two env vars through
+      # GITHUB_ENV and puts the venv's bin on GITHUB_PATH ahead of
+      # setup-python's, so the run step and the coverage commands below
+      # resolve its python3. Every other cell skips this step.
       - name: Install coverage tooling
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -496,8 +482,7 @@ jobs:
         with:
           name: coverage-xml
 
-      # The interpreter the measured cell ran, so the analyzer reads the
-      # report under the same Python that wrote it.
+      # The measured cell's interpreter, so the report reads as it was written.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.15.1"
