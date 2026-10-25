@@ -148,15 +148,19 @@ ends quietly, and a bot's comment still never starts a runner.
 
 ## Runners and Python versions
 
-The action needs `bash`, `gh` and `python3` on the runner's PATH. Its
-composite step runs everything under `shell: bash` — Git for Windows Bash
-on a windows runner — and `claim.py` uses only the standard library, so
-there is nothing to install on any supported runner.
+The action needs `bash` and `gh` on the runner's PATH, and brings its own
+Python: its first step runs `actions/setup-python` for CPython 3.15.1, and
+`claim.py` runs on that interpreter whatever `python3` the runner carries.
+The setup step leaves the caller's selected Python, PATH and Python
+environment variables untouched, so later steps in the job see the
+interpreter they saw before. The claim step runs under `shell: bash` — Git
+for Windows Bash on a windows runner — and `claim.py` uses only the
+standard library, so nothing beyond the interpreter is installed.
 
 Consumers can run the action on ubuntu, macos and windows runners. What
 this repository's CI runs, per leg and per step:
 
-| Check | ubuntu | macos | windows | 3.11–3.14 (ubuntu) |
+| Check | ubuntu | macos | windows | 3.14–3.15 (ubuntu) |
 | --- | --- | --- | --- | --- |
 | Behavioral suite | yes | yes | no — stub limitation, below | yes |
 | ruff lint of claim.py | yes | yes | no | no |
@@ -166,12 +170,12 @@ this repository's CI runs, per leg and per step:
 | Compile the claim script | yes | yes | yes | no |
 | Put a python3 on PATH | no | no | yes | no |
 
-The full behavioral suite runs on ubuntu-latest and macos-latest at each
-image's preinstalled python3, and again on Python 3.11, 3.12, 3.13 and
-3.14 via setup-python in a separate informational job. Coverage is
-measured and gated on the ubuntu cell only, so the reported number names
-one reproducible environment. No version floor is claimed beyond that
-verification.
+Every leg runs on CPython 3.15.1, the interpreter the action itself
+provisions. The full behavioral suite runs on ubuntu-latest and
+macos-latest, and again on Python 3.14 and 3.15 via setup-python in a
+separate informational job. Coverage is measured and gated on the ubuntu
+cell only, so the reported number names one reproducible environment. No
+version floor is claimed beyond that verification.
 
 The windows leg stops short of the behavioral suite for a stated reason:
 the suite's `gh` stub is an extension-less bash script placed on PATH as
@@ -182,7 +186,8 @@ would run against it, and without one every case fails to start with
 WinError 2 (file not found). Either way the stub never executes, so the
 suite step is scoped to the POSIX legs; the windows leg instead runs the
 workflow's bash steps and the compile check, with a small `python3` PATH
-shim backing the `python3` calls by forwarding to the image's `python`.
+shim backing the `python3` calls by forwarding to the `python` that
+setup-python selected.
 Real consumers are unaffected — they run the real `gh.exe`. Widening the
 leg needs a Windows-executable stub form, tracked in the issue tracker.
 

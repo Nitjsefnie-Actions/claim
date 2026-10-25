@@ -27,8 +27,9 @@ the only lines read:
     may carry `uses:` or `name:`; a dash-carried value is read with any
     `# v7.0.1`-style SHA comment truncated, because the value's identity is
     the SHA, and the python-versions dashes are additionally prefix-checked,
-    and that job carries no id at all); and the `runs-on:` line that
-    consumes `matrix.os`;
+    and that job carries no id at all); the python-versions job's
+    `strategy:` / `matrix:` anchors and its one-line `python:` list; and
+    the `runs-on:` line that consumes `matrix.os`;
   - from README.md: the one `| Check |` table header, its `---` separator,
     and the run of `|`-led data rows that follows, and nothing else.
 
@@ -97,8 +98,10 @@ Legs, and how they are derived:
     dash-`uses:` step, the setup-python dash-`uses:` step, and one named
     `Run the behavioral suite` step carrying no `if:`; any other step, name
     or condition there refuses. Its behavioral-suite step is what the
-    README's `3.11-3.14 (ubuntu)` column means: a row claims that column
-    when one of its steps is that step.
+    README's versions column means: a row claims that column when one of
+    its steps is that step. Its header, `<first>–<last> (ubuntu)`, is
+    derived from the job's `python:` list, which must ascend by one minor
+    version so the range skips nothing.
 
 The `diff-coverage:` job is pull-request-only and not a README-table leg --
 the table documents the per-leg CI surface, and this job runs on no leg --
@@ -106,10 +109,11 @@ so no row claims it and the sweep does not walk its steps. Its shape is
 pinned LITERALLY instead of by derivation, because there is no README side
 to derive from: `needs: suites`, the landed job-level `if:` spelling (the
 normalised `${{ !cancelled() && needs.suites.result == 'success' &&
-github.event_name == 'pull_request' }}`), and the exact six-step list with
-no conditions -- `needs` and the job `if` are pinned because the job's
-reach is their semantics, and a step condition here would be a second,
-unpinned gate beside the job-level one. A change to any of the literals is
+github.event_name == 'pull_request' }}`), and the exact seven-step list
+with no conditions, its setup-python step prefix-checked and otherwise
+unread -- `needs` and the job `if` are pinned because the job's reach is
+their semantics, and a step condition here would be a second, unpinned
+gate beside the job-level one. A change to any of the literals is
 a deliberate edit to this pin.
 
 Comparison: every table row is mapped by the pinned ROW_STEPS table to the
@@ -139,7 +143,9 @@ admitted. In the README: a missing, duplicated or renamed header; a
 malformed separator; a ragged row; a cell outside the yes/no grammar; an
 unknown row label; a duplicate row label. In the diff-coverage job: a
 `needs:` naming another job, a drifted job-level `if:` spelling, a step
-carrying an `if:` of its own, or a reordered/renamed/extra step.
+carrying an `if:` of its own, or a reordered/renamed/extra step. In the
+python-versions matrix: a `python:` list that is not one line, an unquoted
+or non-`X.Y` item, or versions that do not ascend by one minor version.
 """
 
 from pathlib import Path
@@ -170,7 +176,9 @@ LEG_FOR_OS = {
     "windows-latest": "windows",
 }
 COLUMNS = ("ubuntu", "macos", "windows", "versions")
-HEADER = ("ubuntu", "macos", "windows", "3.11–3.14 (ubuntu)")
+# The versions column's header is derived from the python-versions matrix
+# (python_versions_header), so the OS headers are the only fixed spellings.
+OS_HEADERS = ("ubuntu", "macos", "windows")
 
 # The five landed `if:` spellings, matched against the normalised value.
 WINDOWS_IF = "runner.os == 'Windows'"
@@ -522,6 +530,29 @@ def suites_legs(job):
     return steps, derived
 
 
+def python_versions_header(job):
+    """The versions column header the python-versions matrix implies."""
+    strategy = bare(job, JOB_KEY, "strategy:", "python-versions")
+    body = between(job, strategy)
+    matrix = bare(body, MATRIX, "matrix:", "the python-versions strategy")
+    line = exactly_one(between(body, matrix), MATRIX_KEY, r"python: (\S.*)",
+                       "`python:` under the python-versions matrix")
+    value = line[2].strip()[len("python:"):].strip()
+    if not re.fullmatch(r'\["\d+\.\d+"(?:, "\d+\.\d+")*\]', value):
+        refuse(line[2], "the python-versions `python:` list is not the "
+                        "one-line list of double-quoted X.Y versions this "
+                        "pin reads")
+    versions = [tuple(int(part) for part in item.split("."))
+                for item in re.findall(r'"([^"]+)"', value)]
+    for earlier, later in zip(versions, versions[1:]):
+        if later != (earlier[0], earlier[1] + 1):
+            refuse(line[2], "the python-versions `python:` list does not "
+                            "ascend by one minor version, so no range "
+                            "header can name it")
+    first, last = versions[0], versions[-1]
+    return f"{first[0]}.{first[1]}–{last[0]}.{last[1]} (ubuntu)"
+
+
 def python_versions_steps(job):
     """The python-versions job's steps, pinned to the landed three."""
     steps = read_steps(job, "python-versions")
@@ -587,18 +618,21 @@ def diff_coverage_steps(job):
         refuse(condition[2], "the diff-coverage job's `if:` is not the "
                              "landed spelling this pin reads")
     steps = read_steps(job, "diff-coverage")
-    if len(steps) != 6:
+    if len(steps) != 7:
         refuse(f"[{len(steps)} steps]",
-               "expected exactly six steps in the diff-coverage job")
-    checkout = steps[0]
-    if not (checkout["uses"] or "").startswith("actions/checkout@"):
-        refuse("[step dash]",
-               "expected a dash-`uses:` actions/checkout@ step as the "
-               "diff-coverage job's first step")
-    if checkout["name"] is not None or checkout["if"] is not None:
-        refuse("[step]", "the diff-coverage checkout carries a name or "
-                         "condition this pin does not model")
-    for step, name in zip(steps[1:], (
+               "expected exactly seven steps in the diff-coverage job")
+    # Prefix only: the pin and its `with:` inputs are not this pin's.
+    for step, prefix, where in ((steps[0], "actions/checkout@", "first"),
+                                (steps[2], "actions/setup-python@", "third")):
+        if not (step["uses"] or "").startswith(prefix):
+            refuse("[step dash]",
+                   f"expected a dash-`uses:` {prefix} step as the "
+                   f"diff-coverage job's {where} step")
+        if step["name"] is not None or step["if"] is not None:
+            refuse("[step]", f"the diff-coverage step carrying `{prefix}` "
+                             "carries a name or condition this pin does not "
+                             "model")
+    for step, name in zip(steps[1:2] + steps[3:], (
             "Download the coverage XML",
             "Install coverage tooling",
             "Measure the coverage of this change",
@@ -615,7 +649,7 @@ def diff_coverage_steps(job):
                                "pin does not model")
 
 
-def read_table(text):
+def read_table(text, versions_header):
     """The README coverage table as {row label: {column key: bool}}.
 
     Only the table's own lines are read: the one `| Check |` header, its
@@ -633,7 +667,7 @@ def read_table(text):
     start = next(index for index, line in enumerate(lines)
                  if line.strip().startswith("| Check |"))
     cells = [cell.strip() for cell in header[0].strip().strip("|").split("|")]
-    if cells != ["Check"] + list(HEADER):
+    if cells != ["Check", *OS_HEADERS, versions_header]:
         refuse(header[0], "the coverage table's columns are not the ones "
                           "this pin reads")
     rows = {}
@@ -648,7 +682,7 @@ def read_table(text):
                              "`---` row this pin reads")
             separator_seen = True
             continue
-        if len(cells) != len(HEADER) + 1:
+        if len(cells) != len(COLUMNS) + 1:
             refuse(line, "a coverage table row with a cell count this pin "
                          "does not model")
         label = cells[0]
@@ -694,9 +728,10 @@ def covers(workflow_text, readme_text):
 
     steps, derived = suites_legs(spans["suites"])
     versions_suite_step = python_versions_steps(spans["python-versions"])
+    versions_header = python_versions_header(spans["python-versions"])
     diff_coverage_steps(spans["diff-coverage"])
 
-    table = read_table(readme_text)
+    table = read_table(readme_text, versions_header)
     missing_rows = sorted(set(ROW_STEPS) - set(table))
     if missing_rows:
         raise AssertionError(
