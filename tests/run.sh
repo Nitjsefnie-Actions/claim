@@ -6624,6 +6624,8 @@ DIFF_SETUP_MATCH = re.compile(
 assert DIFF_SETUP_MATCH, "the diff-coverage setup step is not the modelled shape"
 SUITES_CHECKOUT = re.compile(r"          persist-credentials: false\n").search(REAL_WF, REAL_WF.index("\n  suites:\n"))
 assert SUITES_CHECKOUT, "the suites checkout step is not the modelled shape"
+CLAIM_STEP = re.compile(r"      - name: Compile the claim script\n").search(REAL_WF)
+assert CLAIM_STEP, "the claim-script compile step is not the modelled shape"
 # The README header and the python-versions matrix line, read from the
 # shipped files so no case restates the version list.
 HEADER_ROW = next(line for line in REAL_MD.splitlines()
@@ -6754,10 +6756,8 @@ REFUSALS = [
                           "      - name: Upload the ratchet data\n"),
      "a ratchet step must carry the push-only `if:` spelling: 'Upload the ratchet data'"),
     ("an if carrying no value",
-     lambda w, m: planted(w, m, "wf",
-                          "      - name: Compile the claim script\n        # Explicit",
-                          "      - name: Compile the claim script\n        if:\n"
-                          "        # Explicit"),
+     lambda w, m: (REAL_WF[:CLAIM_STEP.end()]
+                   + "        if:\n" + REAL_WF[CLAIM_STEP.end():], m),
      "carries an `if:` with no value"),
     ("an if on the nameless suites checkout",
      lambda w, m: (REAL_WF[:SUITES_CHECKOUT.end()]
