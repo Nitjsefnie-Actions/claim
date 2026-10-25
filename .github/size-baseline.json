@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    ".github/workflows/tests.yml": 531,
+    "claim.py": 905,
+    "tests/gate_base_freshness.py": 618,
+    "tests/run.sh": 7399,
+    "tests/suite_legs.py": 763
+  }
+}
