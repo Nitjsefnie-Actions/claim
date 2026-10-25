@@ -6622,6 +6622,8 @@ DIFF_SETUP_MATCH = re.compile(
     r"      - uses: actions/setup-python@[0-9a-f]{40} # \S+\n").search(
         REAL_WF, REAL_WF.index("\n  diff-coverage:\n"))
 assert DIFF_SETUP_MATCH, "the diff-coverage setup step is not the modelled shape"
+SUITES_CHECKOUT = re.compile(r"          persist-credentials: false\n").search(REAL_WF, REAL_WF.index("\n  suites:\n"))
+assert SUITES_CHECKOUT, "the suites checkout step is not the modelled shape"
 # The README header and the python-versions matrix line, read from the
 # shipped files so no case restates the version list.
 HEADER_ROW = next(line for line in REAL_MD.splitlines()
@@ -6758,9 +6760,8 @@ REFUSALS = [
                           "        # Explicit"),
      "carries an `if:` with no value"),
     ("an if on the nameless suites checkout",
-     lambda w, m: planted(w, m, "wf",
-                          "        persist-credentials: false\n\n      # Every leg runs on",
-                          "        persist-credentials: false\n        if: matrix.os == 'ubuntu-latest'\n\n      # Every leg runs on"),
+     lambda w, m: (REAL_WF[:SUITES_CHECKOUT.end()]
+                   + "        if: matrix.os == 'ubuntu-latest'\n" + REAL_WF[SUITES_CHECKOUT.end():], m),
      "conditioned step with no `name:`"),
     ("a name on the dash and in the body",
      lambda w, m: planted(w, m, "wf", "      - name: pycodestyle\n        if:",
@@ -6864,11 +6865,8 @@ REFUSALS = [
                    + REAL_WF[DIFF_SETUP_MATCH.end():], m),
      "the diff-coverage step carrying `actions/setup-python@`"),
     ("the diff-coverage setup step removed",
-     lambda w, m: planted(w, m, "wf",
-                          "the report reads as it was written.\n"
-                          "      - uses: actions/setup-python@",
-                          "the report reads as it was written.\n"
-                          "      - uses: actions/cache@"),
+     lambda w, m: (REAL_WF[:DIFF_SETUP_MATCH.start()]
+                   + DIFF_SETUP_MATCH.group(0).replace("actions/setup-python@", "actions/cache@") + REAL_WF[DIFF_SETUP_MATCH.end():], m),
      "expected a dash-`uses:` actions/setup-python@ step as the diff-coverage job's third step"),
     ("the README header row deleted",
      lambda w, m: planted(w, m, "md", HEADER_ROW + "\n", ""),
