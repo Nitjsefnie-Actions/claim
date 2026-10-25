@@ -84,6 +84,29 @@ You cannot exercise the action end to end without a repository to install it
 in. Point a scratch repository's workflow at your branch —
 `uses: <your-fork>/claim@<your-branch>` — and comment on a real issue there.
 
+## The coverage floor
+
+The `tests` workflow's ubuntu cell gates coverage, and the floor it enforces
+is committed data, not a literal in the workflow: it lives in
+`.github/ci-thresholds.json` beside `measured`, the last measurement that
+raised the record, and the Coverage gate step reads `floor` from that file.
+
+On a push to main the measured cell stages a raise with
+`.github/scripts/ratchet_thresholds.py`, and the `ratchet push` workflow
+publishes it only after the measuring run has fully succeeded. The script
+raises only when a measurement beats the recorded `measured` by MORE than
+the 1.5-point hysteresis, and a raise writes `floor = measured - 1.5` — the
+fixed calibration gap that absorbs a small dip, so ordinary 0.1-point
+wobble never needs a hand edit. A lower or within-hysteresis measurement
+never loosens the record: `measured` moves only when a raise does.
+
+A zero calibration gap — a record where `floor` equals `measured` — is a
+tolerated state, not a defect to hand-fix: the ratchet heals it upward by
+itself, because the next qualifying raise writes back the full gap. While
+the record sits at gap zero the gate has nothing in reserve, so any
+coverage drop on a pull request fails the gate. Raise coverage by writing
+tests; never edit a floor to fit a result.
+
 ## House style
 
 - **Comments explain why, not what.** The checks in `claim.py` defend against
