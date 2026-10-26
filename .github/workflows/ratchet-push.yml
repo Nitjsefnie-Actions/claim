@@ -18,9 +18,9 @@ name: ratchet push
 # zizmor's workflow_run hazard is code from another branch's run reaching a
 # privileged job. Both triggers are this repository's own gate workflows.
 # The job admits only successful push runs on main and downloads only the
-# triggering run's artifacts. It has no checkout action or fetched worktree,
-# executes nothing from an artifact or fetched tree, and authenticates with the environment
-# deploy key rather than the job token. PR data cannot reach the push.
+# triggering run's artifacts. Its only actions are setup-python and download-artifact;
+# it executes nothing from an artifact or tree, and authenticates with the environment
+# deploy key, not the job token. PR data cannot reach the push.
 on:
   workflow_run:  # zizmor: ignore[dangerous-triggers]
     workflows: [tests, comment share, size baseline]
