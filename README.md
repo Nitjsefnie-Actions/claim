@@ -154,10 +154,12 @@ Python: its first step runs `actions/setup-python` for CPython 3.15.1, and
 That first step is a requirement on the runner, not an implementation
 detail: the runner must be able to run `actions/setup-python` — a `node24`
 action — and to obtain CPython 3.15.1, from its toolcache or, when the
-toolcache lacks it, by download from `actions/python-versions`, which
-needs network access to github.com. A container job, a self-hosted
-runner or a GitHub Enterprise Server instance must meet both, or the
-action's first step fails.
+toolcache lacks it, by download from `actions/python-versions`: the
+versions manifest comes from the GitHub API, falling back to
+`raw.githubusercontent.com`, and the interpreter package from a
+`github.com` release, so the runner needs network access to GitHub. A
+container job, a self-hosted runner or a GitHub Enterprise Server
+instance must meet both, or the action's first step fails.
 The setup step leaves the caller's selected Python, PATH and Python
 environment variables untouched, so later steps in the job see the
 interpreter they saw before. The claim step runs under `shell: bash` — Git
