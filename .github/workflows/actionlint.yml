@@ -134,7 +134,7 @@ jobs:
         # requirements.txt: a version pin alone still installs whatever
         # artifact the index serves for that version. The `--upgrade pip`
         # line is gone for the same reason -- it installed whatever bytes
-        # the index served, unpinned, and the runner's preinstalled pip is
+        # the index served, unpinned, and the pip setup-python provides is
         # far newer than --require-hashes needs.
         # PyYAML alone builds from source until a cp315 wheel ships.
         run: |
