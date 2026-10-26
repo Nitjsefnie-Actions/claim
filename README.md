@@ -151,6 +151,13 @@ ends quietly, and a bot's comment still never starts a runner.
 The action needs `bash` and `gh` on the runner's PATH, and brings its own
 Python: its first step runs `actions/setup-python` for CPython 3.15.1, and
 `claim.py` runs on that interpreter whatever `python3` the runner carries.
+That first step is a requirement on the runner, not an implementation
+detail: the runner must be able to run `actions/setup-python` — a `node24`
+action — and to obtain CPython 3.15.1, from its toolcache or, when the
+toolcache lacks it, by download from `actions/python-versions`, which
+needs network access to github.com. A container job, a self-hosted
+runner or a GitHub Enterprise Server instance must meet both, or the
+action's first step fails.
 The setup step leaves the caller's selected Python, PATH and Python
 environment variables untouched, so later steps in the job see the
 interpreter they saw before. The claim step runs under `shell: bash` — Git
