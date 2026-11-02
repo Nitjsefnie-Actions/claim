@@ -3152,9 +3152,8 @@ gate_commit_in_range() {
 # status where the caller reads them. `set -e` would stop the case at the first
 # non-zero status, and most of the states under test ARE non-zero.
 #
-# The working tree is named rather than fixed at $fixture/tree: a depth-1
-# checkout is what actions/checkout hands this job. $4 is the event, pinned so
-# the suite's own push run cannot leak `push` into a pull-request state.
+# The working tree is named, not fixed at $fixture/tree, for the depth-1 checkout
+# actions/checkout hands this job; $4 is the event, so the suite's own stays out.
 gate_run_step() {
   local fixture=$1 script=$2 status=0
   local where=${3-$fixture/tree}
@@ -3201,6 +3200,8 @@ gate_base_freshness_states() {
     cat "$GH_CASE/stdout"
     result=1
   fi
+  gate_run_step "$fixture" "$script" "$tree" push
+  [[ $(< "$GH_CASE/stdout") == *'BY NAME'* ]] || { printf '  fresh push: not the plain green\n'; result=1; }
 
   # Main advanced, but only on a file no required check reads. The head is left
   # behind main rather than diverged from it, which is the state a pull request
@@ -3238,8 +3239,7 @@ gate_base_freshness_states() {
     result=1
   fi
 
-  # A push: main holds this head and moved past it, which no rebase answers, so
-  # green. The same head dispatched, and a pushed head main lacks, stay red.
+  # A push of a head main holds and moved past is green; dispatched, or unheld, red.
   gate_run_step "$fixture" "$script" "$tree" push
   [[ $(cat "$GH_CASE/status") == 0 && $(< "$GH_CASE/stdout") == *'already on main'* ]] ||
     { printf '  push of a head main holds: expected exit 0 naming main\n'; result=1; }
