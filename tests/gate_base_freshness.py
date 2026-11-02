@@ -51,6 +51,7 @@ refuses a shape it does not model is better than a silent misreading.
 pins the derivation.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -394,8 +395,6 @@ def tracked_files(root):
     """
     command = ("git", "-C", str(root), "ls-tree", "-z", "-r", "--name-only",
                "--full-tree", "HEAD")
-    # Outside `git()` on purpose: bytes are needed. `stale_commits()` already
-    # does the same; see the docstring for the refusal style either way.
     done = subprocess.run(command, capture_output=True)
     if done.returncode != 0:
         detail = done.stderr.strip().decode("utf-8", errors="replace")
@@ -544,14 +543,15 @@ def check(root):
                what=f"resolve origin/{BASE_BRANCH}").strip()
     paths = gate_paths(root)
     stale = stale_commits(root, head, base, paths)
+    # A push run's head was main's tip when pushed; once main moves past a head
+    # it holds, no rebase can answer a refusal. Every other event is compared.
+    if stale and os.environ.get("GITHUB_EVENT_NAME") == "push" and git(
+            root, "merge-base", head, base, what="find the merge base").strip() == head:
+        print(f"This pushed head is already on {BASE_BRANCH}, which has moved past it.")
+        return 0
     if not stale:
-        # "reads", not "reads" with no limit attached. The suites job's merge-
-        # marker step reads EVERY tracked file through the `.` spelling, and this
-        # derivation resolves that to nothing, so the count below is the files a
-        # required check names — not every file one touches. A green line is the
-        # one sentence a maintainer reads on this check, and a sentence that
-        # over-claims here is the same defect as an over-claiming report: it
-        # looks like the set is complete.
+        # "BY NAME": the `.` spelling's whole-tree read is a named reach limit
+        # (module docstring), and a green line claiming the whole set over-claims.
         print(f"This head carries every commit on {BASE_BRANCH} that touches "
               f"the {len(paths)} file(s) a required check reads BY NAME.")
         print("  A step reading every tracked file — the `.` spelling, which the "

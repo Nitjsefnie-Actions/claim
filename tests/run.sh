@@ -3152,13 +3152,13 @@ gate_commit_in_range() {
 # status where the caller reads them. `set -e` would stop the case at the first
 # non-zero status, and most of the states under test ARE non-zero.
 #
-# The working tree is named rather than fixed at $fixture/tree, because one
-# state runs from a different directory entirely: a depth-1 checkout is what
-# actions/checkout hands this job.
+# The working tree is named rather than fixed at $fixture/tree: a depth-1
+# checkout is what actions/checkout hands this job. $4 is the event, pinned so
+# the suite's own push run cannot leak `push` into a pull-request state.
 gate_run_step() {
   local fixture=$1 script=$2 status=0
   local where=${3-$fixture/tree}
-  (cd "$where" && bash "$script" \
+  (cd "$where" && GITHUB_EVENT_NAME=${4-pull_request} bash "$script" \
     > "$GH_CASE/stdout" 2> "$GH_CASE/stderr") || status=$?
   printf '%s\n' "$status" > "$GH_CASE/status"
 }
@@ -3178,11 +3178,8 @@ gate_base_freshness_states() {
   gate_fixture "$fixture"
   # The step is located by name, so a rename reds this case as well as
   # gate_freshness_step_is_wired rather than quietly rehearsing whatever moved.
-  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
-    "Require this head to carry main's gate-defining commits" "$script"; then
-    printf '  the freshness step could not be extracted from tests.yml\n'
-    return 1
-  fi
+  freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Require this head to carry main's gate-defining commits" "$script" || return 1
 
   # Fresh: the head IS main, so there is nothing it lacks.
   gate_run_step "$fixture" "$script"
@@ -3240,6 +3237,18 @@ gate_base_freshness_states() {
     cat "$GH_CASE/stdout"
     result=1
   fi
+
+  # A push: main holds this head and moved past it, which no rebase answers, so
+  # green. The same head dispatched, and a pushed head main lacks, stay red.
+  gate_run_step "$fixture" "$script" "$tree" push
+  [[ $(cat "$GH_CASE/status") == 0 && $(< "$GH_CASE/stdout") == *'already on main'* ]] ||
+    { printf '  push of a head main holds: expected exit 0 naming main\n'; result=1; }
+  gate_run_step "$fixture" "$script" "$tree" workflow_dispatch
+  [[ $(cat "$GH_CASE/status") != 0 ]] || { printf '  dispatch of a stale head: got 0\n'; result=1; }
+  printf 'branch work\n' > "$tree/BRANCH.md"
+  gate_commit_all "$tree" 'work main does not hold'
+  gate_run_step "$fixture" "$script" "$tree" push
+  [[ $(cat "$GH_CASE/status") != 0 ]] || { printf '  push of a head main lacks: got 0\n'; result=1; }
 
   # Rebasing onto main is what the message asks for, and it has to clear the
   # red: a check that stays red after the repair is a check nobody can satisfy.
@@ -3503,11 +3512,8 @@ gate_freshness_reds_on_non_ascii_workflow() {
   local result=0 fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
   local tree=$fixture/tree status
   gate_fixture "$fixture"
-  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
-    "Require this head to carry main's gate-defining commits" "$script"; then
-    printf '  the freshness step could not be extracted from tests.yml\n'
-    return 1
-  fi
+  freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Require this head to carry main's gate-defining commits" "$script" || return 1
   # Both sides land the same new workflow as their own commit, mirroring a pull
   # request that adds it while main moved too: each side holds a commit the
   # other lacks, and main's touches the non-ASCII path. The refusal channel is
@@ -4050,11 +4056,8 @@ gate_merge_commit_is_reported_honestly() {
   local result=0 fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
   local tree=$fixture/tree status merge side
   gate_fixture "$fixture"
-  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
-    "Require this head to carry main's gate-defining commits" "$script"; then
-    printf '  the freshness step could not be extracted from tests.yml\n'
-    return 1
-  fi
+  freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Require this head to carry main's gate-defining commits" "$script" || return 1
   printf 'a note from main\n' >> "$tree/README.md"
   gate_commit_all "$tree" 'a change on main'
   git -C "$tree" checkout --quiet -b side HEAD~1
@@ -4357,11 +4360,8 @@ commit_scope_states() {
   local fixture=$GH_CASE/fixture script=$GH_CASE/step.sh
   local tree=$fixture/tree status result=0 planted subject
   local latinprobe=0 readback=0 latinreadback=0 listing
-  if ! freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
-    "Refuse a commit whose scope names a workflow outside the ci type" "$script"; then
-    printf '  the commit-scope step could not be extracted from tests.yml\n'
-    return 1
-  fi
+  freshness_step_script "$ROOT/.github/workflows/tests.yml" shellcheck \
+    "Refuse a commit whose scope names a workflow outside the ci type" "$script" || return 1
   gate_fixture "$fixture"
 
   # Fresh: the head IS main, so the outgoing range is empty, and the green
