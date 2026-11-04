@@ -3354,10 +3354,7 @@ gate_paths_derived_from_workflows() {
   local result=0 fixture=$GH_CASE/fixture tree derived
   gate_fixture "$fixture"
   tree=$fixture/tree
-  derived=$(gate_derived_paths "$tree") || {
-    printf '  the derivation refused on the repository as it stands\n'
-    return 1
-  }
+  derived=$(gate_derived_paths "$tree") || { printf '  the derivation refused on the repository as it stands\n'; return 1; }
   local expected='.coveragerc
 .github/ci-thresholds.json
 .github/scripts/ratchet_thresholds.py
@@ -3367,6 +3364,7 @@ gate_paths_derived_from_workflows() {
 .github/workflows/codeql.yml
 .github/workflows/comment-share.yml
 .github/workflows/coverage-comment.yml
+.github/workflows/pin-guard.yml
 .github/workflows/pr-gate.yml
 .github/workflows/ratchet-push.yml
 .github/workflows/requirements-pip-audit.txt
