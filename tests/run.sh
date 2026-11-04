@@ -2742,7 +2742,7 @@ def git(directory, *args):
                           check=True, capture_output=True, text=True).stdout.strip()
 
 for mode in ("thresholds", "missing-thresholds", "absent", "moved-source",
-             "moved-own-thresholds"):
+             "moved-sibling", "moved-own-thresholds"):
     folder = scratch / mode
     source = folder / "source"
     source.mkdir(parents=True)
@@ -2770,6 +2770,10 @@ for mode in ("thresholds", "missing-thresholds", "absent", "moved-source",
             poisoned = (source / "json.py").read_text()
             (source / "json.py").write_text(poisoned + "x = 1\n")
             git(source, "add", "json.py")
+        elif mode == "moved-sibling":
+            # Another gate's records file is ordinary tree movement here.
+            (source / ".github/comment-share.json").write_text('{"a.py": [40, 100]}\n')
+            git(source, "add", ".github/comment-share.json")
         else:
             # Only the thresholds file itself moved: the merge must land the
             # raise beside main's move.
