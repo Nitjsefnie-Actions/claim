@@ -45,10 +45,7 @@ the block layout this repository uses rather than a YAML dependency, for the
 reason action_contract gives: nothing installs one here, and a parser that
 refuses a shape it does not model is better than a silent misreading.
 
-    tests/gate_base_freshness.py [--root DIR] [--print-paths]
-
---print-paths writes the derived set, one path per line, and is how the suite
-pins the derivation.
+    tests/gate_base_freshness.py
 """
 
 import os
@@ -579,28 +576,11 @@ def check(root):
 
 def main(argv):
     root = Path(__file__).resolve().parent.parent
-    print_paths = False
-    rest = list(argv[1:])
-    while rest:
-        argument = rest.pop(0)
-        if argument == "--print-paths":
-            print_paths = True
-        elif argument == "--root":
-            if not rest:
-                print("usage: gate_base_freshness.py [--root DIR] [--print-paths]",
-                      file=sys.stderr)
-                return 2
-            root = Path(rest.pop(0))
-        else:
-            print(f"unknown argument: {argument}", file=sys.stderr)
-            print("usage: gate_base_freshness.py [--root DIR] [--print-paths]",
-                  file=sys.stderr)
-            return 2
+    if argv[1:]:
+        print(f"unknown argument: {argv[1]}", file=sys.stderr)
+        print("usage: gate_base_freshness.py", file=sys.stderr)
+        return 2
     try:
-        if print_paths:
-            for path in gate_paths(root):
-                print(path)
-            return 0
         return check(root)
     except GateError as refusal:
         print(f"head freshness: {refusal}", file=sys.stderr)
