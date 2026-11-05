@@ -63,8 +63,7 @@ gate has agreed to judge.
 
     tests/commit_scopes.py [--root DIR]
 
---root points the check at a repository other than the one above tests/,
-which is how the suite rehearses it against real fixtures.
+--root points the check at a repository other than the one above tests/.
 """
 
 import re

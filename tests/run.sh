@@ -2796,6 +2796,7 @@ for mode in ("thresholds", "missing-thresholds", "absent", "moved-source",
     print(f"  {mode}: exit {result.returncode}; shadow absent; publication verified")
 PYPUSHBOUNDARY
 }
+
 # The step is what makes the check a required status context rather than a
 # script nobody runs. Deleting it has to red this suite: the check would still
 # be here, still correct, and would never once run. The pin holds that the step
