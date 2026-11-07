@@ -241,10 +241,9 @@ jobs:
         # refactors.
         # Why the venv: setup-python installs an interpreter, never packages,
         # so each tool gets a throwaway venv and the suite stays install-free.
-        # Why the awk extraction: the whole file would also install zizmor
-        # and build PyYAML from its sdist, actionlint.yml's exception until a
-        # cp315 wheel ships. The ruff block alone is platform-complete; the
-        # manifest stays the single source for the version and hashes.
+        # Why the awk extraction: the whole file would also install zizmor.
+        # The ruff block alone is platform-complete; the manifest stays the
+        # single source for the version and hashes.
         # POSIX legs only: the venv's interpreter sits at venv/bin/python on
         # POSIX and venv/Scripts/python.exe on Windows, and this step is
         # written for the POSIX layout; extending it to Windows is future
@@ -260,10 +259,9 @@ jobs:
         id: install_checks
         # Why the venv: setup-python installs an interpreter, never packages,
         # so each tool gets a throwaway venv and the suite stays install-free.
-        # Why the awk lift: the whole file would also install zizmor and build
-        # PyYAML from its sdist, actionlint.yml's exception until a cp315
-        # wheel ships. The lift reaches from the coverage block to EOF, one
-        # plain range like every other lift in this workflow: the files these
+        # Why the awk lift: the whole file would also install zizmor. The
+        # lift reaches from the coverage block to EOF, one plain range like
+        # every other lift in this workflow: the files these
         # checks read import coverage (.github/scripts/diff_coverage.py), so
         # the venv that lints the tree must resolve what the tree imports, and
         # coverage sitting before pylint in the manifest puts both blocks plus
