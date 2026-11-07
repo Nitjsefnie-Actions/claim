@@ -136,9 +136,8 @@ jobs:
         # line is gone for the same reason -- it installed whatever bytes
         # the index served, unpinned, and the pip setup-python provides is
         # far newer than --require-hashes needs.
-        # PyYAML alone builds from source until a cp315 wheel ships.
         run: |
-          python3 -m pip install --require-hashes --only-binary=:all: --no-binary=PyYAML -r .github/workflows/requirements.txt
+          python3 -m pip install --require-hashes --only-binary=:all: -r .github/workflows/requirements.txt
 
       - name: actionlint
         id: actionlint
@@ -146,13 +145,18 @@ jobs:
         # file. The local uses step checks action metadata; the copied steps
         # expose its expressions and shell blocks to the same checks as CI.
         # This generated workflow is lint input only and is never executed.
+        # The runner image's yq reads action.yml and the workflow is written
+        # as JSON, which is YAML too, so the job installs no YAML library.
         run: |
           python3 - <<'PYTHON'
+          import json
           import os
+          import subprocess
           from pathlib import Path
-          import yaml
 
-          action = yaml.safe_load(Path("action.yml").read_text())
+          action = json.loads(subprocess.run(
+              ["yq", "-o=json", "action.yml"], check=True, stdout=subprocess.PIPE, text=True,
+          ).stdout)
           assert action["runs"]["using"] == "composite"
           inputs = {
               name: {"description": spec["description"], "type": "string"}
@@ -167,7 +171,7 @@ jobs:
               }},
           }
           target = Path(os.environ["RUNNER_TEMP"]) / "claim-action-workflow.yml"
-          target.write_text(yaml.safe_dump(workflow, sort_keys=False))
+          target.write_text(json.dumps(workflow, indent=2))
           PYTHON
           ./actionlint -color .github/workflows/*.yml "$RUNNER_TEMP/claim-action-workflow.yml"
 
