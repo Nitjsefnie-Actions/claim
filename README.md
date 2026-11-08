@@ -154,13 +154,14 @@ Python: its first step runs `actions/setup-python` for CPython 3.15, and
 That first step is a requirement on the runner, not an implementation
 detail: the runner must be able to run `actions/setup-python` — a `node24`
 action — and to obtain a CPython 3.15.x, from its toolcache or, when the
-toolcache holds none, by download from `actions/python-versions`, so the
-patch level follows the runner image (`macos-latest` downloads today): the
+toolcache holds none, by download from `actions/python-versions`: the
 versions manifest comes from the GitHub API, falling back to
 `raw.githubusercontent.com`, and the interpreter package from a
 `github.com` release, so the runner needs network access to GitHub. A
 container job, a self-hosted runner or a GitHub Enterprise Server
 instance must meet both, or the action's first step fails.
+The patch level is the image's cached 3.15.x, or else the newest one the
+manifest lists; `macos-latest` downloads, as of 2026-11.
 The setup step leaves the caller's selected Python, PATH and Python
 environment variables untouched, so later steps in the job see the
 interpreter they saw before. The claim step runs under `shell: bash` — Git
@@ -181,8 +182,8 @@ this repository's CI runs, per leg and per step:
 | Put a python3 on PATH | no | no | yes | no |
 
 Every leg runs on the CPython 3.15.x the action itself provisions on that
-runner: the image's toolcached one, or else a download, as on
-`macos-latest` today. The full behavioral suite runs on ubuntu-latest and
+runner: the image's toolcached one, or else a download (on `macos-latest`,
+as of 2026-11). The full behavioral suite runs on ubuntu-latest and
 macos-latest, and again on Python 3.14 and 3.15 via setup-python in a
 separate informational job. Coverage is measured and gated on the ubuntu
 cell only, so the reported number names one reproducible environment. No
