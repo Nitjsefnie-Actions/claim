@@ -8,7 +8,7 @@ name: tests
 # PATH shim and the compile check -- while the behavioral suite and the
 # venv-backed checks stay scoped to the POSIX legs (see those steps for
 # why). Every leg runs on setup-python's cached 3.15.x, else a download
-# (macos-latest, today); python-versions reruns the suite per matrix
+# (macos-latest, 2026-11); python-versions reruns the suite per matrix
 # version, on ubuntu.
 #
 # The suite stays install-free by design (#87): it runs the images' bash and
