@@ -66,8 +66,10 @@ you changed, check `git check-ignore -v` refuses that file, and check
 ## Getting it running
 
 Nothing to install but `shellcheck` and a Python 3.15 interpreter. The
-action needs `bash` and `gh` on the runner and provisions CPython 3.15.1 for
-itself through `actions/setup-python`; CI runs the suite on 3.15.1 and again
+action needs `bash` and `gh` on the runner and provisions a CPython 3.15.x
+for itself through `actions/setup-python`: the one in the runner's tool
+cache, or else a download, so the patch level follows the runner image
+(`macos-latest` downloads today). CI runs the suite on that 3.15.x and again
 on 3.14 and 3.15, so put a 3.15 (or 3.14) `python3` first on your PATH.
 Python uses only the standard library; the suite needs no package
 installation.

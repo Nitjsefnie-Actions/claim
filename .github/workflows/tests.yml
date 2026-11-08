@@ -4,11 +4,12 @@ name: tests
 # run the same real-subprocess behavioral suite, including the bash API
 # stub, plus the ruff lint and the pycodestyle/pylint/pyright checks, and
 # coverage is measured on the ubuntu cell only. The windows leg runs the
-# workflow's own bash steps -- the merge-conflict marker check, the
-# python3 PATH shim and the compile check -- while the behavioral suite
-# and the venv-backed checks stay scoped to the POSIX legs (see those
-# steps for why). Every leg runs on CPython 3.15.1 from setup-python; the
-# python-versions job reruns the suite on each matrix version, on ubuntu.
+# workflow's own bash steps -- the merge-conflict marker check, the python3
+# PATH shim and the compile check -- while the behavioral suite and the
+# venv-backed checks stay scoped to the POSIX legs (see those steps for
+# why). Every leg runs on setup-python's cached 3.15.x, else a download
+# (macos-latest, today); python-versions reruns the suite per matrix
+# version, on ubuntu.
 #
 # The suite stays install-free by design (#87): it runs the images' bash and
 # shellcheck, setup-python's python3 (an interpreter, never a package) and
@@ -72,7 +73,7 @@ jobs:
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.15.1"
+          python-version: "3.15"
 
       - name: Require this head to carry main's gate-defining commits
         # `main requires green checks` sets strict_required_status_checks_policy
@@ -163,10 +164,10 @@ jobs:
           # .git/config lets any later step reuse it.
           persist-credentials: false
 
-      # Every leg runs on the action's interpreter; the windows shim wraps it.
+      # The action's interpreter; the windows shim wraps it.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.15.1"
+          python-version: "3.15"
 
       - name: Put a python3 on PATH
         # setup-python's windows interpreter answers to `python` but not
@@ -409,11 +410,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  # The suites job pins OS coverage at the action's own CPython 3.15.1;
-  # this job pins Python coverage at each version its matrix lists.
-  # Informational, never required: a new job name is not a required status
-  # context, and making one required is a ruleset edit the maintainer
-  # makes, not this workflow.
+  # The suites job pins OS coverage at the action's 3.15; this job pins Python
+  # coverage at each version its matrix lists. Informational, never required: a
+  # new job name is not a required status context, and making one required is a
+  # ruleset edit the maintainer makes, not this workflow.
   python-versions:
     strategy:
       fail-fast: false
@@ -480,10 +480,10 @@ jobs:
         with:
           name: coverage-xml
 
-      # The measured cell's interpreter, so the report reads as it was written.
+      # The measured cell's selection, so the report reads as it was written.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.15.1"
+          python-version: "3.15"
 
       # The same install the coverage cell makes, for the same reason: the
       # statement analyzer the script drives is coverage.py, which no image

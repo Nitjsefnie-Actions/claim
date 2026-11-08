@@ -149,12 +149,13 @@ ends quietly, and a bot's comment still never starts a runner.
 ## Runners and Python versions
 
 The action needs `bash` and `gh` on the runner's PATH, and brings its own
-Python: its first step runs `actions/setup-python` for CPython 3.15.1, and
+Python: its first step runs `actions/setup-python` for CPython 3.15, and
 `claim.py` runs on that interpreter whatever `python3` the runner carries.
 That first step is a requirement on the runner, not an implementation
 detail: the runner must be able to run `actions/setup-python` — a `node24`
-action — and to obtain CPython 3.15.1, from its toolcache or, when the
-toolcache lacks it, by download from `actions/python-versions`: the
+action — and to obtain a CPython 3.15.x, from its toolcache or, when the
+toolcache holds none, by download from `actions/python-versions`, so the
+patch level follows the runner image (`macos-latest` downloads today): the
 versions manifest comes from the GitHub API, falling back to
 `raw.githubusercontent.com`, and the interpreter package from a
 `github.com` release, so the runner needs network access to GitHub. A
@@ -179,8 +180,9 @@ this repository's CI runs, per leg and per step:
 | Compile the claim script | yes | yes | yes | no |
 | Put a python3 on PATH | no | no | yes | no |
 
-Every leg runs on CPython 3.15.1, the interpreter the action itself
-provisions. The full behavioral suite runs on ubuntu-latest and
+Every leg runs on the CPython 3.15.x the action itself provisions on that
+runner: the image's toolcached one, or else a download, as on
+`macos-latest` today. The full behavioral suite runs on ubuntu-latest and
 macos-latest, and again on Python 3.14 and 3.15 via setup-python in a
 separate informational job. Coverage is measured and gated on the ubuntu
 cell only, so the reported number names one reproducible environment. No
