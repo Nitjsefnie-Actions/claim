@@ -3,7 +3,9 @@
 
 from pathlib import Path
 import http.server
+import os
 import re
+import shutil
 import socketserver
 import subprocess
 import sys
@@ -20,7 +22,7 @@ for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         if not line.lstrip().startswith("#") and re.search(r"\b(curl|wget)\b", line):
             raise SystemExit(f"{workflow.name}:{number} downloads outside "
                              f"download.sh: {line.strip()}")
-        pip = re.search(r"\bpip3? install\b", line)
+        pip = re.search(r"\bpip3?(?:\s+-\S+)*\s+install\b", line)
         if (pip and not line.lstrip().startswith("#")
                 and ".github/scripts/retry.sh " not in line[:pip.start()]):
             raise SystemExit(f"{workflow.name}:{number} installs outside "
@@ -140,3 +142,18 @@ with tempfile.TemporaryDirectory() as scratch:
     pauses = re.findall(r"retrying in (\d+)s", result.stderr)
     assert pauses == ["1", "2"] and elapsed >= 3, \
         f"pauses {pauses} over {elapsed:.1f}s: the pause is not doubling"
+
+RETRY = str(root / ".github/scripts/retry.sh")
+usage = subprocess.run(["bash", RETRY], capture_output=True, check=False)
+assert usage.returncode == 2, f"retry.sh with no command exited {usage.returncode}"
+with tempfile.TemporaryDirectory() as scratch:
+    shim, log = Path(scratch) / "sleep", Path(scratch) / "pauses"
+    shim.write_text(f'#!/bin/sh\necho "$1" >> "{log}"\nexec {shutil.which("sleep")} "$1"\n')
+    shim.chmod(0o755)
+    # Started 296 seconds in: pauses of 1 and 2 fit before 300, then 4 does not.
+    env = dict(os.environ, SECONDS="296", PATH=f"{scratch}{os.pathsep}{os.environ['PATH']}")
+    result = subprocess.run(["bash", RETRY, "sh", "-c", "exit 7"], env=env,
+                            capture_output=True, text=True, check=False, timeout=60)
+    slept = log.read_text().split() if log.exists() else []
+assert result.returncode == 7 and slept == ["1", "2"], \
+    f"exit {result.returncode} after pauses {slept}: expected 7 after 1 and 2"
