@@ -41,6 +41,7 @@ tests/diffcoverage/*
 .github/scripts/*
 !.github/scripts/diff_coverage.py
 !.github/scripts/ratchet_thresholds.py
+!.github/scripts/download.sh
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/actionlint.yml
