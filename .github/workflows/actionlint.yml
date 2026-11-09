@@ -137,7 +137,7 @@ jobs:
         # the index served, unpinned, and the pip setup-python provides is
         # far newer than --require-hashes needs.
         run: |
-          python3 -m pip install --require-hashes --only-binary=:all: -r .github/workflows/requirements.txt
+          .github/scripts/retry.sh python3 -m pip install --require-hashes --only-binary=:all: -r .github/workflows/requirements.txt
 
       - name: actionlint
         id: actionlint
