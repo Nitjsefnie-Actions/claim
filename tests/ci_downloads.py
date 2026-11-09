@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Every workflow download goes through download.sh, which retries."""
+"""Workflow downloads and pip installs go through retrying scripts."""
 
 from pathlib import Path
+import http.server
 import re
 import socketserver
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 
 root = Path(sys.argv[1])
 script = root / ".github/scripts/download.sh"
@@ -18,6 +20,11 @@ for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         if not line.lstrip().startswith("#") and re.search(r"\b(curl|wget)\b", line):
             raise SystemExit(f"{workflow.name}:{number} downloads outside "
                              f"download.sh: {line.strip()}")
+        pip = re.search(r"\bpip3? install\b", line)
+        if (pip and not line.lstrip().startswith("#")
+                and ".github/scripts/retry.sh " not in line[:pip.start()]):
+            raise SystemExit(f"{workflow.name}:{number} installs outside "
+                             f"retry.sh: {line.strip()}")
 
 PAYLOAD = b"the release bytes\n" * 64
 # A dropped partial body, a 5xx outside curl's retry list, a redirect.
@@ -66,3 +73,55 @@ assert downloaded == PAYLOAD, \
     "the downloaded file is not exactly the final answer's body"
 # Doubling pauses take 1+2+4+8 seconds; a fixed one-second delay takes 4.
 assert elapsed >= 15, f"retries took {elapsed:.1f}s: the pause is not doubling"
+
+WHEEL = "demo-1.0-py3-none-any.whl"
+with tempfile.TemporaryDirectory() as scratch:
+    wheel = Path(scratch) / WHEEL
+    entries = {
+        "METADATA": "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n",
+        "WHEEL": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        "RECORD": "",
+    }
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, text in entries.items():
+            archive.writestr(f"demo-1.0.dist-info/{name}", text)
+    index_answers = [504, 429]
+    seen = []
+
+    class Index(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            if self.path.startswith("/simple/") and index_answers:
+                body, status = b"", index_answers.pop(0)
+            elif self.path.startswith("/simple/"):
+                body, status = f'<a href="/files/{WHEEL}">{WHEEL}</a>'.encode(), 200
+            else:
+                body, status = wheel.read_bytes(), 200
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Index) as pypi:
+        threading.Thread(target=pypi.serve_forever, daemon=True).start()
+        out = Path(scratch) / "out"
+        started = time.monotonic()
+        result = subprocess.run(
+            ["bash", str(root / ".github/scripts/retry.sh"), sys.executable,
+             "-m", "pip", "--isolated", "--disable-pip-version-check",
+             "download", "--no-deps", "--no-cache-dir", "-d", str(out),
+             "--index-url", f"http://127.0.0.1:{pypi.server_address[1]}/simple",
+             "demo"], capture_output=True, text=True, check=False, timeout=120)
+        elapsed = time.monotonic() - started
+        pypi.shutdown()
+    assert result.returncode == 0, f"pip exit {result.returncode}: {result.stderr}"
+    assert seen == ["/simple/demo/"] * 3 + [f"/files/{WHEEL}"], \
+        f"expected a 504 run, a 429 run, then the download: {seen!r}"
+    assert (out / WHEEL).read_bytes() == wheel.read_bytes(), "wrong wheel bytes"
+    pauses = re.findall(r"retrying in (\d+)s", result.stderr)
+    assert pauses == ["1", "2"] and elapsed >= 3, \
+        f"pauses {pauses} over {elapsed:.1f}s: the pause is not doubling"
