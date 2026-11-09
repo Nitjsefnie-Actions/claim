@@ -2959,9 +2959,8 @@ PYWIRE
 
 # The commit-scope check's own wiring pin. Placement is pinned with the body --
 # the check must read the rebased head, which is what sitting after the
-# freshness step buys -- and the step must stay unconditional, because an
-# `if:` here would skip the check on the very pull requests it exists to
-# gate.
+# freshness step buys -- and the step must stay unconditional, because an `if:`
+# here would skip the check on the very pull requests it exists to gate.
 commit_scope_step_is_wired() {
   python3 - "$ROOT" <<'PYWIRE'
 from pathlib import Path
@@ -3039,6 +3038,9 @@ if not checkout[0] < freshness[0] < at < lint[0]:
          "and both must read the rebased head")
 PYWIRE
 }
+
+gate_freshness_refuses_a_stale_head() { python3 "$ROOT/tests/gate_verdicts.py" "$ROOT" freshness; }
+commit_scope_refuses_a_workflow_scope() { python3 "$ROOT/tests/gate_verdicts.py" "$ROOT" scopes; }
 
 prefixed_environment_only() {
   python3 - "$ROOT" <<'PYENV'
@@ -3994,8 +3996,7 @@ cases=(
   command_word_needs_a_boundary cr_stripped_before_the_line_scan
   # The attempt line reaches two sinks -- the run log and the reply body --
   # and each sink's defect has its own pin: #73 neutralises the control
-  # characters before both, #74 quotes the line in a code span the line
-  # cannot close.
+  # characters before both, #74 quotes the line in a code span it cannot close.
   control_chars_escaped_before_both_sinks backtick_line_quoted_in_an_unclosable_span
   claim_number_trailing_prose claim_number_next_line
   claim_uppercase_noncommand claim_number_attached
@@ -4086,9 +4087,8 @@ cases=(
   cap_malformed_role_snapshot
   cap_role_snapshot_not_an_object cap_custom_role_base_unreadable
   cap_role_lookup_failure cap_malformed_search_response cap_search_transport_failure
-  # Claim expiry: the input grammar, the lazy default, and both expiry
-  # paths (takeover and privileged release) on every side of their
-  # boundaries.
+  # Claim expiry: the input grammar, the lazy default, and both expiry paths
+  # (takeover and privileged release) on every side of their boundaries.
   expire_malformed_zero expire_malformed_below_minus_one expire_malformed_unit_suffix
   expire_malformed_not_a_number expire_malformed_empty
   expire_disabled_no_timeline_call expire_fresh_claim_no_expiry_calls
@@ -4125,9 +4125,9 @@ action_contract readme_quoted_replies
   ratchet_refuses_missing_fields ratchet_refuses_invalid_record_numbers
   ratchet_push_excludes_fetched_code
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
-  gate_freshness_step_is_wired
+  gate_freshness_step_is_wired gate_freshness_refuses_a_stale_head
   # Issue 90: a workflow's name is a scope only with the ci type.
-  commit_scope_step_is_wired
+  commit_scope_step_is_wired commit_scope_refuses_a_workflow_scope
   # Issue #137: the patch-coverage reporter's decision branches, each pinned
   # against a committed fixture pair under tests/diffcoverage/ — one case per
   # branch, hand-written expected bodies, and a loud skip where the coverage
