@@ -74,6 +74,21 @@ assert downloaded == PAYLOAD, \
 # Doubling pauses take 1+2+4+8 seconds; a fixed one-second delay takes 4.
 assert elapsed >= 15, f"retries took {elapsed:.1f}s: the pause is not doubling"
 
+# Newer curl exits 0 with no file when Retry-After outlasts the window.
+ANSWERS = [b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 3600\r\n"
+           b"Content-Length: 0\r\n\r\n"]
+requests.clear()
+with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Release) as server, \
+        tempfile.TemporaryDirectory() as scratch:
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    result = subprocess.run(
+        ["bash", str(script), f"http://127.0.0.1:{server.server_address[1]}/x",
+         str(Path(scratch) / "x")], capture_output=True, text=True,
+        check=False, timeout=120)
+    server.shutdown()
+assert result.returncode != 0 and len(requests) == 1, \
+    f"a refused download must fail: exit {result.returncode}, {requests!r}"
+
 WHEEL = "demo-1.0-py3-none-any.whl"
 with tempfile.TemporaryDirectory() as scratch:
     wheel = Path(scratch) / WHEEL
