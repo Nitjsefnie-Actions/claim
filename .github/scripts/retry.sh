@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
+(( $# )) || { echo "usage: retry.sh CMD [ARG...]" >&2; exit 2; }
 pause=1
 until "$@"; do
   status=$?
