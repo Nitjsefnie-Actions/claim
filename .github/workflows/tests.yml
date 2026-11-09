@@ -114,7 +114,7 @@ jobs:
       - name: Check every shell file
         # Recurse so adding a nested test helper cannot silently escape lint.
         run: |
-          find tests -type f -name '*.sh' -exec shellcheck {} +
+          find tests .github/scripts -type f -name '*.sh' -exec shellcheck {} +
 
       - name: Download gitleaks and verify its digest
         # Last in the job: the three checks above refuse in seconds, while
@@ -126,7 +126,7 @@ jobs:
         # version bump moves it together with secrets.yml's copy of this
         # step.
         run: |
-          curl --connect-timeout 5 --max-time 120 -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          .github/scripts/download.sh https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz gitleaks_8.30.1_linux_x64.tar.gz
           echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks_8.30.1_linux_x64.tar.gz' | sha256sum -c -
           tar xzf gitleaks_8.30.1_linux_x64.tar.gz gitleaks
 
