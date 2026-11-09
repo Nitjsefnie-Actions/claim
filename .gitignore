@@ -14,6 +14,7 @@ tests/*
 !tests/suite_legs.py
 !tests/suite_jobs.py
 !tests/action_contract.py
+!tests/ci_downloads.py
 !tests/gate_base_freshness.py
 !tests/gate_verdicts.py
 !tests/identity.response

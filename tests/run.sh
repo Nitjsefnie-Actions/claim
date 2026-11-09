@@ -3103,9 +3103,8 @@ for name in ("BODY", "ACTOR_TYPE", "ISSUE", "REPOSITORY", "ACTOR", "MAX_CLAIMS",
 PYENV
 }
 
-action_contract() {
-  python3 "$ROOT/tests/action_contract.py" "$ROOT"
-}
+action_contract() { python3 "$ROOT/tests/action_contract.py" "$ROOT"; }
+ci_downloads() { python3 "$ROOT/tests/ci_downloads.py" "$ROOT"; }
 
 # The two reply examples the README quotes in the Claim expiry section are
 # restatements of claim.py's takeover_reply/release_reply templates, and
@@ -4114,6 +4113,7 @@ action_contract readme_quoted_replies
   # Issue 141: the suite-legs pin -- tests.yml leg scoping held against the
   # README coverage table.
   suite_legs_covers_readme
+  ci_downloads
   ratchet_above_hysteresis_keeps_calibration_gap ratchet_equal_writes_nothing
   ratchet_lower_never_loosens ratchet_within_hysteresis_writes_nothing
   ratchet_below_hysteresis_boundary_writes_nothing
