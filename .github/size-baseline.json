@@ -1,13 +1,13 @@
 {
   "trees": {
-    "tests/": 6972
+    "tests/": 6977
   },
   "schema_version": 1,
   "baseline": {
     ".github/workflows/tests.yml": 529,
     "claim.py": 890,
     "tests/gate_base_freshness.py": 598,
-    "tests/run.sh": 4134,
+    "tests/run.sh": 4139,
     "tests/suite_legs.py": 740
   }
 }
