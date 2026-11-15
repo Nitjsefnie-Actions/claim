@@ -314,9 +314,11 @@ App's, or one whose event names no assigner anywhere among the holders
 defeats the takeover and the privileged release however ancient the claim
 looks: the action does not remove assignments it did not make.
 
-Two limits follow from that proof. An assignment another workflow made with
+Three limits follow from that proof. An assignment another workflow made with
 the same `github.token` is also `github-actions[bot]`'s, so it reads as this
-action's own. And with an installation token from any other App, whose
+action's own. With a user token, an assignment the token's owner makes by
+hand names that login as its assigner too, so it reads as this action's own
+as well. And with an installation token from any other App, whose
 account is not `github-actions[bot]`, no claim is ever proved this action's:
 claims never expire and the tie-break below removes nothing.
 
@@ -377,8 +379,9 @@ Ages in replies are whole days, rounded down.
   has to have been made by the action's own account: with a user token the
   shared assigner must be the login the token writes as, and with the default
   token it must be `github-actions[bot]`. When the
-  assignees do not all share one identity, an event is not yet readable, or
-  the identity they share is not the action's own, it removes nothing at all
+  assignees do not all share one assigner, an event is not yet readable or
+  names no assigner, or the assigner they share is not the action's own, it
+  removes nothing at all
   and says so on the issue. The winner and the removals are computed from the
   confirmed set and its timeline alone, so two runs that read the same state
   leave the issue with the same login — what each run posts about it is the
