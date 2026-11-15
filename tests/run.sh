@@ -794,6 +794,10 @@ expire_takeover_expired() {
   run_claim 0 $'took over expired claim of alice (held 7 day(s))\n'
 }
 
+# The token's login and the events' assigner spell one account in different
+# letter case: the expired claim is still the action's own.
+expire_takeover_assigner_case_blind() { printf '%s\n' '{"login":"Claim-Token-Account","type":"User"}' > "$GH_CASE/identity.response"; expire_takeover_expired; }
+
 # Two expired holders: both are removed in login order and the reply names
 # each with its own age, under the default token.
 expire_takeover_multiple_expired() {
@@ -4068,6 +4072,7 @@ cases=(
   expire_takeover_cap_under_proceeds
   expire_takeover_proof_fails expire_takeover_age_unreadable expire_takeover_mixed_created_at
   expire_takeover_post_declined expire_takeover_other_app_refused expire_takeover_no_assigner_refused
+  expire_takeover_assigner_case_blind
   expire_release_read_role_refused expire_release_triage_role_refused
   expire_release_write_role expire_release_maintain_role expire_release_admin_role
   expire_release_mixed_created_at
