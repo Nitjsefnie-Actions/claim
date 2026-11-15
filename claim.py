@@ -798,7 +798,7 @@ def main():
     # derived from which login is running: a partition that depends on that is
     # not one the other run shares, and the two runs then take opposite
     # branches of the same state. If every confirmed assignee's current
-    # assignment was made by the same identity, and that identity is this
+    # assignment was made by the same assigner, and that assigner is this
     # action's own — the account the token writes as, or, for the default
     # token, github-actions[bot] — the earliest of them wins; if not, a write
     # this action cannot claim is among them and the action cannot say
@@ -820,8 +820,8 @@ def main():
     # not the action's to take away. The tie-break and the expiry paths
     # prove this through the same helper, so the three can never drift.
     if not assignments_are_ours(current, confirmed, identity):
-        # A login with no readable current event, identities that do not all
-        # agree, or an agreement that names somebody else: the writes on this
+        # A login with no readable current event, an event naming no assigner,
+        # assigners that disagree, or one naming somebody else: the writes on this
         # issue cannot be attributed to this action, and changing nothing is
         # the only answer that cannot destroy an assignment the action did
         # not make.
