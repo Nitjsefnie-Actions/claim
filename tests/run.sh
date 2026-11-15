@@ -786,7 +786,7 @@ expire_takeover_expired() {
   body=/claim
   CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|7:1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh "$(expected_timeline "${1:-claim-token-account}" '800|alice|7:1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
@@ -794,9 +794,9 @@ expire_takeover_expired() {
   run_claim 0 $'took over expired claim of alice (held 7 day(s))\n'
 }
 
-# The token's login and the events' assigner spell one account in different
-# letter case: the expired claim is still the action's own.
-expire_takeover_assigner_case_blind() { printf '%s\n' '{"login":"Claim-Token-Account","type":"User"}' > "$GH_CASE/identity.response"; expire_takeover_expired; }
+# The token's login and the events' assigner spell one account with capitals
+# in different places: the expired claim is still the action's own.
+expire_takeover_assigner_case_blind() { printf '%s\n' '{"login":"Claim-Token-Account","type":"User"}' > "$GH_CASE/identity.response"; expire_takeover_expired claim-token-ACCOUNT; }
 
 # Two expired holders: both are removed in login order and the reply names
 # each with its own age, under the default token.
