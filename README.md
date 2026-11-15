@@ -307,11 +307,18 @@ removed, and the run log names the holder whose age could not be read.
 
 Only claims this action itself made can expire. Every holder's current
 assignment must be provably a write of the action's own account — the
-login the token posts as, or, for the default `github.token`, its
-Bot-typed account — which is the same proof the tie-break uses. A manual
-assignment anywhere among the holders defeats the takeover and the
-privileged release however ancient the claim looks: the action does not
-remove assignments it did not make.
+event's `assigner` (its `actor` names the assignee) must be the login the
+token posts as, or, for the default `github.token`, `github-actions[bot]`
+— which is the same proof the tie-break uses. A manual assignment, another
+App's, or one whose event names no assigner anywhere among the holders
+defeats the takeover and the privileged release however ancient the claim
+looks: the action does not remove assignments it did not make.
+
+Two limits follow from that proof. An assignment another workflow made with
+the same `github.token` is also `github-actions[bot]`'s, so it reads as this
+action's own. And with an installation token from any other App, whose
+account is not `github-actions[bot]`, no claim is ever proved this action's:
+claims never expire and the tie-break below removes nothing.
 
 Two things may then happen to an expired claim:
 
@@ -368,8 +375,8 @@ Ages in replies are whole days, rounded down.
   the same state cannot leave the issue with two holders. The other commenter
   is told it lost and who holds the issue. Every assignment the action removes
   has to have been made by the action's own account: with a user token the
-  shared identity must be the login the token writes as, and with the default
-  token it must be the Bot account an installation writes as. When the
+  shared assigner must be the login the token writes as, and with the default
+  token it must be `github-actions[bot]`. When the
   assignees do not all share one identity, an event is not yet readable, or
   the identity they share is not the action's own, it removes nothing at all
   and says so on the issue. The winner and the removals are computed from the
