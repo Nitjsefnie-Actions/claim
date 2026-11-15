@@ -625,23 +625,24 @@ cap_search_transport_failure() {
 
 
 # The slurped events answer an expiry case expects. The first argument is the
-# events' actor as LOGIN or LOGIN|TYPE; each following spec is ID|LOGIN|AGE
+# events' assigner as LOGIN or LOGIN|TYPE; each following spec is ID|LOGIN|AGE
 # where AGE is DAYS, DAYS:HOURS (hours may be negative) or `none` for an
 # event with no readable created_at. Ids stay in the order given.
 expected_timeline() {
   python3 - "$@" <<'PYTIMELINE'
 import json, sys
 from datetime import datetime, timedelta, timezone
-login, _, actor_type = sys.argv[1].partition("|")
-actor = {"login": login}
-if actor_type:
-    actor["type"] = actor_type
+login, _, assigner_type = sys.argv[1].partition("|")
+assigner = {"login": login}
+if assigner_type:
+    assigner["type"] = assigner_type
 now = datetime.now(timezone.utc)
 events = []
 for spec in sys.argv[2:]:
     identifier, assignee, age = spec.split("|")[:3]
     event = {"id": int(identifier), "event": "assigned",
-             "actor": actor, "assignee": {"login": assignee}}
+             "actor": {"login": assignee, "type": "User"},
+             "assignee": {"login": assignee}, "assigner": assigner}
     if age != "none":
         days, _, hours = age.partition(":")
         stamp = now - timedelta(days=float(days),
@@ -651,6 +652,57 @@ for spec in sys.argv[2:]:
 print(json.dumps([events], separators=(",", ":")))
 PYTIMELINE
 }
+
+installation_token() {
+  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
+  printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
+  printf '1\n' > "$GH_CASE/identity.response.status"
+}
+
+# Each site's refusal: $1 is the events answer, then the expected run log.
+takeover_refused() {
+  body=/claim
+  CLAIM_EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$1" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
+  run_claim 0 "${@:2}"
+}
+
+release_refused() {
+  body=/release
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
+  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$1" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
+  run_claim 0
+}
+
+settle_refused() {
+  body=/claim
+  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api repos/owner/project/issues/7
+  expect_gh "$1" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  # shellcheck disable=SC2016
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @alice. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
+  run_claim 1
+}
+
+# Refused at all three sites: another App's bot, and no assigner at all.
+other_app() { expected_timeline 'claim-app[bot]|Bot' '600|octo-claimant|8' '700|alice|8'; }
+# 800 is neither skipped for the ours 700 nor read through its actor.
+NO_ASSIGNER='[[{"id":600,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"},"created_at":"2020-01-01T00:00:00Z"},{"id":700,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"},"created_at":"2020-01-01T00:00:00Z"},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"},"created_at":"2020-01-02T00:00:00Z"}]]'
+expire_takeover_other_app_refused() { installation_token; takeover_refused "$(other_app)"; }
+expire_release_other_app_refused() { installation_token; release_refused "$(other_app)"; }
+contested_other_app_bails() { installation_token; settle_refused "$(other_app)"; }
+expire_takeover_no_assigner_refused() { takeover_refused "$NO_ASSIGNER"; }
+expire_release_no_assigner_refused() { release_refused "$NO_ASSIGNER"; }
+contested_no_assigner_bails() { settle_refused "$NO_ASSIGNER"; }
 
 
 # ---- Claim expiry (issue 61). Ages are relative to real time; the strict
@@ -720,29 +772,13 @@ expire_fresh_claim_no_expiry_calls() {
 }
 
 # Seven days minus an hour: inside the window, today's refusal verbatim.
-expire_takeover_inside_window() {
-  body=/claim
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
-  run_claim 0
-}
+expire_takeover_inside_window() { takeover_refused "$(expected_timeline claim-token-account '800|alice|7:-1')"; }
 
 # The strict boundary's near side: thirty minutes short of seven days is
 # still not expired (exactly seven days is not expired either; a real clock
 # cannot be made to read exactly 7.0 at both ends of a subprocess run, so
 # the near side is pinned as close to the edge as determinism allows).
-expire_takeover_boundary_day() {
-  body=/claim
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|7:-0.5')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
-  run_claim 0
-}
+expire_takeover_boundary_day() { takeover_refused "$(expected_timeline claim-token-account '800|alice|7:-0.5')"; }
 
 # An hour past the limit: the holder is deleted, the commenter assigned, the
 # re-read confirms, and the reply names holder, age and actor.
@@ -759,12 +795,13 @@ expire_takeover_expired() {
 }
 
 # Two expired holders: both are removed in login order and the reply names
-# each with its own age.
+# each with its own age, under the default token.
 expire_takeover_multiple_expired() {
   body=/claim
   CLAIM_EXPIRE=7
+  installation_token
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh "$(expected_timeline 'github-actions[bot]|Bot' '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=bob' --silent
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
@@ -824,28 +861,12 @@ expire_takeover_cap_under_proceeds() {
 # A hand assignment among the holders defeats the takeover however ancient
 # the claim looks: proof first, and the proof names an identity that is not
 # this action's.
-expire_takeover_proof_fails() {
-  body=/claim
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline aaron-maintainer '800|alice|400')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
-  run_claim 0
-}
+expire_takeover_proof_fails() { takeover_refused "$(expected_timeline aaron-maintainer '800|alice|400')"; }
 
 # A current event without created_at leaves the age unestablished: the run
 # refuses exactly as today AND says in the run log which holder it could not
 # read.
-expire_takeover_age_unreadable() {
-  body=/claim
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|none')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
-  run_claim 0 $'no readable age for: alice\n'
-}
+expire_takeover_age_unreadable() { takeover_refused "$(expected_timeline claim-token-account '800|alice|none')" $'no readable age for: alice\n'; }
 
 # One expired holder beside one whose current event carries no created_at:
 # only the expired holder is removed, the unreadable one keeps the claim,
@@ -955,45 +976,23 @@ expire_release_mixed_created_at() {
 }
 
 # write but pre-expiry: today's refusal, nothing removed.
-expire_release_write_role_inside_window() {
-  body=/release
-  CLAIM_ACTOR=octo-maintainer
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
-  expect_gh "$(expected_timeline claim-token-account '800|alice|7:-1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
-  run_claim 0
-}
+expire_release_write_role_inside_window() { release_refused "$(expected_timeline claim-token-account '800|alice|7:-1')"; }
 
 # write and the claim is ancient, but a maintainer made the assignment:
 # proof fails, nothing is removed.
-expire_release_proof_fails() {
-  body=/release
-  CLAIM_ACTOR=octo-maintainer
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
-  expect_gh "$(expected_timeline aaron-maintainer '800|alice|400')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-maintainer you are not assigned to this issue, so there is nothing to give up.' --silent
-  run_claim 0
-}
+expire_release_proof_fails() { release_refused "$(expected_timeline aaron-maintainer '800|alice|400')"; }
 
 # The default-token majority: the token has no user account (the /user 403
-# fixture), but the single shared actor is the Bot account an installation
+# fixture), but the single shared assigner is github-actions[bot], which it
 # writes as — the proof holds and the expired claim is released.
 expire_release_integration_token() {
   body=/release
   CLAIM_ACTOR=octo-maintainer
   CLAIM_EXPIRE=7
-  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
-  printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
-  printf '1\n' > "$GH_CASE/identity.response.status"
+  installation_token
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
-  expect_gh "$(expected_timeline 'claim-app[bot]|Bot' '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh "$(expected_timeline 'github-actions[bot]|Bot' '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
   run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
@@ -1032,7 +1031,7 @@ expire_release_no_assignees() {
 # alice sorts before it: the assignee list carries no order, so a sort over it
 # would have picked the wrong login. The "labeled" event pins that an event of
 # any other type is ignored even though it names no assignee. The events'
-# actor is the suite default identity fixture's login — renamed from the old
+# assigner is the suite default identity fixture's login — renamed from the old
 # generic claim-bot — so this case also pins that a user-token settle still
 # settles once the rule requires the action's own identity (#58
 # anti-regression).
@@ -1042,7 +1041,7 @@ contested_winner_by_event_order() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"yuki-dev"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"}},{"id":950,"event":"labeled","actor":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"yuki-dev","type":"User"},"assignee":{"login":"yuki-dev"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"}},{"id":950,"event":"labeled","actor":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @yuki-dev. @alice was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
@@ -1058,7 +1057,7 @@ contested_loser_by_event_order() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=alice'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zoe-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"zoe-helper","type":"User"},"assignee":{"login":"zoe-helper"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=You and @zoe-helper claimed this issue at the same time, and @zoe-helper holds it, so your claim was released.' --silent
   run_claim 0
@@ -1072,7 +1071,7 @@ contested_equal_event_ids() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
@@ -1092,7 +1091,7 @@ unassigned_login_spelling_clears_map() {
   expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"Zara-Helper"}},{"id":800,"event":"unassigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"Zara-Helper","type":"User"},"assignee":{"login":"Zara-Helper"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"unassigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @Zara-Helper. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
@@ -1110,7 +1109,7 @@ assigned_login_spelling_decides() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"Zara-Helper"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":600,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"Zara-Helper"}},{"id":700,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":600,"event":"assigned","actor":{"login":"Zara-Helper","type":"User"},"assignee":{"login":"Zara-Helper"},"assigner":{"login":"claim-token-account"}},{"id":700,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=Zara-Helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant. @Zara-Helper was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
@@ -1126,7 +1125,7 @@ contested_assign_cycle_decides_current_event() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"yuki-dev"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
   expect_gh '{"state":"open","assignees":[{"login":"yuki-dev"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":100,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}},{"id":200,"event":"unassigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}},{"id":250,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"yuki-dev"}},{"id":300,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":100,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}},{"id":200,"event":"unassigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}},{"id":250,"event":"assigned","actor":{"login":"yuki-dev","type":"User"},"assignee":{"login":"yuki-dev"},"assigner":{"login":"claim-token-account"}},{"id":300,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @yuki-dev. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
@@ -1144,7 +1143,7 @@ contested_third_identity_bails() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"aaron-maintainer"},{"login":"alice"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"aaron-maintainer"},{"login":"alice"},{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"aaron-maintainer"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer","type":"User"},"assignee":{"login":"aaron-maintainer"},"assigner":{"login":"aaron-maintainer"}},{"id":800,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @aaron-maintainer, @alice. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
@@ -1158,7 +1157,7 @@ cannot_attribute_missing_event() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
@@ -1173,7 +1172,7 @@ bail_with_actor_absent() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"},{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @alice, @zara-helper. This run could not prove every assignment on it was made by this action, so no assignment was changed. You are not assigned to this issue.' --silent
   run_claim 1
 }
@@ -1188,7 +1187,7 @@ unassigned_event_drops_from_current() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}},{"id":800,"event":"unassigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"unassigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
@@ -1202,7 +1201,7 @@ unreadable_event_field_bails() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @zara-helper. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
   run_claim 1
 }
@@ -1217,7 +1216,7 @@ contested_unrelated_events_ignored() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":50,"event":"assigned","actor":{"login":"ghost-account"},"assignee":null},{"id":60,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"someone-else"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":50,"event":"assigned","actor":{"login":"ghost-account"},"assignee":null},{"id":60,"event":"assigned","actor":{"login":"someone-else","type":"User"},"assignee":{"login":"someone-else"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
@@ -1226,14 +1225,13 @@ contested_unrelated_events_ignored() {
 # The other ordering of that race, and the reason the POST's own response is
 # the decline discriminator: this run's POST was accepted, and a peer removed
 # it before the re-read. It must be told it lost, and must write NOTHING — it
-# holds nothing and has no business deleting somebody else's assignment. Its own
-# unassigned event is why the token still has to be readable from the timeline.
+# holds nothing and has no business deleting somebody else's assignment.
 contested_claim_loser_removed_before_read() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}},{"id":850,"event":"unassigned","actor":{"login":"alice"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}},{"id":850,"event":"unassigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=You and @alice claimed this issue at the same time, and @alice holds it, so your claim was released.' --silent
   run_claim 0
 }
@@ -1245,7 +1243,7 @@ contested_claim_winner_of_three() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"sana-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"assigned","actor":{"login":"sana-helper","type":"User"},"assignee":{"login":"sana-helper"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=sana-helper' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant. @sana-helper, @zara-helper were assigned at the same time, so those assignments were removed.' --silent
@@ -1259,7 +1257,7 @@ contested_claim_loser_among_three() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"sana-helper"},{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"sana-helper"}},{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"zara-helper"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"sana-helper","type":"User"},"assignee":{"login":"sana-helper"},"assigner":{"login":"claim-token-account"}},{"id":800,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=You and @sana-helper claimed this issue at the same time, and @sana-helper holds it, so your claim was released.' --silent
@@ -1276,7 +1274,7 @@ contested_removal_forbidden() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=yuki-dev'
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"yuki-dev"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"yuki-dev"}},{"id":900,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":800,"event":"assigned","actor":{"login":"yuki-dev","type":"User"},"assignee":{"login":"yuki-dev"},"assigner":{"login":"claim-token-account"}},{"id":900,"event":"assigned","actor":{"login":"alice","type":"User"},"assignee":{"login":"alice"},"assigner":{"login":"claim-token-account"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh_failure 1 'gh: Resource not accessible by integration (HTTP 403)' \
     api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   run_claim 1
@@ -1313,7 +1311,7 @@ malformed_events_page() {
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[{"id":800,"event":"assigned","actor":{"login":"claim-token-account"},"assignee":{"login":"octo-claimant"}}]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[{"id":800,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"claim-token-account"}}]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   run_claim 1
 }
 
@@ -1905,9 +1903,7 @@ bot_commenter_no_identity_call() {
 # majority. The full raw call set is pinned too: one identity call, no retry.
 identity_answer_403_proceeds() {
   body=/claim
-  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
-  printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
-  printf '1\n' > "$GH_CASE/identity.response.status"
+  installation_token
   expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
   # Backticks here are Markdown in the expected comment, not shell substitutions.
   # shellcheck disable=SC2016
@@ -2081,53 +2077,28 @@ identity_body_naming_the_refusal_proceeds() {
 # Issue 58: a maintainer who hand-assigned every holder inside the claim
 # window shares ONE identity across the events, and the settle used to read
 # "one shared identity" as "all this action's own writes" — deleting the
-# maintainer's hand-made assignment. The shared actor here is
+# maintainer's hand-made assignment. The shared assigner here is
 # aaron-maintainer while the suite default identity names
 # claim-token-account: attributed to one identity, and provably not ours.
-contested_hand_assignment_bails() {
-  body=/claim
-  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"aaron-maintainer"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # Backticks here are Markdown in the expected comment, not shell substitutions.
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @alice. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
-  run_claim 1
-}
+contested_hand_assignment_bails() { settle_refused "$(expected_timeline aaron-maintainer '700|octo-claimant|0' '800|alice|0')"; }
 
 # The same refusal from the default-token side: with no user identity the
-# settle needs the single shared actor to be the Bot account an installation
-# writes as, and a User-typed maintainer actor is not it. Nothing is removed
+# settle needs the single shared assigner to be github-actions[bot], and a
+# User-typed maintainer is not it. Nothing is removed
 # here either — the token proves only its own writes, and these are not.
-contested_hand_assignment_bails_integration() {
-  body=/claim
-  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
-  printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
-  printf '1\n' > "$GH_CASE/identity.response.status"
-  expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"aaron-maintainer","type":"User"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"aaron-maintainer","type":"User"},"assignee":{"login":"alice"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  # Backticks here are Markdown in the expected comment, not shell substitutions.
-  # shellcheck disable=SC2016
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant this issue is assigned to @alice. This run could not prove every assignment on it was made by this action, so no assignment was changed. Comment `/unclaim` (or `/release`) if you are giving up yours.' --silent
-  run_claim 1
-}
+contested_hand_assignment_bails_integration() { installation_token; settle_refused "$(expected_timeline 'aaron-maintainer|User' '700|octo-claimant|0' '800|alice|0')"; }
 
 # The other side of the same coin: the default-token majority must keep
 # settling. The token has no user account (the 403 fixture), but the single
-# shared actor is the Bot-typed account an installation token writes as — that
+# shared assigner is github-actions[bot], the default token's account — that
 # IS this action's own write, so the later claim is still removed.
 contested_integration_still_settles() {
   body=/claim
-  printf '%s\n' '{"message":"Resource not accessible by integration"}' > "$GH_CASE/identity.response"
-  printf 'gh: Resource not accessible by integration (HTTP 403)\n' > "$GH_CASE/identity.response.stderr"
-  printf '1\n' > "$GH_CASE/identity.response.status"
+  installation_token
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zara-helper"}]}' api repos/owner/project/issues/7
-  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"claim-app[bot]","type":"Bot"},"assignee":{"login":"octo-claimant"}},{"id":800,"event":"assigned","actor":{"login":"claim-app[bot]","type":"Bot"},"assignee":{"login":"zara-helper"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '[[{"id":700,"event":"assigned","actor":{"login":"octo-claimant","type":"User"},"assignee":{"login":"octo-claimant"},"assigner":{"login":"github-actions[bot]","type":"Bot"}},{"id":800,"event":"assigned","actor":{"login":"zara-helper","type":"User"},"assignee":{"login":"zara-helper"},"assigner":{"login":"github-actions[bot]","type":"Bot"}}]]' api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=zara-helper' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=Assigned to @octo-claimant. @zara-helper was assigned at the same time, so that assignment was removed.' --silent
   run_claim 0
@@ -4040,6 +4011,7 @@ cases=(
   # A hand assignment, which this action did not make and must not settle.
   contested_hand_assignment_bails
   contested_hand_assignment_bails_integration contested_integration_still_settles
+  contested_other_app_bails contested_no_assigner_bails
   empty_actor_type multiline_actor_type
   missing_state null_state nonstring_state
   unreachable_api_reported_in_its_own_terms
@@ -4095,13 +4067,13 @@ cases=(
   expire_takeover_multiple_expired expire_takeover_cap_zero expire_takeover_cap_reached
   expire_takeover_cap_under_proceeds
   expire_takeover_proof_fails expire_takeover_age_unreadable expire_takeover_mixed_created_at
-  expire_takeover_post_declined
+  expire_takeover_post_declined expire_takeover_other_app_refused expire_takeover_no_assigner_refused
   expire_release_read_role_refused expire_release_triage_role_refused
   expire_release_write_role expire_release_maintain_role expire_release_admin_role
   expire_release_mixed_created_at
   expire_release_write_role_inside_window expire_release_proof_fails
   expire_release_integration_token expire_release_multiple_expired
-  expire_release_no_assignees
+  expire_release_no_assignees expire_release_other_app_refused expire_release_no_assigner_refused
   # The manifests this action is, and the literals it keeps in more than one
   # file: the replies the README quotes (held against claim.py) and the
   # install block's job condition, `with:` values, `runs-on`,
