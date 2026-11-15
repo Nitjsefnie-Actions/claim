@@ -34,6 +34,10 @@ MAX_COMMENT = 65536
 # healthy 200 a refusal.
 INSTALLATION_REFUSAL = "Resource not accessible by integration"
 
+# The `assigner` of this action's assignments with the default token (this
+# repository's own issue events, 2026-11-15).
+INSTALLATION_ACCOUNT = "github-actions[bot]"
+
 # A transient GitHub failure — an HTTP 5xx, a 429, or a connection that never
 # completed — is worth another attempt because GitHub usually answers it, and
 # the defect in issue 159 is one such failure on one request failing the whole
@@ -263,24 +267,16 @@ def cap_reply(repo, actor, caps):
     return None
 
 
-def event_actor(event):
-    """The login that performed an assignment event, or None if it names none."""
-    if not isinstance(event, dict):
-        return None
-    actor = event.get("actor")
-    if not isinstance(actor, dict) or not isinstance(actor.get("login"), str):
-        return None
-    return actor["login"]
+def event_assigner(event):
+    """The login that performed an assignment event, or None if it names none.
 
-
-def event_actor_type(event):
-    """The account type of an assignment event's actor, or None if untyped."""
-    if not isinstance(event, dict):
+    On `assigned` and `unassigned` events GitHub's `actor` is the assignee,
+    whoever made the change; only `assigner` names the account that made it.
+    """
+    assigner = event.get("assigner") if isinstance(event, dict) else None
+    if not isinstance(assigner, dict) or not isinstance(assigner.get("login"), str):
         return None
-    actor = event.get("actor")
-    if not isinstance(actor, dict) or not isinstance(actor.get("type"), str):
-        return None
-    return actor["type"]
+    return assigner["login"]
 
 
 def claim_age_days(event):
@@ -329,30 +325,21 @@ def assignments_are_ours(current, assignees, identity):
     """True when every current assignment is provably a write this token made.
 
     Every holder needs a readable current `assigned` event, all those events
-    must share one actor identity, and that identity must be the token's own:
-    the login own_identity() returns, or, for an installation token with no
-    user account, its Bot-typed account. Anything less — a holder with no
-    readable event, identities that disagree, or one identity that is not
-    ours — leaves the writes on the issue unattributable, and only writes the
-    action itself made are ever removed. The tie-break and both expiry paths
-    share this proof through this helper.
+    must share one assigner, and that assigner must be the token's own
+    account: the login own_identity() returns, or, for an installation token
+    with no user account, INSTALLATION_ACCOUNT. Anything less — a holder with
+    no readable event, an event naming no assigner, assigners that disagree,
+    or one that is not ours — leaves the writes on the issue unattributable,
+    and only writes the action itself made are ever removed. The tie-break
+    and both expiry paths share this proof through this helper.
     """
-    identities = {(event_actor(current[login]), event_actor_type(current[login]))
-                  for login in assignees if login in current}
-    if any(login not in current for login in assignees) or len(identities) != 1:
+    assigners = {event_assigner(current[login])
+                 for login in assignees if login in current}
+    if any(login not in current for login in assignees) or len(assigners) != 1:
         return False
-    ((event_login, event_type),) = identities
-    if identity is not None:
-        # The None check rides in the return rather than a branch of its
-        # own: an actor GitHub could not name leaves None here, and None is
-        # no identity to compare against this token's own, so it folds to
-        # False — the docstring's answer for an unattributable write —
-        # instead of an AttributeError. The account type is not read on
-        # this branch; the Bot branch below compares `== "Bot"`, which
-        # reads the same on None as on any non-Bot string.
-        return (event_login is not None
-                and event_login.casefold() == identity.casefold())
-    return event_type == "Bot"
+    (assigner,) = assigners
+    own = identity if identity is not None else INSTALLATION_ACCOUNT
+    return assigner is not None and assigner.casefold() == own.casefold()
 
 
 def holders_text(expired):
@@ -420,8 +407,6 @@ def assignment_timeline(pages, relevant):
                 continue
             identifier = event.get("id")
             if isinstance(identifier, bool) or not isinstance(identifier, int):
-                continue
-            if event_actor(event) is None:
                 continue
             events.append((identifier, event["event"], login, event))
     # An assign-and-unassign cycle ends at the LAST event recorded for that
@@ -814,8 +799,8 @@ def main():
     # not one the other run shares, and the two runs then take opposite
     # branches of the same state. If every confirmed assignee's current
     # assignment was made by the same identity, and that identity is this
-    # action's own — the account the token writes as, or, for an installation
-    # token, its Bot account — the earliest of them wins; if not, a write
+    # action's own — the account the token writes as, or, for the default
+    # token, github-actions[bot] — the earliest of them wins; if not, a write
     # this action cannot claim is among them and the action cannot say
     # which, so it does nothing. The earliest assignment is the one no run
     # removes, so the first
@@ -827,9 +812,9 @@ def main():
         gh("--paginate", "--slurp", f"{endpoint}/events?per_page=100")),
         confirmed)
     # One shared identity is still not attribution: it has to be THIS
-    # token's own write. With a user identity the events' actor login must
-    # be it, in either letter case; with no user identity the token is an
-    # App installation, whose writes are exactly its Bot-typed account. A
+    # token's own write. With a user identity the events' assigner must be
+    # it, in either letter case; with no user identity the token is an App
+    # installation, and only the default token's account is recognised. A
     # maintainer who hand-assigned every holder inside the window shares one
     # identity that is neither, and nothing is removed — their assignment is
     # not the action's to take away. The tie-break and the expiry paths
