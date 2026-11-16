@@ -1,7 +1,7 @@
 {
   ".github/dependabot.yml": [
-    931,
-    1347
+    851,
+    1267
   ],
   ".github/scripts/diff_coverage.py": [
     4737,
@@ -12,12 +12,12 @@
     2653
   ],
   ".github/workflows/actionlint.yml": [
-    4333,
-    6898
+    4212,
+    6938
   ],
   ".github/workflows/audit.yml": [
-    3527,
-    5468
+    3428,
+    5393
   ],
   ".github/workflows/codeql.yml": [
     1783,
@@ -44,32 +44,32 @@
     2863
   ],
   ".github/workflows/tests.yml": [
-    13536,
-    20912
+    13297,
+    20673
   ],
   "action.yml": [
     614,
     2018
   ],
   "claim.py": [
-    19076,
-    33031
+    18916,
+    32761
   ],
   "tests/codeql_matrix.py": [
-    6933,
-    12853
+    6645,
+    12565
   ],
   "tests/commit_scopes.py": [
-    7302,
-    12935
+    7049,
+    12682
   ],
   "tests/gate_base_freshness.py": [
     10858,
     20697
   ],
   "tests/gh.sh": [
-    4534,
-    6921
+    4296,
+    6683
   ],
   "tests/run.sh": [
     45640,
