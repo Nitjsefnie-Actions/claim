@@ -4,11 +4,8 @@
 CONTRIBUTING.md's scope table allows a workflow's name as a scope only with
 type `ci`, and names the distinction the other way round: "The type
 disambiguates shared names: `ci(claim)` changes the workflow, while
-`fix(claim)` fixes the script." Nothing checked it, and the rule lost twice
-before this file existed: 9c794f8 and 9b6aa2b shipped as `fix(tests)` for
-changes to tests/ machinery, read as workflow changes by anyone copying the
-merged history. Prose that no gate reads is a convention, not a rule, so this
-check reads the same table out of the history itself.
+`fix(claim)` fixes the script." Prose that no gate reads is a convention,
+not a rule, so this check reads the same table out of the history itself.
 
 The workflow-name set is DERIVED at HEAD from the tracked files under
 .github/workflows, not kept in a list here. A remembered list is only as
@@ -28,8 +25,8 @@ leaves the set — a false green this gate exists not to give.
 
 Only the OUTGOING range origin/main..HEAD is examined, and the green line
 says so. Already-merged history is what the check exists to stop repeating,
-not what it re-tries: re-judging the two `fix(tests)` commits above would
-red every fetch of main forever over commits nobody can amend.
+not what it re-tries: re-judging merged commits would red every fetch of
+main forever over commits nobody can amend.
 
 WHAT IT CANNOT SEE, and says so rather than guessing:
 
@@ -330,8 +327,7 @@ def check(root):
     print(f"Examined {examined} commit subject{plural} in origin/main..HEAD; "
           f"{len(unexamined)} not examined.")
     # The green line states its own reach. Only the outgoing range is judged:
-    # already-merged history — the two fix(tests) commits from issue #78
-    # (9c794f8, 9b6aa2b) — is never re-judged, and a subject without a
+    # already-merged history is never re-judged, and a subject without a
     # readable scope is listed rather than failed. A green line that claimed
     # more than this would be the same over-claim as a report over its
     # evidence.
