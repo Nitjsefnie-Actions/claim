@@ -8,10 +8,10 @@ name: tests
 # PATH shim and the compile check -- while the behavioral suite and the
 # venv-backed checks stay scoped to the POSIX legs (see those steps for
 # why). Every leg runs on setup-python's cached 3.15.x, else a download
-# (macos-latest, 2026-11); python-versions reruns the suite per matrix
+# (macos-latest, as of 2026-11); python-versions reruns the suite per matrix
 # version, on ubuntu.
 #
-# The suite stays install-free by design (#87): it runs the images' bash and
+# The suite stays install-free by design: it runs the images' bash and
 # shellcheck, setup-python's python3 (an interpreter, never a package) and
 # the tests/gh.sh API stub. The file's package installs are the workflow's
 # own: the lint step's hash-pinned ruff, the type/lint steps' hash-pinned
@@ -26,8 +26,8 @@ name: tests
 # nothing of it: the measurer must start inside every python3 the suite
 # starts. The Install coverage tooling step writes coverage's startup hook
 # into that venv and arms COVERAGE_PROCESS_START, so that is where it starts
-# -- and on every other cell the step is skipped, and the suite runs exactly
-# as it always has. The floor lives in .github/ci-thresholds.json and is
+# -- and on every other cell the step is skipped, and the suite runs unchanged
+# there. The floor lives in .github/ci-thresholds.json and is
 # never restated here; the summary renders whether or not the gate fails.
 #
 # The same measurement is also reported per change: the measured cell writes
@@ -95,9 +95,8 @@ jobs:
 
       - name: Refuse a commit whose scope names a workflow outside the ci type
         # CONTRIBUTING.md's scope table allows a workflow's name as a scope
-        # only with type `ci`, and prose no gate reads is a convention — the
-        # two fix(tests) commits on main are that table losing. In this job
-        # rather than a new one: a new job would be a new required status
+        # only with type `ci`, and prose no gate reads is a convention. In this
+        # job rather than a new one: a new job would be a new required status
         # context, which means editing the ruleset, and a job that is already
         # required is where the freshness step went for the same reason.
         # After the freshness step: both compare the head against freshly
@@ -186,20 +185,17 @@ jobs:
           "$RUNNER_TEMP/bin/python3" --version
 
       - name: Check no tracked file carries a merge-conflict marker
-        # a3363ac landed on main with `<<<<<<< HEAD` and the `>>>>>>> 0d9bffc`
-        # line still in README.md, and three review rounds and every gate in
-        # this repository read straight past them: a conflict marker is text
-        # that looks like prose in a Markdown file, so only a mechanical check
-        # can see it. git grep reads the tracked files out of the working
-        # tree, which on a clean checkout is what the repository ships, and
-        # -I keeps a binary from being reported as a match. The three markers
-        # are matched in the shapes git writes them: `<<<<<<< ` and `>>>>>>> `
-        # carry the label after seven characters, and the separator is exactly
-        # seven `=`; diff3's extra `||||||| base` line changes nothing, because
-        # the other three are still written. This job rather than the
-        # actionlint one because this workflow's push trigger is unfiltered,
-        # so it runs for the documentation-only commit that carries the marker
-        # as well as for the code change.
+        # A conflict marker is text that looks like prose in a Markdown file,
+        # so only a mechanical check can see it. git grep reads the tracked
+        # files out of the working tree, which on a clean checkout is what the
+        # repository ships, and -I keeps a binary from being reported as a
+        # match. The three markers are matched in the shapes git writes them:
+        # `<<<<<<< ` and `>>>>>>> ` carry the label after seven characters, and
+        # the separator is exactly seven `=`; diff3's extra `||||||| base` line
+        # changes nothing, because the other three are still written. This job
+        # rather than the actionlint one because this workflow's push trigger is
+        # unfiltered, so it runs for documentation-only commits as well as for
+        # code changes.
         # Explicit `shell: bash` so the step also runs on the windows leg,
         # whose default shell is pwsh and cannot run this bash body; on the
         # POSIX legs the explicit form also adds --noprofile --norc, and
@@ -436,7 +432,7 @@ jobs:
       - name: Run the behavioral suite
         shell: bash
         run: tests/run.sh
-  # The per-change half of the coverage story (#129): of the lines this pull
+  # The per-change half of the coverage story: of the lines this pull
   # request ADDED that coverage considers executable, how many the suite
   # reached. INFORMATIONAL, never a gate -- the tree-wide floor in the
   # Coverage gate step is the gate, and a number a reviewer judges (a refactor

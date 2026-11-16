@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """The CodeQL matrix pin, over .github/workflows/codeql.yml.
 
-Issue #87 deleted the block-layout YAML reader this pin used to walk the
-workflow with: a second YAML implementation, growing one refusal arm per
-review round, each round narrowing the gap between what it admits and what
-YAML admits. The no-package-install rule stands (CONTRIBUTING's promise), so
-the reader is not replaced by a parser but by this: a guard that reads only
-the lines the pin depends on and refuses rather than parses. It claims no
-grammar for the file beyond those lines, so it cannot drift from YAML's
-grammar -- it never models one.
+The no-package-install rule stands (CONTRIBUTING's promise), so this pin
+is not a parser: it is a guard that reads only the lines the pin depends
+on and refuses rather than parses. It claims no grammar for the file
+beyond those lines, so it cannot drift from YAML's grammar -- it never
+models one.
 
 The lines the pin depends on, and the only lines it reads:
 
@@ -40,10 +37,10 @@ anchor, no alias, no merge key, no flow collection, no `: ` inside the
 value, no trailing comment. Two file-wide refusals close what the narrow
 reading cannot: no block scalar anywhere in the workflow, and no tab in any
 line's indentation. A value or layout a maintainer wants to spell another
-way is a deliberate edit to this pin, not a parser arm.
+way is a deliberate edit to this pin, not a new case in its reading.
 
-Why the file-wide refusals are what close the swallowed-structure false
-greens that killed the reader: a block scalar's body carries no flow
+Why the file-wide refusals close the swallowed-structure false greens: a
+block scalar's body carries no flow
 punctuation and spans every column below its key, so nothing about a line
 proves where YAML ends and the scalar begins -- a body can host a copy of a
 pinned line (`run: |` in a guarded step hosting `languages:` at the with
@@ -132,8 +129,7 @@ def no_block_scalar(lines):
     The pin reads only its own lines, so a block scalar is the one construct
     that can host a copy of a pinned line as inert text: its body carries no
     flow punctuation and spans every column below its key, so nothing about
-    a line proves where YAML ends and the scalar begins. The reviewer's
-    plants for this class were two valid-YAML false greens. No workflow in
+    a line proves where YAML ends and the scalar begins. No workflow in
     this repository needs one -- the current file carries none -- so the
     admitted subset is simply: no block scalar anywhere. A maintainer who
     writes one updates this pin deliberately.

@@ -96,13 +96,13 @@ documentation describes both calls as within the Issues permission — issue
 reads as Issues read, issue comments as Issues write or Pull requests write —
 so this grant exists because the observed refusal demands it, not because the
 docs ask for it. The decline keeps failing the run loudly; the grant is what
-delivers the action's own pull-request decline, not new behavior. On a one-job
-workflow, job level is the narrower equivalent of the same scope at workflow
-level: it applies only while the job runs. Workflow-level write scopes are
-what least-privilege audits flag — zizmor's pedantic persona reports the
-placement this block replaced as `excessive-permissions`. The action never
-reads the repository tree, so the calling workflow needs neither
-`contents: read` nor a checkout step. The default `github.token` is sufficient.
+delivers the action's own pull-request decline. On a one-job workflow, job
+level is the narrower equivalent of the same scope at workflow level: it
+applies only while the job runs. Workflow-level write scopes are what
+least-privilege audits flag: zizmor's pedantic persona reports them as
+`excessive-permissions`. The action never reads the repository tree, so the
+calling workflow needs neither `contents: read` nor a checkout step. The
+default `github.token` is sufficient.
 
 The per-issue `concurrency:` group serializes competing claims so they do not
 both act on the same unassigned snapshot. `cancel-in-progress: false` is
@@ -249,10 +249,9 @@ does anything else, and the lookup has outcomes of its own:
 
 `max-claims` caps how many open issues one account may hold claims on,
 per repository role. The value is either `-1` alone — the default, which
-disables the cap entirely: no role lookup, no search call, behavior
-exactly as before this input existed — or a comma-separated map of
-`ROLE=CAP` pairs; whitespace around an entry — spaces or tabs — is
-stripped and ignored, while whitespace inside an entry, around the
+disables the cap entirely: no role lookup and no search call — or a
+comma-separated map of `ROLE=CAP` pairs; whitespace around an entry — spaces
+or tabs — is stripped and ignored, while whitespace inside an entry, around the
 `=` or inside the role or the cap, is refused:
 
 ```yaml
@@ -287,9 +286,8 @@ catches up.
 ### Claim expiry
 
 `expire` retires an idle claim. The value is `-1` — the default, which
-disables expiry entirely: no expiry code runs, no extra API call is made,
-and the behavior is exactly what it was before this input existed — or a
-positive integer counting days. `0` would expire every claim the moment it
+disables expiry entirely: no expiry code runs and no extra API call is made —
+or a positive integer counting days. `0` would expire every claim the moment it
 is made, so it is refused loudly (the run fails) like every other value the
 action cannot read: `-2`, `7d`, `abc`, an empty string.
 

@@ -65,8 +65,8 @@ done
 # the body off this command line, so nothing here is bounded by it.
 body_chars=
 if [[ -n $body ]]; then
-  # Measured once and reused: the refusal path used to start python3 twice over
-  # a body that may be a quarter of a megabyte, to print one number twice.
+  # Measured once and reused by the limit check and the refusal message, so
+  # python3 runs once over a body that may be a quarter of a megabyte.
   body_chars=$(printf '%s' "$body" | comment_chars)
 fi
 if (( body_chars > 65536 )); then
@@ -91,14 +91,10 @@ fi
 # default GH_IDENTITY. The STATUS and STDERR are the case's alone to state: they
 # are read from identity.response.status and identity.response.stderr in the
 # case directory, whichever of the two body paths won, so a case can say what
-# the answer looked like without having to write a body for it. They used to be
-# read beside whichever body path won instead, and a probe that failed without
-# writing a word could not be stated under that without also writing an empty
-# body file to hang them on (#88).
+# the answer looked like without having to write a body for it.
 #
-# A companion anywhere else is not read now: a case pointing GH_IDENTITY at a
-# body carrying its own .status or .stderr gets a bare exit 0, where the old
-# resolution found it beside the answer that was served. No case uses that, and
+# A companion anywhere else is not read: a case pointing GH_IDENTITY at a body
+# carrying its own .status or .stderr gets a bare exit 0. No case uses that, and
 # keeping it would be a branch no case pins.
 #
 # A status with no body is a probe that failed and wrote nothing to stdout, so
@@ -171,7 +167,7 @@ fi
 
 # Ordinals count the ordinary calls only, so the identity record above —
 # answered outside the sequence — never shifts another call's number. The
-# counter needs its own file because calls.jsonl now carries a record the
+# counter needs its own file because calls.jsonl carries a record the
 # sequence does not answer.
 ordinal=$(cat "$GH_CASE/sequence")
 ordinal=$(( ordinal + 1 ))

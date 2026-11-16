@@ -347,8 +347,7 @@ def resolve(candidate, files):
     Resolution against the tree IS the filter: a token that names nothing here
     is not a path this check needs to watch, and a token that names a file or a
     directory is one. There is no shape rule on top of that, because a shape
-    rule is a second remembered list — it is what left `tests/identity.response`
-    out of a hand-written enumeration in the first place.
+    rule is a second remembered list that drifts from the tree.
 
     There is no glob arm, and its absence is deliberate: `candidates()` cannot
     produce a glob metacharacter, so an arm reading one would be a branch that

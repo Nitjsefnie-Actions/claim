@@ -40,8 +40,8 @@ INSTALLATION_ACCOUNT = "github-actions[bot]"
 
 # A transient GitHub failure — an HTTP 5xx, a 429, or a connection that never
 # completed — is worth another attempt because GitHub usually answers it, and
-# the defect in issue 159 is one such failure on one request failing the whole
-# run. The bound is stated here because it is why the generosity is safe:
+# one such failure on one request should not fail the whole run. The bound is
+# stated here because it is why the generosity is safe:
 # three attempts with a pause of 2s then 4s adds at most 6s to any one API
 # call, far under this repository's five-minute job timeout, so the retry
 # budget cannot turn a slow GitHub into a hung run.
@@ -153,7 +153,7 @@ def own_identity():
     token writes as must not go on to answer a comment from that account.
     A transient failure is retried before any of that: one that survives
     the retries raises with the attempts it waited through named in the
-    message, and one that does not raises exactly as it always did.
+    message, and one never retried raises with no attempt count named.
     A 200 whose body is unreadable is an error for the same reason: it too
     would compare the commenter against an identity never established.
     """
@@ -209,11 +209,10 @@ def open_claims(repo, actor):
     # A total that is missing, a string or a bool is a response this run
     # cannot read; proceeding would compare the cap against a number that
     # was never established. Search API and the repository role endpoint
-    # both verified live on an Actions runner 2026-10-01 with the default
-    # token: total_count carries the full count without pagination,
-    # `assignee:` matches case-insensitively, and collaborators/permission
-    # answers 200 for an outsider (role_name "read") as well as for the
-    # repo owner.
+    # both verified live on an Actions runner with the default token:
+    # total_count carries the full count without pagination, `assignee:`
+    # matches case-insensitively, and collaborators/permission answers 200
+    # for an outsider (role_name "read") as well as for the repo owner.
     if not isinstance(result, dict):
         raise ValueError("search snapshot must contain a total_count integer")
     total = result.get("total_count")
@@ -433,7 +432,7 @@ def control_escape(text):
     control character in a declined line recolours or swallows the log's
     own diagnosis instead of being shown, and the reply carries the same
     character into the posted comment. Text with no control character is
-    returned unchanged, so a plain decline reads exactly as it always did.
+    returned unchanged, so a plain decline reads as its text was written.
     """
     return re.sub(
         "[\x00-\x1f\x80-\x9f]",
@@ -605,12 +604,10 @@ def main():
         # A comment is an attempt at a command only where a line of it STARTS
         # with a command word — the word, then whitespace or the end of the
         # line. A word inside a URL, a path or a sentence is a mention, not
-        # an attempt, and answering prose drew a reply to whatever line came
-        # first: daedalus#1448's CI-log analysis was told "Not a command:
-        # `## Which code failed...`" because line 31 held a release-asset
-        # URL. CRs are already gone above, so a line ends at the newline and
-        # a Windows client's `/claim\r` still ends with the word. The scan is
-        # case-sensitive because the exact match above is. The topmost match
+        # an attempt, and answering prose would draw a reply to whatever line
+        # came first. CRs are already gone above, so a line ends at the newline
+        # and a Windows client's `/claim\r` still ends with the word. The scan
+        # is case-sensitive because the exact match above is. The topmost match
         # wins because it is the attempt the commenter made first, and the
         # reply names the line it was on rather than repeating the comment's
         # first line, which may hold no command word at all.
