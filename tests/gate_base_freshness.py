@@ -39,6 +39,12 @@ a narrower gate looks the same as a correct one:
     purpose. That is the maintainer's decision to make, so the limit is named
     and the answer stays visible rather than taken here.
   - What a gate script reaches from inside itself, past the `run:` block.
+  - A file an outside action reads through `with:` or an input default: `with:`
+    is stepped over and a `uses:` names paths only as a local `./` action. The
+    ratchet records `.github/comment-share.json`, `.github/size-baseline.json` and
+    `.github/ci-thresholds.json` stay outside on purpose: each action reads them
+    at the pull request's base, and bot commits tightening them on main would make
+    this a rebase after every ratchet push, the strict policy above.
 
 Runs on the standard library alone. The workflows are read with a parser for
 the block layout this repository uses rather than a YAML dependency, for the
@@ -54,12 +60,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The required status contexts. Hand-held, and only here: a ruleset is
-# repository configuration, not a file, so nothing under .github/workflows can
-# be asked which jobs it makes required. Each name is still looked up in the
-# workflows below, and a name with no job behind it is a refusal rather than a
-# silently smaller set.
-REQUIRED_JOBS = ("actionlint", "shellcheck", "suites")
+# The ruleset's required jobs, hand-held for the reason the module docstring gives.
+REQUIRED_JOBS = ("actionlint", "shellcheck", "suites", "comment-share", "size-baseline",
+                 "gate", "plan", "test", "report")
 
 # The branch a required check's head is compared against. Not configurable:
 # a second branch here would be a second base, and this question has one.
@@ -356,10 +359,7 @@ def resolve(candidate, files):
     `.github/workflows/` that precedes it is a directory, so every workflow is
     taken whole, which is what that glob meant.
 
-    `.` resolves to nothing, and that is a named reach limit rather than an
-    oversight: `.` and `--` are how these tools spell "every tracked file", so
-    the `suites` job's merge-marker step really does read all of them. See the
-    module docstring for why the whole-tree arm is the maintainer's call.
+    `.` resolves to nothing, a named reach limit: see the module docstring.
     """
     candidate = candidate[2:] if candidate.startswith("./") else candidate
     candidate = candidate.rstrip("/")
