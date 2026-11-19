@@ -1,31 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+[[ ${BASH_SOURCE[0]} != "$0" ]] || { echo "run: python3 -m pytest tests/" >&2; exit 2; }
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN="$(mktemp -d "$ROOT/tests/.run.XXXXXX")"
-mkdir "$RUN/bin"
-ln -s "$ROOT/tests/gh.sh" "$RUN/bin/gh"
-export PATH="$RUN/bin:$PATH"
 
 # GH_IDENTITY is the default answer for the stub's identity lookup
 # (`gh api user`); a case overrides it either by writing identity.response into
 # its own case directory or by assigning this variable — which is also how a
 # case points it at a path with nothing behind it, or supplies the body itself.
-# The value is per-case state, set in reset_case below.
 export GH_TOKEN CLAIM_REPOSITORY CLAIM_ISSUE CLAIM_ACTOR CLAIM_ACTOR_TYPE GH_CASE GH_IDENTITY CLAIM_MAX_CLAIMS CLAIM_EXPIRE
-
-reset_case() {
-  GH_TOKEN=test-token
-  CLAIM_REPOSITORY=owner/project
-  CLAIM_ISSUE=7
-  CLAIM_ACTOR=octo-claimant
-  CLAIM_ACTOR_TYPE=User
-  CLAIM_MAX_CLAIMS=-1
-  CLAIM_EXPIRE=-1
-  GH_IDENTITY=$ROOT/tests/identity.response
-  body=
-  expected_error=
-}
 
 expect_gh() {
   local response=$1 ordinal
@@ -3707,7 +3690,7 @@ diffcoverage_skip_unless_coverage() {
   if python3 -c 'import coverage' 2> /dev/null; then
     return 0
   fi
-  printf '  SKIP diff-coverage controls: coverage is not importable from python3 here\n'
+  printf 'coverage is not importable from python3 here\n' > "$GH_CASE/skip"
   return 2
 }
 
@@ -3959,6 +3942,7 @@ suite_legs_covers_readme() {
 # case posts `/claim ` plus 32,740 of them, and the reply quoting that line is
 # 187 bytes of framing over and above the filler — 131,147 bytes, past the
 # argument limit, with the body itself still 105 bytes under it.
+# shellcheck disable=SC2034
 cases=(
   prefixed_environment_only legacy_environment_only prefixed_environment_wins
   # The body's shape: prose, not a command — and the one line that starts a
@@ -4115,25 +4099,3 @@ action_contract readme_quoted_replies
   diffcoverage_binary_diff_refused diffcoverage_absent_statement_records
   diffcoverage_duplicate_class_max_hits diffcoverage_no_measured_lines
   diffcoverage_unmeasured_changed_source diffcoverage_artifact_names_one_leg)
-failures=0
-for case_name in "${cases[@]}"; do
-  GH_CASE="$RUN/$case_name"
-  mkdir "$GH_CASE"
-  : > "$GH_CASE/expected.jsonl"
-  : > "$GH_CASE/calls.jsonl"
-  printf '0\n' > "$GH_CASE/sequence"
-  printf '0\n' > "$GH_CASE/identity-sequence"
-  reset_case
-  if "$case_name"; then
-    printf 'PASS %s\n' "$case_name"
-  else
-    printf 'FAIL %s\n' "$case_name"
-    failures=$((failures + 1))
-  fi
-done
-printf '%s cases, %s failures\n' "${#cases[@]}" "$failures"
-if (( failures )); then
-  printf 'Artifacts: %s\n' "$RUN"
-  exit 1
-fi
-rm -r -- "$RUN"

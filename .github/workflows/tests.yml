@@ -11,9 +11,9 @@ name: tests
 # (macos-latest, as of 2026-11); python-versions reruns the suite per matrix
 # version, on ubuntu.
 #
-# The suite stays install-free by design: it runs the images' bash and
-# shellcheck, setup-python's python3 (an interpreter, never a package) and
-# the tests/gh.sh API stub. The file's package installs are the workflow's
+# The suite runs the images' bash, setup-python's python3 and the
+# tests/gh.sh API stub under pytest, which .github/scripts/pytest.sh installs
+# hash-pinned into a throwaway venv. The other installs are the workflow's
 # own: the lint step's hash-pinned ruff, the type/lint steps' hash-pinned
 # pylint, pycodestyle and pyright, and the hash-pinned coverage installed
 # twice -- in the coverage cell and again in the diff-coverage job, which
@@ -22,7 +22,7 @@ name: tests
 #
 # Coverage is measured on exactly one cell so the reported number names a
 # single reproducible environment. claim.py runs as a SUBPROCESS of the suite
-# (the gh stub is a bash script), so `coverage run tests/run.sh` measures
+# (the gh stub is a bash script), so `coverage run -m pytest` measures
 # nothing of it: the measurer must start inside every python3 the suite
 # starts. The Install coverage tooling step writes coverage's startup hook
 # into that venv and arms COVERAGE_PROCESS_START, so that is where it starts
@@ -170,7 +170,7 @@ jobs:
 
       - name: Put a python3 on PATH
         # setup-python's windows interpreter answers to `python` but not
-        # `python3`, and the steps below and tests/run.sh all call `python3`
+        # `python3`, and the steps below and the suite all call `python3`
         # by name. The shim is the suite's own install-free fix: a two-line
         # sh script on PATH, no package install. `shell: bash` because the
         # body is bash syntax -- on windows the default shell is pwsh, and
@@ -237,7 +237,7 @@ jobs:
         # deliberately not plain F, whose F401 and F841 red CI on benign
         # refactors.
         # Why the venv: setup-python installs an interpreter, never packages,
-        # so each tool gets a throwaway venv and the suite stays install-free.
+        # so each tool gets a throwaway venv of its own.
         # Why the awk extraction: the whole file would also install zizmor.
         # The ruff block alone is platform-complete; the manifest stays the
         # single source for the version and hashes.
@@ -255,7 +255,7 @@ jobs:
       - name: Install the type and lint toolchain
         id: install_checks
         # Why the venv: setup-python installs an interpreter, never packages,
-        # so each tool gets a throwaway venv and the suite stays install-free.
+        # so each tool gets a throwaway venv of its own.
         # Why the awk lift: the whole file would also install zizmor. The
         # lift reaches from the coverage block to EOF, one plain range like
         # every other lift in this workflow: the files these
@@ -297,10 +297,10 @@ jobs:
       - name: pyright
         if: ${{ !cancelled() && steps.install_checks.outcome == 'success' }}
         run: |
-          # Basic mode, with the include list (claim.py and tests/) in
-          # pyrightconfig.json. The exit code is the gate: no baseline and
-          # no ratchet, because the tree passes outright.
-          "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json
+          # Basic mode, include list (claim.py and tests/) in pyrightconfig.json,
+          # imports (pytest) resolved from the checks venv. The exit code is the
+          # gate: no baseline and no ratchet, because the tree passes outright.
+          "$RUNNER_TEMP/checks-venv/bin/pyright" --project pyrightconfig.json --pythonpath "$RUNNER_TEMP/checks-venv/bin/python"
       # The measured cell lifts the manifest's coverage block into a venv,
       # writes coverage's startup hook there, arms two env vars through
       # GITHUB_ENV and puts the venv's bin on GITHUB_PATH ahead of
@@ -337,7 +337,7 @@ jobs:
         # tracked in the issue tracker.
         if: matrix.os != 'windows-latest'
         shell: bash
-        run: tests/run.sh
+        run: .github/scripts/pytest.sh -n auto tests/
 
       # The suite's python3 processes each wrote their own data file (parallel
       # mode in .coveragerc), so they are combined before anything reads a
@@ -431,7 +431,7 @@ jobs:
 
       - name: Run the behavioral suite
         shell: bash
-        run: tests/run.sh
+        run: .github/scripts/pytest.sh -n auto tests/
   # The per-change half of the coverage story: of the lines this pull
   # request ADDED that coverage considers executable, how many the suite
   # reached. INFORMATIONAL, never a gate -- the tree-wide floor in the

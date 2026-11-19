@@ -8,6 +8,7 @@
 !tests/
 tests/*
 !tests/run.sh
+!tests/test_run.py
 !tests/gh.sh
 !tests/commit_scopes.py
 !tests/codeql_matrix.py
@@ -44,6 +45,7 @@ tests/diffcoverage/*
 !.github/scripts/ratchet_thresholds.py
 !.github/scripts/download.sh
 !.github/scripts/retry.sh
+!.github/scripts/pytest.sh
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/actionlint.yml
