@@ -4,7 +4,7 @@
     "python": {
       "floor": 96.2,
       "measured": 96.2,
-      "cell": "ubuntu-latest"
+      "cell": "ubuntu-latest-py3.15"
     }
   }
 }

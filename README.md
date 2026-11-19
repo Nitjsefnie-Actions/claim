@@ -171,23 +171,24 @@ standard library, so nothing beyond the interpreter is installed.
 Consumers can run the action on ubuntu, macos and windows runners. What
 this repository's CI runs, per leg and per step:
 
-| Check | ubuntu | macos | windows | 3.14–3.15 (ubuntu) |
-| --- | --- | --- | --- | --- |
-| Behavioral suite | yes | yes | no — stub limitation, below | yes |
-| ruff lint of claim.py | yes | yes | no | no |
-| pycodestyle, pylint and pyright | yes | yes | no | no |
-| Coverage measurement and gate | yes | no | no | no |
-| Merge-conflict marker check | yes | yes | yes | no |
-| Compile the claim script | yes | yes | yes | no |
-| Put a python3 on PATH | no | no | yes | no |
+| Check | ubuntu | macos | windows |
+| --- | --- | --- | --- |
+| Behavioral suite | 3.14 and 3.15 | 3.15 | no — stub limitation, below |
+| ruff lint of claim.py | yes | yes | no |
+| pycodestyle, pylint and pyright | yes | yes | no |
+| Coverage gate | 3.15 | no | no |
+| Merge-conflict marker check | yes | yes | yes |
+| Compile the claim script | yes | yes | yes |
+| Put a python3 on PATH | no | no | yes |
 
-Every leg runs on the CPython 3.15.x the action itself provisions on that
-runner: the image's toolcached one, or else a download (on `macos-latest`,
-as of 2026-11). The full behavioral suite runs on ubuntu-latest and
-macos-latest, and again on Python 3.14 and 3.15 via setup-python in a
-separate informational job. Coverage is measured and gated on the ubuntu
-cell only, so the reported number names one reproducible environment. No
-version floor is claimed beyond that verification.
+The checks run on setup-python's CPython 3.15.x on each runner: the
+image's toolcached one, or else a download (on `macos-latest`, as of
+2026-11). The behavioral suite runs through
+[Nitjsefnie-Actions/test-ratchet](https://github.com/Nitjsefnie-Actions/test-ratchet)
+in three cells: ubuntu-latest on 3.14 and 3.15, and macos-latest on 3.15.
+Its `report` gates one cell, ubuntu-latest on 3.15, against the coverage
+floor in `.github/ci-thresholds.json`, which only rises. No version floor
+is claimed beyond that verification.
 
 The windows leg stops short of the behavioral suite for a stated reason:
 the suite's `gh` stub is an extension-less bash script placed on PATH as
