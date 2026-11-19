@@ -12,17 +12,11 @@ tests/*
 !tests/gh.sh
 !tests/commit_scopes.py
 !tests/codeql_matrix.py
-!tests/suite_legs.py
-!tests/suite_jobs.py
 !tests/action_contract.py
 !tests/ci_downloads.py
 !tests/gate_base_freshness.py
 !tests/gate_verdicts.py
 !tests/identity.response
-!tests/diffcoverage/
-tests/diffcoverage/*
-!tests/diffcoverage/*.diff
-!tests/diffcoverage/*.xml
 !.coveragerc
 !pyrightconfig.json
 !.pylintrc
@@ -34,6 +28,7 @@ tests/diffcoverage/*
 !.github/PULL_REQUEST_TEMPLATE.md
 !.github/dependabot.yml
 !.github/ci-thresholds.json
+!.github/test-times.json
 !.github/comment-share.json
 !.github/size-baseline.json
 !.github/ISSUE_TEMPLATE/
@@ -41,8 +36,6 @@ tests/diffcoverage/*
 !.github/ISSUE_TEMPLATE/issue.md
 !.github/scripts/
 .github/scripts/*
-!.github/scripts/diff_coverage.py
-!.github/scripts/ratchet_thresholds.py
 !.github/scripts/download.sh
 !.github/scripts/retry.sh
 !.github/scripts/pytest.sh
@@ -56,9 +49,8 @@ tests/diffcoverage/*
 !.github/workflows/scorecard.yml
 !.github/workflows/secrets.yml
 !.github/workflows/audit.yml
-!.github/workflows/coverage-comment.yml
 !.github/workflows/comment-share.yml
-!.github/workflows/ratchet-push.yml
+!.github/workflows/test-ratchet-comment.yml
 !.github/workflows/size-baseline.yml
 !.github/workflows/pin-guard.yml
 !.github/workflows/requirements.txt

@@ -72,8 +72,8 @@ runner and provisions a CPython 3.15.x for itself through
 `actions/setup-python`: the one in the runner's tool
 cache, so the patch level follows the runner image, or else a download of
 the newest 3.15.x the versions manifest lists (`macos-latest` downloads, as
-of 2026-11). CI runs the suite on that 3.15.x and again
-on 3.14 and 3.15, so put a 3.15 (or 3.14) `python3` first on your PATH.
+of 2026-11). CI runs the suite through `Nitjsefnie-Actions/test-ratchet` on
+3.14 and 3.15, so put a 3.15 (or 3.14) `python3` first on your PATH.
 The action's Python uses only the standard library.
 
 ```bash
@@ -95,27 +95,17 @@ in. Point a scratch repository's workflow at your branch —
 
 ## The coverage floor
 
-The `tests` workflow's ubuntu cell gates coverage, and the floor it enforces
-is committed data, not a literal in the workflow: it lives in
-`.github/ci-thresholds.json` beside `measured`, the last measurement that
-raised the record, and the Coverage gate step reads `floor` from that file.
-
-On a push to main the measured cell stages a raise with
-`.github/scripts/ratchet_thresholds.py`, and the `ratchet push` workflow
-publishes it only after the measuring run has fully succeeded. The script
-raises only when a measurement beats the recorded `measured` by MORE than
-the 1.5-point hysteresis, and a raise writes the larger of the recorded
-`floor` and `measured - 1.5` — the fixed calibration gap that absorbs a
-small dip, so ordinary 0.1-point wobble never needs a hand edit. A lower
-or within-hysteresis measurement never loosens the record: `measured`
-moves only when a raise does, and a raise never lowers the recorded floor.
-
-A zero calibration gap — a record where `floor` equals `measured` — is a
-tolerated state, not a defect to hand-fix: the ratchet heals it upward by
-itself, because the next qualifying raise writes back the full gap. While
-the record sits at gap zero the gate has nothing in reserve, so any
-coverage drop on a pull request fails the gate. Raise coverage by writing
-tests; never edit a floor to fit a result.
+The `tests` workflow runs the suite through `Nitjsefnie-Actions/test-ratchet`,
+whose `report` job combines the shards' coverage and gates it against a
+committed floor that only rises: `coverage.python` in
+`.github/ci-thresholds.json`, beside `measured`, on the ubuntu-latest 3.15
+cell. On a push to main, when the figure exceeds the recorded `measured` by
+more than the 1.5-point hysteresis, `report` sets `measured` to the figure
+and `floor` to the figure minus the 1.5-point gap, rounded down to one
+decimal, unless the old floor is higher, and commits the raised records.
+A pull request that lowers a floor in its own thresholds file is still
+gated by its base's. Raise coverage by writing tests; never edit a floor to
+fit a result.
 
 ## House style
 
