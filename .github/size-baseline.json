@@ -7,7 +7,7 @@
     ".github/workflows/tests.yml": 525,
     "claim.py": 887,
     "tests/gate_base_freshness.py": 597,
-    "tests/run.sh": 4139,
+    "tests/run.sh": 4101,
     "tests/suite_legs.py": 740
   }
 }
