@@ -259,7 +259,7 @@ jobs:
         # Why the awk lift: the whole file would also install zizmor. The
         # lift reaches from the coverage block to EOF, one plain range like
         # every other lift in this workflow: the files these
-        # checks read import coverage (.github/scripts/diff_coverage.py), so
+        # checks read import coverage and pytest (diff_coverage.py, test_run.py), so
         # the venv that lints the tree must resolve what the tree imports, and
         # coverage sitting before pylint in the manifest puts both blocks plus
         # pylint's dependencies inside the one range. The manifest stays the
