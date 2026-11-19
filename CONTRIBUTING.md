@@ -65,27 +65,28 @@ you changed, check `git check-ignore -v` refuses that file, and check
 
 ## Getting it running
 
-Nothing to install but `shellcheck` and a Python 3.15 interpreter. The
-action needs `bash` and `gh` on the runner and provisions a CPython 3.15.x
+You need `shellcheck`, a Python 3.15 interpreter, and the suite's runner,
+pytest with pytest-xdist, which `.github/scripts/pytest.sh` installs
+hash-pinned into a venv of its own. The action needs `bash` and `gh` on the runner and provisions a CPython 3.15.x
 for itself through `actions/setup-python`: the one in the runner's tool
 cache, so the patch level follows the runner image, or else a download of
 the newest 3.15.x the versions manifest lists (`macos-latest` downloads, as
 of 2026-11). CI runs the suite on that 3.15.x and again
 on 3.14 and 3.15, so put a 3.15 (or 3.14) `python3` first on your PATH.
-Python uses only the standard library; the suite needs no package
-installation.
+The action's Python uses only the standard library.
 
 ```bash
 python3 --version     # 3.15 (or 3.14)
-tests/run.sh          # the whole suite; its exit status is the verdict
+RUNNER_TEMP="$(mktemp -d)" .github/scripts/pytest.sh -n auto tests/   # the exit status is the verdict
 shellcheck tests/*.sh
 python3 -m py_compile claim.py
 ```
 
 The suite runs `claim.py` as a real subprocess with a stub `gh` earliest on
 `PATH`, so a case can assert both the API calls that were made and the ones
-that were not. There is no framework and no dependency to install; if a case
-needs a new fixture, add it beside the others.
+that were not. Each case is a bash function in `tests/run.sh`, listed in its
+`cases` array, and `tests/test_run.py` runs each one as a pytest test in a
+bash of its own; if a case needs a new fixture, add it beside the others.
 
 You cannot exercise the action end to end without a repository to install it
 in. Point a scratch repository's workflow at your branch —
@@ -171,7 +172,7 @@ runs the cases, and a directory-named scope could not tell those apart.
 |---|---|
 | `action` | the action's interface — the inputs and the step in `action.yml` |
 | `claim` | the decision itself, in `claim.py`; with type `ci`, the `claim` workflow |
-| `harness` | the test machinery — the runner and the `gh` stub |
+| `harness` | the test machinery — `tests/test_run.py`, the case helpers in `tests/run.sh` and the `gh` stub |
 | workflow name | the workflow with that name, such as `claim`, `codeql`, `actionlint`, `tests`, or `scorecard` |
 | `deps` | a dependency bump; what Dependabot is configured to emit |
 | `readme` | the installation and usage guide in `README.md` |
