@@ -67,8 +67,9 @@ you changed, check `git check-ignore -v` refuses that file, and check
 
 You need `shellcheck`, a Python 3.15 interpreter, and the suite's runner,
 pytest with pytest-xdist, which `.github/scripts/pytest.sh` installs
-hash-pinned into a venv of its own. The action needs `bash` and `gh` on the runner and provisions a CPython 3.15.x
-for itself through `actions/setup-python`: the one in the runner's tool
+hash-pinned into a venv of its own. The action needs `bash` and `gh` on the
+runner and provisions a CPython 3.15.x for itself through
+`actions/setup-python`: the one in the runner's tool
 cache, so the patch level follows the runner image, or else a download of
 the newest 3.15.x the versions manifest lists (`macos-latest` downloads, as
 of 2026-11). CI runs the suite on that 3.15.x and again
