@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "cells": {
+    "macos-latest-py3.15": {
+      "tests/test_run.py": 344.13
+    },
+    "ubuntu-latest-py3.14": {
+      "tests/test_run.py": 263.15
+    },
+    "ubuntu-latest-py3.15": {
+      "tests/test_run.py": 347.58
+    }
+  }
+}
