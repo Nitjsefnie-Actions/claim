@@ -5,7 +5,7 @@
       "tests/test_run.py": 445.4
     },
     "ubuntu-latest-py3.14": {
-      "tests/test_run.py": 286.68
+      "tests/test_run.py": 395.03
     },
     "ubuntu-latest-py3.15": {
       "tests/test_run.py": 347.58
