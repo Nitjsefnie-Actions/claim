@@ -3,7 +3,8 @@
   "cells": {
     "macos-latest-py3.15": {
       "tests/test_run.py": [
-        445.4
+        445.4,
+        324.03
       ]
     },
     "ubuntu-latest-py3.14": {
