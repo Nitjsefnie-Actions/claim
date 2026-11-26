@@ -12,9 +12,10 @@ name: release dispatch
 #     naming a tag that is already out.
 #
 # The pushes are the only writes, and they are narrow: refs/heads/main, a
-# commit that changes nothing but VERSION, retried with a lease that fails
-# if main had already moved. The main-push environment holds the key, the
-# same one this repository's ratchets push their records with.
+# commit that changes nothing but VERSION, re-fetched and retried from the
+# new tip after a rejection, and failed when main did not move. The
+# main-push environment holds the key, the same one this repository's
+# ratchets push their records with.
 
 on:
   workflow_run:  # zizmor: ignore[dangerous-triggers]
