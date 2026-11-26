@@ -66,8 +66,8 @@ jobs:
     timeout-minutes: 15
 
     env:
-      # Fork release, not stock rhysd/actionlint: upstream v1.7.12 plus
-      # rhysd/actionlint#654, which adds GitHub's documented `queue` key
+      # Fork release, not stock rhysd/actionlint: upstream v1.7.12 plus three
+      # patches, one adding GitHub's documented `queue` key
       # under `concurrency` (single|max). Stock 1.7.12 is the latest
       # upstream release and false-reds the `queue: max` this repository
       # recommends in its README Install block and brings to its own

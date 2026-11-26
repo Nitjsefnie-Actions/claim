@@ -122,7 +122,8 @@ that gate is yours, the ways out are an `ignore` pattern scoped to that one
 finding (the `-ignore` flag, or the `ignore` list under `paths:` in the
 actionlint config file — the inline `# actionlint: ignore` comment does not
 silence this one) or a patched build: Nitjsefnie-OSC/actionlint carries
-upstream rhysd/actionlint#654 as v1.7.12-queue.3, which accepts the block.
+upstream v1.7.12 plus three patches (#654, #732 and #707) as
+v1.7.12-queue.3, which accepts the block.
 Dropping `queue:` also passes, returning the block to the default
 single-pending-run queue described above.
 
