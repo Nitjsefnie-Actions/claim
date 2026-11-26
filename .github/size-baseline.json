@@ -1,11 +1,11 @@
 {
   "trees": {
-    "tests/": 5681
+    "tests/": 5673
   },
   "schema_version": 1,
   "baseline": {
     "claim.py": 884,
     "tests/gate_base_freshness.py": 597,
-    "tests/run.sh": 3506
+    "tests/run.sh": 3411
   }
 }
