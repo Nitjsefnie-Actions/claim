@@ -182,13 +182,15 @@ lines = release.splitlines()
 
 
 def holds(condition, facts):
-    """An `if:` as GitHub decides it: `||` of `&&` of comparisons, an unset value
-    reading ''; any other shape is refused rather than guessed."""
+    """An `if:` as GitHub decides it: `||` of `&&` of comparisons, strings compared
+    case-blind and an unset value reading ''; any other shape, a parenthesis inside
+    an arm included, is refused rather than guessed."""
     def compare(term):
-        match = re.fullmatch(r"([\w.]+) (==|!=) '([^']*)'", term.strip(" ()"))
+        match = re.fullmatch(r"([\w.]+) (==|!=) '([^']*)'", term)
         assert match, f"release.yml: an `if:` term this model cannot decide: {term!r}"
-        return (facts.get(match[1], "") == match[3]) == (match[2] == "==")
-    return any(all(map(compare, either.split(" && "))) for either in condition.split(" || "))
+        return (facts.get(match[1], "").casefold() == match[3].casefold()) == (match[2] == "==")
+    arms = (arm[1:-1] if arm[:1] + arm[-1:] == "()" else arm for arm in condition.split(" || "))
+    return any(all(map(compare, arm.split(" && "))) for arm in arms)
 
 
 def step(name):
@@ -219,7 +221,7 @@ def execute(name, answers=(), **given):
                                    step(name)[1]), cwd=cell, capture_output=True, text=True, env={
             **os.environ, "PATH": f"{cell}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": cell, "GITHUB_OUTPUT": f"{cell}/out", "CLAIM_REPO": "o/r",
-            "CLAIM_SHA": SHA, "CLAIM_TAG": "v9.9.9", **given}, check=False)
+            "CLAIM_SHA": SHA, "CLAIM_TAG": "v9.9.9", **given}, check=False, timeout=60)
         written = Path(cell, "out")
         return (finished.returncode, finished.stdout + finished.stderr,
                 written.read_text() if written.exists() else "")
@@ -229,7 +231,8 @@ def execute(name, answers=(), **given):
 job_if = " ".join(line.strip() for line in itertools.takewhile(
     lambda line: line.startswith("      "), lines[lines.index("    if: >-") + 1:]))
 for case, cuts in ((("push", "main", "success"), True), (("push", "x", "success"), False),
-                   (("pull_request", "main", "success"), False), (("push", "main", "x"), False)):
+                   (("pull_request", "main", "success"), False),
+                   (("push", "main", "failure"), False)):
     fields = {f"github.event.workflow_run.{key}": value
               for key, value in zip(("event", "head_branch", "conclusion"), case)}
     assert holds(job_if, {"github.event_name": "workflow_run", **fields}) is cuts, case
@@ -261,7 +264,7 @@ for rows, expected, said in (
          ["did not pass:\n    completed\tfailure\tactionlint"]),
         ((("shellcheck", "success"),), 1, ["pending\t-\tactionlint", "Timed out waiting"])):
     code, printed, _ = execute("Wait for the gates on this commit", [
-        (f"release_gate.py?ref={OTHER}", read("scripts/ci/release_gate.py"), 0),
+        (f"contents/scripts/ci/release_gate.py?ref={OTHER}", read("scripts/ci/release_gate.py"), 0),
         ("rules/branches/main", json.dumps(rules), 0),
         (f"commits/{SHA}/check-runs", json.dumps({"check_runs": [check(name, "completed", verdict,
          "https://x/actions/runs/1/job/1") for name, verdict in rows]}), 0),
