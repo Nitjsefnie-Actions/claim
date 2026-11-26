@@ -28,7 +28,6 @@ RUN_ID_RE = re.compile(r"/actions/runs/(\d+)(?:/|$)")
 
 
 def parse_pages(raw: str, key: str) -> list[dict]:
-
     decoder = json.JSONDecoder()
     merged: list[dict] = []
     index, length = 0, len(raw)
@@ -64,13 +63,11 @@ def required_contexts(rules: object) -> set[str]:
 
 
 def run_id_of(check_run: dict) -> str | None:
-
     match = RUN_ID_RE.search(str(check_run.get("html_url") or ""))
     return match.group(1) if match else None
 
 
 def gate_workflow_paths(workflow_runs: list[dict], sha: str) -> set[str]:
-
     return {run["path"] for run in workflow_runs
             if run.get("head_sha") == sha
             and run.get("event") in GATE_EVENTS
@@ -102,7 +99,6 @@ def _judged(check_run: dict, runs_by_id: dict[str, dict],
 
 
 def row(check_run: dict) -> str:
-
     app = check_run.get("app") or {}
     return "\t".join([str(check_run.get("status") or ""),
                       str(check_run.get("conclusion") or "-"),
