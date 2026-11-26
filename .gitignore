@@ -62,5 +62,6 @@ scripts/ci/*
 !.github/workflows/size-baseline.yml
 !.github/workflows/pin-guard.yml
 !.github/workflows/release.yml
+!.github/workflows/release-dispatch.yml
 !.github/workflows/requirements.txt
 !.github/workflows/requirements-pip-audit.txt
