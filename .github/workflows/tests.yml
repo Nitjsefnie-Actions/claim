@@ -94,6 +94,31 @@ jobs:
         # fetched main, and both must read the rebased head.
         run: python3 tests/commit_scopes.py
 
+      - name: Refuse a tree VERSION that names a published release
+        # A tree still naming a tagged version would ship different content
+        # under a version someone installed, so this reds the pull request
+        # that makes the mistake. In this job because it is already required.
+        # The probe FAILS CLOSED, and is not wrapped in retry.sh: a 404 is
+        # its ordinary answer.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAIM_REPO: ${{ github.repository }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          core="${version%%-*}"
+          echo "tree version: $version"
+          tag_exists=false
+          if tag_probe="$(gh api "repos/$CLAIM_REPO/git/ref/tags/v$core" 2>&1)"; then
+            tag_exists=true
+          elif echo "$tag_probe" | grep -q 'HTTP 404'; then
+            : # tag absent — the only trustworthy "not published" answer
+          else
+            echo "could not verify the tag probe for v$core — failing closed" >&2
+            exit 1
+          fi
+          python3 scripts/ci/version_guard.py decide --version "$version" \
+            --tag-exists "$tag_exists"
+
       # ShellCheck ships with the image (0.9.0-1 on ubuntu-24.04, which
       # ubuntu-latest currently maps to, per the runner-images docs:
       # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md),
