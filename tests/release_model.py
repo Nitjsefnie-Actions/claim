@@ -3,7 +3,11 @@
 import contextlib
 import importlib.util
 import io
+import itertools
+import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -170,22 +174,102 @@ assert guard.decide(version, False).ok
 
 release = read(".github/workflows/release.yml")
 for line in ("workflows: [tests]", "contents: write", "checks: read",
-             "actions: read", "queue: max",
-             "github.event.workflow_run.event == 'push'",
-             "github.event.workflow_run.head_branch == 'main'",
-             "github.event.workflow_run.conclusion == 'success'",
-             "if [ \"$CLAIM_REF\" != 'refs/heads/main' ]",
-             "--rules \"$RUNNER_TEMP/rules.json\"",
-             "scripts/ci/release_gate.py?ref=$CLAIM_SELECTOR_SHA",
-             ".github/scripts/retry.sh?ref=$CLAIM_SELECTOR_SHA",
-             "prerelease=${version#*-}",
-             "if echo \"$version\" | grep -q -- '-'",
-             "not at $CLAIM_SHA — failing closed",
-             "$2 != \"success\" && $2 != \"skipped\" && $2 != \"neutral\"",
-             "grep -cv '^completed'",
-             'gh release create "$CLAIM_TAG"', '--target "$CLAIM_SHA"',
-             "--jq .target_commitish"):
+             "actions: read", "queue: max", ".github/scripts/retry.sh?ref=$CLAIM_SELECTOR_SHA",
+             "not at $CLAIM_SHA — failing closed", 'gh release create "$CLAIM_TAG"',
+             '--target "$CLAIM_SHA"', "--jq .target_commitish"):
     exactly_one(release, line, "release.yml")
+lines = release.splitlines()
+
+
+def holds(condition, facts):
+    """An `if:` as GitHub decides it: `||` of `&&` of comparisons, an unset value
+    reading ''; any other shape is refused rather than guessed."""
+    def compare(term):
+        match = re.fullmatch(r"([\w.]+) (==|!=) '([^']*)'", term.strip(" ()"))
+        assert match, f"release.yml: an `if:` term this model cannot decide: {term!r}"
+        return (facts.get(match[1], "") == match[3]) == (match[2] == "==")
+    return any(all(map(compare, either.split(" && "))) for either in condition.split(" || "))
+
+
+def step(name):
+    """A step's `if:` and its `run:` body, as the runner receives them."""
+    block = list(itertools.takewhile(lambda line: not line.startswith("      - "),
+                                     lines[lines.index(f"      - name: {name}") + 1:]))
+    script = block[block.index("        run: |") + 1:]
+    return (next((line[12:] for line in block if line.startswith("        if: ")), None),
+            "".join(line[10:] + "\n" for line in script if not line or line.startswith(" " * 10)))
+
+
+def execute(name, answers=(), **given):
+    """Run a step under the runner's `bash -eo pipefail`, `gh` answering only `answers`
+    ((substring, output, status)) and failing every call they miss."""
+    with tempfile.TemporaryDirectory() as cell:
+        arms = ""
+        for index, (needle, output, status) in enumerate(answers):
+            Path(cell, f"gh.{index}").write_text(output)
+            arms += (f'*{shlex.quote(needle)}*) cat "$0.{index}" >&{1 + bool(status)}; '
+                     f'exit {status};;\n')
+        gh = f'case "$*" in\n{arms}*) echo "unmodelled gh $*" >&2; exit 99;;\nesac'
+        timeout = '[ "$1 $2 $3" = "-k 5 60" ] || exit 125; shift 3; exec "$@"'
+        for stub, text in (("gh", gh), ("sleep", ":"), ("timeout", timeout)):
+            Path(cell, stub).write_text(f"#!/bin/sh\n{text}\n")
+            Path(cell, stub).chmod(0o755)
+        shutil.copy(root / ".github/scripts/retry.sh", cell)
+        finished = subprocess.run(("bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
+                                   step(name)[1]), cwd=cell, capture_output=True, text=True, env={
+            **os.environ, "PATH": f"{cell}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": cell, "GITHUB_OUTPUT": f"{cell}/out", "CLAIM_REPO": "o/r",
+            "CLAIM_SHA": SHA, "CLAIM_TAG": "v9.9.9", **given}, check=False)
+        written = Path(cell, "out")
+        return (finished.returncode, finished.stdout + finished.stderr,
+                written.read_text() if written.exists() else "")
+
+
+# Who releases: a dispatch, or a green push to main; nothing else.
+job_if = " ".join(line.strip() for line in itertools.takewhile(
+    lambda line: line.startswith("      "), lines[lines.index("    if: >-") + 1:]))
+for case, cuts in ((("push", "main", "success"), True), (("push", "x", "success"), False),
+                   (("pull_request", "main", "success"), False), (("push", "main", "x"), False)):
+    fields = {f"github.event.workflow_run.{key}": value
+              for key, value in zip(("event", "head_branch", "conclusion"), case)}
+    assert holds(job_if, {"github.event_name": "workflow_run", **fields}) is cuts, case
+
+# A -dev VERSION reads as a prerelease, and the create step skips it.
+for content, prerelease in (("3.1.0-dev\n", "dev"), ("3.1.0\n", "")):
+    code, printed, out = execute("Read and validate VERSION",
+                                 [(f"contents/VERSION?ref={SHA}", content, 0)])
+    assert code == 0 and f"prerelease={prerelease}\n" in out, (printed, out)
+    fields = {"github.event_name": "workflow_run", "steps.version.outputs.prerelease": prerelease}
+    assert holds(step("Create the release")[0], fields) == (prerelease == ""), prerelease
+
+# Each refusal runs beside the green it guards, and is told by what it says.
+for ref, code in (("refs/heads/main", 0), ("refs/heads/feature", 1)):
+    assert execute("Refuse a dispatch that is not on main", CLAIM_REF=ref)[0] == code, ref
+TAG, NOTE = "git/ref/tags/v9.9.9", "releases/tags/v9.9.9"
+for replies, expected, said in (([(TAG, "HTTP 404", 1), (NOTE, "HTTP 404", 1)], 0, "is free"),
+                                ([(TAG, "{}", 0)], 1, "Tag v9.9.9 already exists"),
+                                ([(TAG, "HTTP 404", 1), (NOTE, "{}", 0)], 1, "Release v9.9.9 al"),
+                                ([(TAG, "HTTP 502", 1)], 1, "could not verify the tag probe")):
+    code, printed, _ = execute("Refuse to re-release an existing tag", replies)
+    assert code == expected and said in printed, (replies, printed)
+
+# The wait runs the selector the workflow's own commit carries.
+for rows, expected, said in (
+        ((("shellcheck", "success"), ("actionlint", "skipped"), ("codeql", "neutral")), 0,
+         ["Every check passed"]),
+        ((("shellcheck", "success"), ("actionlint", "failure")), 1,
+         ["did not pass:\n    completed\tfailure\tactionlint"]),
+        ((("shellcheck", "success"),), 1, ["pending\t-\tactionlint", "Timed out waiting"])):
+    code, printed, _ = execute("Wait for the gates on this commit", [
+        (f"release_gate.py?ref={OTHER}", read("scripts/ci/release_gate.py"), 0),
+        ("rules/branches/main", json.dumps(rules), 0),
+        (f"commits/{SHA}/check-runs", json.dumps({"check_runs": [check(name, "completed", verdict,
+         "https://x/actions/runs/1/job/1") for name, verdict in rows]}), 0),
+        (f"runs?head_sha={SHA}", json.dumps({"workflow_runs": runs}), 0)],
+        CLAIM_SELF_JOB="release", CLAIM_SELF_RUN_ID="4", CLAIM_SELECTOR_SHA=OTHER,
+        CLAIM_SELF_WORKFLOW_REF="o/r/.github/workflows/release.yml@refs/heads/main",
+        CLAIM_RELEASE_WAIT_SECONDS="2")
+    assert code == expected and all(part in printed for part in said), (rows, printed)
 assert release.count("releases/tags/$CLAIM_TAG") == 2
 assert release.count("HTTP 404") == 3
 
