@@ -734,16 +734,12 @@ def main():
         assigned = assignee_logins(json.loads(
             gh("-X", "POST", f"{endpoint}/assignees", "-f",
                f"assignees[]={actor}")))
-        if actor not in assigned:
+        if (actor not in assigned
+                or actor not in assignee_logins(snapshot(endpoint))):
             say(f"GitHub would not accept @{actor} as an assignee here. "
-                "That usually means the account needs to have commented on or been "
-                "granted access to this repository.")
-            return 1
-        confirmed = assignee_logins(snapshot(endpoint))
-        if actor not in confirmed:
-            say(f"GitHub would not accept @{actor} as an assignee here. "
-                "That usually means the account needs to have commented on or been "
-                "granted access to this repository.")
+                "GitHub assigns an issue to an account that has commented on "
+                "that issue or has write access to the repository. Keep your "
+                "comment on this issue and comment `/claim` again.")
             return 1
         print("took over expired claim of " + holders_log(expired))
         say(takeover_reply(expired, actor))
@@ -772,8 +768,9 @@ def main():
         gh("-X", "POST", f"{endpoint}/assignees", "-f", f"assignees[]={actor}")))
     if actor not in assigned:
         say(f"GitHub would not accept @{actor} as an assignee here. "
-            "That usually means the account needs to have commented on or been "
-            "granted access to this repository.")
+            "GitHub assigns an issue to an account that has commented on "
+            "that issue or has write access to the repository. Keep your "
+            "comment on this issue and comment `/claim` again.")
         return 1
     # A failed re-read must abort, never publish a rejection or success based
     # on an unreadable response.

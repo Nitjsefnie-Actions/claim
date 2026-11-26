@@ -880,7 +880,7 @@ expire_takeover_post_declined() {
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=GitHub would not accept @octo-claimant as an assignee here. GitHub assigns an issue to an account that has commented on that issue or has write access to the repository. Keep your comment on this issue and comment \`/claim\` again." --silent
   run_claim 1
 }
 
@@ -1330,7 +1330,7 @@ claim_rejected() {
   body=/claim
   expect_gh '{"state":"open","assignees":[]}' api repos/owner/project/issues/7
   expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
-  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=GitHub would not accept @octo-claimant as an assignee here. That usually means the account needs to have commented on or been granted access to this repository.' --silent
+  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=GitHub would not accept @octo-claimant as an assignee here. GitHub assigns an issue to an account that has commented on that issue or has write access to the repository. Keep your comment on this issue and comment \`/claim\` again." --silent
   run_claim 1
 }
 
