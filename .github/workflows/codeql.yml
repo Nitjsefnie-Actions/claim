@@ -7,12 +7,9 @@ name: codeql
 # upstream cannot block an unrelated push.
 #
 # Push and the weekly cron analyse the event's own commit, so SARIF is
-# uploaded against exactly the tree that was checked out.
-#
-# The weekly cron is not redundant with push: CodeQL's query packs are
-# updated continuously, and a new query only ever runs against code that
-# has changed since it shipped. Without the cron, a rule published today
-# would never be applied to a file last touched last year.
+# uploaded against exactly the tree that was checked out. The cron is not
+# redundant with push: CodeQL's query packs change continuously, and a new
+# query only runs against code that changed since it shipped.
 
 on:
   # Every branch, not just main. Scorecard's SAST check asks whether the
@@ -49,6 +46,8 @@ jobs:
       # stays read-only.
       security-events: write
       contents: read
+      # Inert on a public repository, and the block a private fork needs.
+      actions: read
 
     strategy:
       # One entry per language CodeQL analyses here: `actions` for the action
