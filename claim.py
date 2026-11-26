@@ -724,10 +724,10 @@ def main():
         if refusal is not None:
             say(refusal)
             return 0
-        for login, _ in expired:
-            # DELETE names exactly one login so every other assignee stays.
-            gh("-X", "DELETE", f"{endpoint}/assignees",
-               "-f", f"assignees[]={login}", "--silent")
+        for login, days in expired:
+            # One login per DELETE keeps the rest; each is logged as it goes.
+            gh("-X", "DELETE", f"{endpoint}/assignees", "-f", f"assignees[]={login}", "--silent")
+            print("removed expired claim of " + holders_log([(login, days)]))
         # Only the POST's response says whether ITS assignment was accepted;
         # missing from the re-read alone, it was accepted and then removed.
         assigned = assignee_logins(json.loads(
