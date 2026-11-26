@@ -18,6 +18,11 @@ tests/*
 !tests/gate_base_freshness.py
 !tests/gate_verdicts.py
 !tests/identity.response
+!scripts/
+scripts/*
+!scripts/ci/
+scripts/ci/*
+!scripts/ci/*.py
 !.coveragerc
 !pyrightconfig.json
 !.pylintrc
@@ -56,5 +61,6 @@ tests/*
 !.github/workflows/test-ratchet-comment.yml
 !.github/workflows/size-baseline.yml
 !.github/workflows/pin-guard.yml
+!.github/workflows/release.yml
 !.github/workflows/requirements.txt
 !.github/workflows/requirements-pip-audit.txt
