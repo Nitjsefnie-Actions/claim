@@ -21,6 +21,7 @@ tests/*
 !pyrightconfig.json
 !.pylintrc
 !setup.cfg
+!.gitleaks.toml
 !README.md
 !SECURITY.md
 !.github/
@@ -39,6 +40,7 @@ tests/*
 !.github/scripts/download.sh
 !.github/scripts/retry.sh
 !.github/scripts/pytest.sh
+!.github/scripts/secrets-scan.sh
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/actionlint.yml
