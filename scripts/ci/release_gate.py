@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select the check runs a release waits on (see CONTRIBUTING.md)."""
+"""Select the check runs a release waits on."""
 from __future__ import annotations
 
 import argparse
