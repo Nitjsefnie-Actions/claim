@@ -4,16 +4,16 @@
     1267
   ],
   ".github/workflows/actionlint.yml": [
-    4212,
-    6938
+    4204,
+    6930
   ],
   ".github/workflows/audit.yml": [
     3428,
     5393
   ],
   ".github/workflows/codeql.yml": [
-    1783,
-    2684
+    1738,
+    2651
   ],
   ".github/workflows/pr-gate.yml": [
     427,
@@ -28,8 +28,8 @@
     2863
   ],
   ".github/workflows/tests.yml": [
-    8599,
-    13587
+    8464,
+    13589
   ],
   "action.yml": [
     614,
