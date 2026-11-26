@@ -24,4 +24,4 @@ rm -f -- .gitleaksignore
 printf '* diff\n' > "$(git rev-parse --git-path info/attributes)"
 exec "$work/gitleaks" detect --verbose --redact --ignore-gitleaks-allow \
   --config "$work/gitleaks.toml" --gitleaks-ignore-path "$work" \
-  --log-opts='--all --full-history --diff-filter=uxdb'
+  --log-opts='--all --full-history --diff-filter=uxdb --diff-merges=remerge'
