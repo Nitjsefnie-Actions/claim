@@ -7,19 +7,16 @@ updates:
       day: wednesday
       time: "04:23"
       timezone: Etc/UTC
+    open-pull-requests-limit: 5
     # Dependabot writes its own commit messages, so the convention in
     # CONTRIBUTING.md only holds for them if it is configured here. `include:
     # scope` is what appends the `(deps)`, giving `ci(deps): bump ...`.
     commit-message:
       prefix: ci
       include: scope
-    # One pull request per update kind for every action bump.
-    # github/codeql-action ships `init` and `analyze` as separate
-    # dependencies that must stay on one version: `analyze` fails when its
-    # version differs from `init`'s, so a pull request bumping either alone
-    # can never go green. A group covers version updates only unless it names
-    # `applies-to`, and security updates are enabled here, so they get a group
-    # of their own.
+    # One pull request per update kind. github/codeql-action ships `init` and
+    # `analyze` as separate dependencies that must stay on one version, and a
+    # group covers version updates only unless it names `applies-to`.
     groups:
       github-actions:
         patterns:
@@ -35,12 +32,16 @@ updates:
       day: wednesday
       time: "04:23"
       timezone: Etc/UTC
+    open-pull-requests-limit: 5
     # The entry above watches this repository's actions, and the ecosystem it
     # belongs to never reads a requirements file: the zizmor pin in this
     # directory is hash-pinned, so without this entry it is frozen. A zizmor
     # release carrying a fixed CVE cannot land until someone remembers to
     # regenerate the hashes by hand. The `pip` ecosystem does rewrite the
     # `--hash` lines with the version.
+    #
+    # `ci`, not the siblings' `build`: CONTRIBUTING defines `ci(deps)` as the
+    # form every dependency bump takes, workflow-resident pins included.
     commit-message:
       prefix: ci
       include: scope
