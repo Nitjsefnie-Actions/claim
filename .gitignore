@@ -2,6 +2,7 @@
 !.gitignore
 !action.yml
 !claim.py
+!VERSION
 !LICENSE
 !CODE_OF_CONDUCT.md
 !CONTRIBUTING.md
