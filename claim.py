@@ -678,13 +678,13 @@ def main():
                             print("no readable age for: "
                                   + ", ".join(unreadable))
                         if expired:
-                            for login, _ in expired:
+                            for login, days in expired:
                                 # DELETE names exactly one login so every
-                                # other assignee stays.
+                                # other assignee stays; each is logged as made.
                                 gh("-X", "DELETE", f"{endpoint}/assignees",
                                    "-f", f"assignees[]={login}", "--silent")
-                            print("released expired claim of "
-                                  + holders_log(expired))
+                                print("released expired claim of "
+                                      + holders_log([(login, days)]))
                             say(release_reply(expired, actor))
                             return 0
             say(f"@{actor} you are not assigned to this issue, "

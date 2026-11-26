@@ -884,6 +884,14 @@ expire_takeover_removed_after_post() {
   run_claim 0 $'removed expired claim of alice (held 8 day(s))\n'
 }
 
+# alice's DELETE fails: nothing was removed, so the log names nobody.
+expire_takeover_delete_fails() {
+  alice_holds "$(expected_timeline claim-token-account '800|alice|8')"
+  expected_error='gh: Resource not accessible by integration (HTTP 403)'
+  expect_gh_failure 1 "$expected_error" api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  run_claim 1
+}
+
 # Privileged release: anyone below write is refused with today's reply and
 # no timeline call at all.
 expire_release_read_role_refused() {
@@ -908,43 +916,21 @@ expire_release_triage_role_refused() {
   run_claim 0
 }
 
-# write, maintain and admin may release someone else's expired claim.
-expire_release_write_role() {
+# write, maintain and admin ($1) may release someone else's expired claim.
+release_by_role() {
   body=/release
   CLAIM_ACTOR=octo-maintainer
   CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "{\"permission\":\"$1\",\"role_name\":\"$1\"}" api repos/owner/project/collaborators/octo-maintainer/permission
   expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
   run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
 }
-
-expire_release_maintain_role() {
-  body=/release
-  CLAIM_ACTOR=octo-maintainer
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '{"permission":"maintain","role_name":"maintain"}' api repos/owner/project/collaborators/octo-maintainer/permission
-  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
-  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
-}
-
-expire_release_admin_role() {
-  body=/release
-  CLAIM_ACTOR=octo-maintainer
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh '{"permission":"admin","role_name":"admin"}' api repos/owner/project/collaborators/octo-maintainer/permission
-  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
-  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
-  expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 8 day(s))." --silent
-  run_claim 0 $'released expired claim of alice (held 8 day(s))\n'
-}
-
+expire_release_write_role() { release_by_role write; }
+expire_release_maintain_role() { release_by_role maintain; }
+expire_release_admin_role() { release_by_role admin; }
 
 # One expired holder beside one still inside its window: the privileged
 # release removes exactly the expired holder, the live claim stays, and the
@@ -997,7 +983,21 @@ expire_release_multiple_expired() {
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=bob' --silent
   expect_gh '' api repos/owner/project/issues/7/comments --input - "body=@octo-maintainer has released @alice's expired claim (held 9 day(s)) and @bob's expired claim (held 8 day(s))." --silent
-  run_claim 0 $'released expired claim of alice (held 9 day(s)), bob (held 8 day(s))\n'
+  run_claim 0 $'released expired claim of alice (held 9 day(s))\nreleased expired claim of bob (held 8 day(s))\n'
+}
+
+# bob's DELETE fails after alice's landed: the log still names alice.
+expire_release_later_delete_fails() {
+  body=/release
+  CLAIM_ACTOR=octo-maintainer
+  CLAIM_EXPIRE=7
+  expected_error='gh: Resource not accessible by integration (HTTP 403)'
+  expect_gh '{"state":"open","assignees":[{"login":"alice"},{"login":"bob"}]}' api repos/owner/project/issues/7
+  expect_gh '{"permission":"write","role_name":"write"}' api repos/owner/project/collaborators/octo-maintainer/permission
+  expect_gh "$(expected_timeline claim-token-account '800|alice|9' '810|bob|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh_failure 1 "$expected_error" api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=bob' --silent
+  run_claim 1 $'released expired claim of alice (held 9 day(s))\n'
 }
 
 # An issue holding nobody cannot have anything expired on it: refused with
@@ -3484,12 +3484,12 @@ cases=(
   expire_takeover_cap_under_proceeds
   expire_takeover_proof_fails expire_takeover_age_unreadable expire_takeover_mixed_created_at
   expire_takeover_post_declined expire_takeover_other_app_refused expire_takeover_no_assigner_refused
-  expire_takeover_assigner_case_blind expire_takeover_removed_after_post
+  expire_takeover_assigner_case_blind expire_takeover_removed_after_post expire_takeover_delete_fails
   expire_release_read_role_refused expire_release_triage_role_refused
   expire_release_write_role expire_release_maintain_role expire_release_admin_role
   expire_release_mixed_created_at
   expire_release_write_role_inside_window expire_release_proof_fails
-  expire_release_integration_token expire_release_multiple_expired
+  expire_release_integration_token expire_release_multiple_expired expire_release_later_delete_fails
   expire_release_no_assignees expire_release_other_app_refused expire_release_no_assigner_refused
   # The manifests this action is, and the literals it keeps in more than one
   # file: the replies the README quotes (held against claim.py) and the
