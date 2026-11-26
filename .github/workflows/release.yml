@@ -4,7 +4,7 @@ name: release
 # creating one. It runs after the tests workflow completes on a push, re-cuts
 # a commit on dispatch, and skips a VERSION that carries a `-dev` suffix — a
 # release is that suffix being dropped, which this never edits itself. See
-# "Cutting a release" in CONTRIBUTING.md.
+# CONTRIBUTING.md.
 
 on:
   workflow_run:  # zizmor: ignore[dangerous-triggers] the if admits only a push to main, the file runs from the default branch, and refs are API data
@@ -24,6 +24,7 @@ concurrency:
   # A superseded run may be halfway through creating a tag.
   group: release
   cancel-in-progress: false
+  queue: max
 
 jobs:
   release:
@@ -43,7 +44,9 @@ jobs:
     steps:
       - name: Fetch the retry helper this workflow runs
         # From the SELECTOR's commit, never the released one: a pull request
-        # must not alter what a privileged push run executes.
+        # must not alter what a privileged push run executes. A read whose
+        # stdout becomes a value bypasses this helper: it does not buffer a
+        # failed attempt's stdout, and `gh api` prints an error body there.
         env:
           GH_TOKEN: ${{ github.token }}
           CLAIM_REPO: ${{ github.repository }}
@@ -61,7 +64,7 @@ jobs:
           CLAIM_REPO: ${{ github.repository }}
           CLAIM_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}
         run: |
-          version="$("$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api -H 'Accept: application/vnd.github.raw' "repos/$CLAIM_REPO/contents/VERSION?ref=$CLAIM_SHA")"
+          version="$(timeout -k 5 60 gh api -H 'Accept: application/vnd.github.raw' "repos/$CLAIM_REPO/contents/VERSION?ref=$CLAIM_SHA")"
           version="$(echo "$version" | tr -d '[:space:]')"
           if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
             echo "VERSION is not semver: '$version'" >&2
@@ -87,7 +90,7 @@ jobs:
           CLAIM_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}
           CLAIM_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if ! parent="$("$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api "repos/$CLAIM_REPO/commits/$CLAIM_SHA" --jq '.parents[0].sha')"; then
+          if ! parent="$(timeout -k 5 60 gh api "repos/$CLAIM_REPO/commits/$CLAIM_SHA" --jq '.parents[0].sha')"; then
             echo "could not verify this commit's parent — failing closed" >&2
             exit 1
           fi
@@ -95,7 +98,7 @@ jobs:
             echo "could not verify this commit's parent — failing closed" >&2
             exit 1
           fi
-          if ! parent_version="$("$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api -H 'Accept: application/vnd.github.raw' "repos/$CLAIM_REPO/contents/VERSION?ref=$parent")"; then
+          if ! parent_version="$(timeout -k 5 60 gh api -H 'Accept: application/vnd.github.raw' "repos/$CLAIM_REPO/contents/VERSION?ref=$parent")"; then
             echo "could not verify the parent's VERSION — failing closed" >&2
             exit 1
           fi
@@ -111,7 +114,7 @@ jobs:
         if: steps.version.outputs.prerelease == '' && steps.target.outputs.unchanged != 'true' && github.event_name == 'workflow_dispatch'
         env:
           CLAIM_REF: ${{ github.ref }}
-        # Only main answers for the commit a dispatch names.
+        # Only main's own copy cuts; the input names a commit, not a branch.
         run: |
           if [ "$CLAIM_REF" != 'refs/heads/main' ]; then
             echo "Release dispatch must run on main, not $CLAIM_REF" >&2
@@ -124,12 +127,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLAIM_TAG: ${{ steps.version.outputs.tag }}
           CLAIM_REPO: ${{ github.repository }}
-        # A v* tag cannot be moved or deleted once created, so a wrong one
-        # blocks that version string forever. Both probes fail closed: only a
-        # 404 proves the tag and the release absent, and `gh release create
-        # --target` would otherwise attach the release to an unchecked commit.
+        # A v* tag cannot be moved or deleted once created. Only a 404 proves
+        # the tag and the release absent, and neither probe retries for one.
         run: |
-          if tag_probe="$("$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api "repos/$CLAIM_REPO/git/ref/tags/$CLAIM_TAG" 2>&1)"; then
+          if tag_probe="$(timeout -k 5 60 gh api "repos/$CLAIM_REPO/git/ref/tags/$CLAIM_TAG" 2>&1)"; then
             echo "Tag $CLAIM_TAG already exists — VERSION was set to a" >&2
             echo "version that has already been tagged. Raise it further." >&2
             exit 1
@@ -140,7 +141,7 @@ jobs:
             exit 1
           fi
 
-          if release_probe="$("$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api "repos/$CLAIM_REPO/releases/tags/$CLAIM_TAG" 2>&1)"; then
+          if release_probe="$(timeout -k 5 60 gh api "repos/$CLAIM_REPO/releases/tags/$CLAIM_TAG" 2>&1)"; then
             echo "Release $CLAIM_TAG already exists — VERSION was set to a" >&2
             echo "version that has already shipped. Raise it further, or" >&2
             echo "delete that release if it was cut in error." >&2
@@ -164,9 +165,8 @@ jobs:
           CLAIM_SELF_RUN_ID: ${{ github.run_id }}
           CLAIM_SELF_WORKFLOW_REF: ${{ github.workflow_ref }}
           CLAIM_SELECTOR_SHA: ${{ github.workflow_sha }}
-        # The selector's rule lives in scripts/ci/release_gate.py; the branch
-        # rules are read fresh so a rule added later is waited on without
-        # editing this file. CLAIM_RELEASE_WAIT_SECONDS /
+        # The selector's rule lives in scripts/ci/release_gate.py; the rules
+        # are read fresh so a rule added later needs no edit here. CLAIM_RELEASE_WAIT_SECONDS /
         # CLAIM_RELEASE_WAIT_POLL_SECONDS override the 2700 s / 20 s defaults.
         run: |
           "$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api -H 'Accept: application/vnd.github.raw' "repos/$CLAIM_REPO/contents/scripts/ci/release_gate.py?ref=$CLAIM_SELECTOR_SHA" > "$RUNNER_TEMP/release_gate.py"
@@ -250,7 +250,7 @@ jobs:
               break
             fi
             echo "gh release create exited $status on attempt $attempt of $attempts (124 is timeout's status for its time limit, 137 for a KILL signal)" >&2
-            if target="$("$RUNNER_TEMP/retry.sh" timeout -k 5 60 gh api "repos/$CLAIM_REPO/releases/tags/$CLAIM_TAG" --jq .target_commitish 2>"$RUNNER_TEMP/read-back.err")"; then
+            if target="$(timeout -k 5 60 gh api "repos/$CLAIM_REPO/releases/tags/$CLAIM_TAG" --jq .target_commitish 2>"$RUNNER_TEMP/read-back.err")"; then
               if [ "$target" = "$CLAIM_SHA" ]; then
                 echo "release $CLAIM_TAG exists at $CLAIM_SHA although its create exited $status"
                 break
