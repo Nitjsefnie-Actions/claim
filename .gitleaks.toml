@@ -6,9 +6,8 @@
 # There is no allowlist here, and that is the point of committing the file:
 # the default rules ran clean against this repository's full history, and any
 # future allowlist entry is a line a reviewer sees in the diff of the change
-# that adds it. The scan's other routes are the inline `gitleaks:allow`
-# marker, which the script's --ignore-gitleaks-allow turns off, and a tracked
-# `.gitleaksignore`, which a change can only add with a forced `git add` and
-# which then shows in its diff.
+# that adds it. The scan reads this file, `.gitleaksignore` and the diff
+# attributes from the base branch, so an edit here binds from the change
+# after it; --ignore-gitleaks-allow turns the inline marker off.
 [extend]
 useDefault = true

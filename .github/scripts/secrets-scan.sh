@@ -11,4 +11,17 @@ trap 'rm -rf "$work"' EXIT
   "$work/$tarball"
 echo "${digest}  $work/$tarball" | sha256sum -c -
 tar xzf "$work/$tarball" -C "$work" gitleaks
-exec "$work/gitleaks" detect --verbose --redact --ignore-gitleaks-allow
+# Rules, ignore list and diff attributes come from the base branch, so the
+# scanned change cannot exempt its own finding.
+base="refs/remotes/origin/${GITHUB_BASE_REF:-main}"
+.github/scripts/retry.sh git fetch --no-tags --quiet origin "+refs/heads/${base##*/}:${base}"
+if ! git show "${base}:.gitleaks.toml" > "$work/gitleaks.toml" 2>/dev/null \
+    || ! grep -qE '^useDefault[[:space:]]*=[[:space:]]*true$' "$work/gitleaks.toml"; then
+  printf '[extend]\nuseDefault = true\n' > "$work/gitleaks.toml"
+fi
+git show "${base}:.gitleaksignore" > "$work/.gitleaksignore" 2>/dev/null || rm -f "$work/.gitleaksignore"
+rm -f -- .gitleaksignore
+printf '* diff\n' > "$(git rev-parse --git-path info/attributes)"
+exec "$work/gitleaks" detect --verbose --redact --ignore-gitleaks-allow \
+  --config "$work/gitleaks.toml" --gitleaks-ignore-path "$work" \
+  --log-opts='--all --full-history --diff-filter=uxdb'
