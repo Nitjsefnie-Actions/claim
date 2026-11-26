@@ -113,6 +113,19 @@ assert not gate.unmet_required(
     ["completed\tsuccess\tshellcheck\tgithub-actions"], {"shellcheck"})
 
 
+# A dispatch run is recorded against the branch tip, so it is absent from a
+# listing filtered by head SHA: with no path handed in, this workflow's own
+# run is resolved from the listing by run id, and every row it produced is
+# dropped by its path. A row whose run cannot be read is judged, not shed.
+nothing, _ = gate.select([check("release (verify)", "completed", "failure",
+                                "https://x/actions/runs/4/job/4")],
+                         runs, SHA, "4", "release", None, set())
+assert nothing == [], nothing
+unread, _ = gate.select([check("release", "completed", "failure",
+                               "https://x/actions/runs/9/job/9")],
+                        runs, SHA, "4", "release", None, set())
+assert [line.split("\t")[2] for line in unread] == ["release"], unread
+
 # Dispatch decisions and the successor main is raised to.
 assert dispatch.decide("3.1.0", False, False).ok
 assert not dispatch.decide("3.1.0", True, False).ok
