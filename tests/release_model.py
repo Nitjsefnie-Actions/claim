@@ -126,6 +126,17 @@ unread, _ = gate.select([check("release", "completed", "failure",
                         runs, SHA, "4", "release", None, set())
 assert [line.split("\t")[2] for line in unread] == ["release"], unread
 
+# A dispatch row is judged when the same workflow also gates this commit,
+# and skipped when it does not.
+dispatch_runs = [run(7, "workflow_dispatch", ".github/workflows/tests.yml"),
+                 run(8, "workflow_dispatch", ".github/workflows/scorecard.yml"),
+                 run(1, "push", ".github/workflows/tests.yml")]
+rows, _ = gate.select(
+    [check("dispatch gate", "completed", "success", "https://x/actions/runs/7/job/1"),
+     check("other dispatch", "completed", "failure", "https://x/actions/runs/8/job/1")],
+    dispatch_runs, SHA, None, "release", None, set())
+assert [line.split("\t")[2] for line in rows] == ["dispatch gate"], rows
+
 # Dispatch decisions and the successor main is raised to.
 assert dispatch.decide("3.1.0", False, False).ok
 assert not dispatch.decide("3.1.0", True, False).ok
@@ -144,6 +155,7 @@ assert not guard.decide("3.1.0-dev", True).ok
 assert not guard.decide("3.1.0", True).ok
 assert guard.decide("3.1.0", False).ok
 assert not guard.decide("v3.1.0-dev", False).ok
+assert not dispatch.decide("3.1.0-dev", False, False).ok
 
 
 # The wiring: who triggers a release, what it waits on, what is pushed.
@@ -153,28 +165,49 @@ assert version.endswith("-dev"), (
 assert guard.decide(version, False).ok
 
 release = read(".github/workflows/release.yml")
-exactly_one(release, "workflows: [tests]", "release.yml")
-exactly_one(release, "contents: write", "release.yml")
-exactly_one(release, "--rules \"$RUNNER_TEMP/rules.json\"", "release.yml")
-exactly_one(release, "scripts/ci/release_gate.py?ref=$CLAIM_SELECTOR_SHA",
-            "release.yml")
-exactly_one(release, 'gh release create "$CLAIM_TAG"', "release.yml")
-assert "\n      checks: read" in release
-assert "\n      actions: read" in release
+for line in ("workflows: [tests]", "contents: write", "checks: read",
+             "actions: read", "queue: max",
+             "github.event.workflow_run.event == 'push'",
+             "github.event.workflow_run.head_branch == 'main'",
+             "github.event.workflow_run.conclusion == 'success'",
+             "if [ \"$CLAIM_REF\" != 'refs/heads/main' ]",
+             "--rules \"$RUNNER_TEMP/rules.json\"",
+             "scripts/ci/release_gate.py?ref=$CLAIM_SELECTOR_SHA",
+             ".github/scripts/retry.sh?ref=$CLAIM_SELECTOR_SHA",
+             "prerelease=${version#*-}",
+             "if echo \"$version\" | grep -q -- '-'",
+             "not at $CLAIM_SHA — failing closed",
+             "$2 != \"success\" && $2 != \"skipped\" && $2 != \"neutral\"",
+             "grep -cv '^completed'",
+             'gh release create "$CLAIM_TAG"', '--target "$CLAIM_SHA"',
+             "--jq .target_commitish"):
+    exactly_one(release, line, "release.yml")
+assert release.count("releases/tags/$CLAIM_TAG") == 2
+assert release.count("HTTP 404") == 3
 
 dispatched = read(".github/workflows/release-dispatch.yml")
 for job in ("validate", "bump", "decide", "successor"):
     exactly_one(dispatched, f"\n  {job}:\n", "release-dispatch.yml")
-exactly_one(dispatched, "workflows: [release]", "release-dispatch.yml")
-exactly_one(dispatched, "chore(version): Release $CLAIM_VERSION",
-            "release-dispatch.yml")
-exactly_one(dispatched, "chore(version): Raise VERSION to $CLAIM_SUCCESSOR",
-            "release-dispatch.yml")
+for line in ("workflows: [release]",
+             "chore(version): Release $CLAIM_VERSION",
+             "chore(version): Raise VERSION to $CLAIM_SUCCESSOR",
+             "needs.decide.result == 'success'",
+             "VERSION?ref=refs/heads/main",
+             "commits?path=VERSION&per_page=30",
+             "Another commit introduced main's VERSION",
+             "expected released",
+             "the release run concluded $CLAIM_RELEASE_CONCLUSION",
+             "if [ \"$CLAIM_RELEASE_CONCLUSION\" != 'success' ]; then",
+             "if [ \"$CLAIM_SHA\" != \"$introducer\" ]; then"):
+    exactly_one(dispatched, line, "release-dispatch.yml")
+assert dispatched.count("did not happen") == 2
 assert dispatched.count("environment: main-push") == 2
-assert "refs/heads/main" in dispatched
 
 tests = read(".github/workflows/tests.yml")
-exactly_one(tests, "scripts/ci/version_guard.py decide", "tests.yml")
+for line in ("scripts/ci/version_guard.py decide", 'core="${version%%-*}"',
+             'git/ref/tags/v$core', "HTTP 404",
+             "could not verify the tag probe for v$core — failing closed"):
+    exactly_one(tests, line, "tests.yml")
 
 # One scan definition, and no workflow carries a copy of it.
 for workflow_name in ("tests.yml", "secrets.yml"):
@@ -185,7 +218,8 @@ for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         f"{workflow.name} runs gitleaks itself instead of the shared scan")
 
 scan = read(".github/scripts/secrets-scan.sh")
-assert "--ignore-gitleaks-allow" in scan
+for flag in ("--ignore-gitleaks-allow", "--redact", "sha256sum -c -"):
+    assert flag in scan, flag
 config = read(".gitleaks.toml")
 assert "useDefault = true" in config
 sections = [line for line in config.splitlines() if line.startswith("[")]
