@@ -776,7 +776,7 @@ expire_takeover_expired() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claim of @alice (held 7 day(s)) has been taken over by @octo-claimant.' --silent
-  run_claim 0 $'took over expired claim of alice (held 7 day(s))\n'
+  run_claim 0 $'removed expired claim of alice (held 7 day(s))\ntook over expired claim of alice (held 7 day(s))\n'
 }
 
 # The token's login and the events' assigner spell one account with capitals
@@ -796,7 +796,7 @@ expire_takeover_multiple_expired() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claims of @alice (held 9 day(s)) and @bob (held 8 day(s)) have been taken over by @octo-claimant.' --silent
-  run_claim 0 $'took over expired claim of alice (held 9 day(s)), bob (held 8 day(s))\n'
+  run_claim 0 $'removed expired claim of alice (held 9 day(s))\nremoved expired claim of bob (held 8 day(s))\ntook over expired claim of alice (held 9 day(s)), bob (held 8 day(s))\n'
 }
 
 # The takeover still obeys the cap: a 0 cap for the commenter's role refuses
@@ -835,7 +835,7 @@ expire_takeover_cap_under_proceeds() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claim of @alice (held 8 day(s)) has been taken over by @octo-claimant.' --silent
-  run_claim 0 $'took over expired claim of alice (held 8 day(s))\n'
+  run_claim 0 $'removed expired claim of alice (held 8 day(s))\ntook over expired claim of alice (held 8 day(s))\n'
 }
 
 # A hand assignment among the holders defeats the takeover however ancient
@@ -860,7 +860,7 @@ expire_takeover_mixed_created_at() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"},{"login":"zoe-helper"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=The expired claim of @alice (held 8 day(s)) has been taken over by @octo-claimant.' --silent
-  run_claim 0 $'no readable age for: zoe-helper\ntook over expired claim of alice (held 8 day(s))\n'
+  run_claim 0 $'no readable age for: zoe-helper\nremoved expired claim of alice (held 8 day(s))\ntook over expired claim of alice (held 8 day(s))\n'
 }
 
 # GitHub declined the takeover's assignment — the POST response is the
@@ -871,7 +871,7 @@ expire_takeover_post_declined() {
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '' api repos/owner/project/issues/7/comments --input - "body=GitHub would not accept @octo-claimant as an assignee here. GitHub assigns an issue to an account that has commented on that issue or has write access to the repository. Keep your comment on this issue and comment \`/claim\` again." --silent
-  run_claim 1
+  run_claim 1 $'removed expired claim of alice (held 8 day(s))\n'
 }
 
 # The POST accepted it; at the re-read a rival holds the issue: no decline.
@@ -881,7 +881,7 @@ expire_takeover_removed_after_post() {
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api repos/owner/project/issues/7
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you are not assigned to this issue any more.' --silent
-  run_claim 0
+  run_claim 0 $'removed expired claim of alice (held 8 day(s))\n'
 }
 
 # Privileged release: anyone below write is refused with today's reply and
