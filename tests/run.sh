@@ -3357,10 +3357,10 @@ unreachable_api_reported_in_its_own_terms() {
 # only the lines it depends on and refuses rather than parses. Issue #87
 # deleted the block-layout YAML reader that used to walk the whole workflow
 # here -- a second YAML implementation, one refusal arm per review round.
-# The case below runs it green over the tree as it ships.
 codeql_matrix_covers_python() {
   python3 "$ROOT/tests/codeql_matrix.py" "$ROOT"
 }
+release_model() { python3 "$ROOT/tests/release_model.py" "$ROOT"; }  # The release model's pin.
 
 # The suite, grouped by what it is about. #45, #50 and #51 are the branch;
 # everything else predates it. The three long-body groups are the ones whose
@@ -3503,4 +3503,4 @@ action_contract readme_quoted_replies
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_freshness_refuses_a_stale_head
   # Issue 90: a workflow's name is a scope only with the ci type.
-  commit_scope_step_is_wired commit_scope_refuses_a_workflow_scope)
+  commit_scope_step_is_wired commit_scope_refuses_a_workflow_scope release_model)
