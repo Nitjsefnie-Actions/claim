@@ -15,8 +15,10 @@ updates:
       prefix: ci
       include: scope
     # One pull request per update kind. github/codeql-action ships `init` and
-    # `analyze` as separate dependencies that must stay on one version, and a
-    # group covers version updates only unless it names `applies-to`.
+    # `analyze` as separate dependencies that must stay on one version, so a
+    # pull request bumping either alone can never go green. A group covers
+    # version updates only unless it names `applies-to`, and security updates
+    # are enabled, so they get a group of their own.
     groups:
       github-actions:
         patterns:

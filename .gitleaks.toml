@@ -6,8 +6,9 @@
 # There is no allowlist here, and that is the point of committing the file:
 # the default rules ran clean against this repository's full history, and any
 # future allowlist entry is a line a reviewer sees in the diff of the change
-# that adds it. The scan's other suppression routes are closed or visible the
-# same way, listed in .github/scripts/secrets-scan.sh, which is the one
-# definition both the pull-request gate and the daily scan run.
+# that adds it. The scan's other routes are the inline `gitleaks:allow`
+# marker, which the script's --ignore-gitleaks-allow turns off, and a tracked
+# `.gitleaksignore`, which a change can only add with a forced `git add` and
+# which then shows in its diff.
 [extend]
 useDefault = true
