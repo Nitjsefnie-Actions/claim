@@ -2447,10 +2447,10 @@ null_assignee_confirm() { invalid_assignee_snapshot '[null]' confirm; }
 missing_login_initial() { invalid_assignee_snapshot '[{}]' initial; }
 missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 
-# The step is what makes the check a required status context rather than a
-# script nobody runs. Deleting it has to red this suite: the check would still
-# be here, still correct, and would never once run. The pin holds that the step
-# exists, runs the script, and sits after the checkout and before the lint.
+# The steps are what make the checks required status contexts rather than
+# scripts nobody runs. Deleting one has to red this suite: the check would still
+# be here, still correct, and would never once run. The pin holds that each step
+# runs its script unconditionally, freshness then scope, between checkout and lint.
 gate_freshness_step_is_wired() {
   python3 - "$ROOT" <<'PYWIRE'
 from pathlib import Path
@@ -2459,8 +2459,11 @@ import sys
 
 path = Path(sys.argv[1]) / ".github/workflows/tests.yml"
 lines = path.read_text().splitlines()
-STEP = "Require this head to carry main's gate-defining commits"
-SCRIPT = "python3 tests/gate_base_freshness.py"
+# Each gate step: named once, running exactly its script, unconditional, in this order.
+STEPS = (("Require this head to carry main's gate-defining commits",
+          "python3 tests/gate_base_freshness.py"),
+         ("Refuse a commit whose scope names a workflow outside the ci type",
+          "python3 tests/commit_scopes.py"))
 
 
 def fail(message):
@@ -2474,53 +2477,37 @@ def fail(message):
 if lines.count("  shellcheck:") != 1:
     fail("tests.yml must keep exactly one `shellcheck:` job")
 start = lines.index("  shellcheck:") + 1
-end = len(lines)
-for index in range(start, len(lines)):
-    line = lines[index]
-    if line.strip() and not line.lstrip().startswith("#") \
-            and len(line) - len(line.lstrip(" ")) <= 2:
-        end = index
-        break
+end = next((index for index in range(start, len(lines)) if lines[index].strip()
+            and not lines[index].lstrip().startswith("#")
+            and len(lines[index]) - len(lines[index].lstrip(" ")) <= 2), len(lines))
 job = lines[start:end]
-
-steps = []
-index = 0
-while index < len(job):
-    line = job[index]
-    if line.strip().startswith("- "):
-        steps.append((line.strip()[2:], index))
-    index += 1
+steps = [(line.strip()[2:], index) for index, line in enumerate(job)
+         if line.strip().startswith("- ")]
 if not steps:
     fail("the shellcheck job has no steps")
 
-
-def step_end(at):
-    for offset in range(at + 1, len(job)):
-        line = job[offset]
-        if line.strip().startswith("- "):
-            return offset
-    return len(job)
-
-
-named = [at for entry, at in steps if entry == f"name: {STEP}"]
-if len(named) != 1:
-    fail(f"expected exactly one step named {STEP!r}, found {len(named)}")
-at = named[0]
-body = job[at + 1:step_end(at)]
-runs = [line.strip() for line in body if line.strip().startswith("run:")]
-if runs != [f"run: {SCRIPT}"]:
-    fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
-if any(line.strip().startswith("uses:") for line in body):
-    fail("the step must be a run step, not a uses step")
+placed = []
+for STEP, SCRIPT in STEPS:
+    named = [at for entry, at in steps if entry == f"name: {STEP}"]
+    if len(named) != 1:
+        fail(f"expected exactly one step named {STEP!r}, found {len(named)}")
+    at = named[0]
+    body = job[at + 1:next((later for _, later in steps if later > at), len(job))]
+    runs = [line.strip() for line in body if line.strip().startswith("run:")]
+    if runs != [f"run: {SCRIPT}"]:
+        fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
+    if any(line.strip().startswith(("uses:", "if:")) for line in body):
+        fail(f"{STEP!r} must be an unconditional run step: an `if:` could skip the "
+             "check on the very pull requests it exists to gate")
+    placed.append(at)
 
 checkout = [at for entry, at in steps if entry.startswith("uses: actions/checkout@")]
-if len(checkout) != 1:
-    fail(f"expected exactly one checkout step, found {len(checkout)}")
 lint = [at for entry, at in steps if entry == "name: Check every shell file"]
-if len(lint) != 1:
-    fail(f"expected exactly one `Check every shell file` step, found {len(lint)}")
-if not checkout[0] < at < lint[0]:
-    fail("the freshness step must sit after the checkout and before the lint step")
+if len(checkout) != 1 or len(lint) != 1:
+    fail("expected exactly one checkout step and one `Check every shell file` step")
+if not checkout[0] < placed[0] < placed[1] < lint[0]:
+    fail("the freshness step, then the commit-scope step, must sit after the checkout "
+         "and before the lint: both must read the rebased head")
 
 # The trap actionlint.yml documents for itself: a path filter on a workflow with
 # a required job means the check never reports, so every pull request blocks
@@ -2604,88 +2591,6 @@ for workflow in carrying:
 
 if "  pull_request:" not in lines:
     fail("tests.yml must keep its unfiltered `pull_request:` trigger")
-PYWIRE
-}
-
-# The commit-scope check's own wiring pin. Placement is pinned with the body --
-# the check must read the rebased head, which is what sitting after the
-# freshness step buys -- and the step must stay unconditional, because an `if:`
-# here would skip the check on the very pull requests it exists to gate.
-commit_scope_step_is_wired() {
-  python3 - "$ROOT" <<'PYWIRE'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1]) / ".github/workflows/tests.yml"
-lines = path.read_text().splitlines()
-STEP = "Refuse a commit whose scope names a workflow outside the ci type"
-SCRIPT = "python3 tests/commit_scopes.py"
-FRESHNESS = "Require this head to carry main's gate-defining commits"
-LINT = "Check every shell file"
-
-
-def fail(message):
-    print(f"  {message}")
-    raise SystemExit(1)
-
-
-# The job's KEY is the required context's name, so it is pinned as well as
-# the steps: renaming the job would leave this step in a context the
-# ruleset has never heard of.
-if lines.count("  shellcheck:") != 1:
-    fail("tests.yml must keep exactly one `shellcheck:` job")
-start = lines.index("  shellcheck:") + 1
-end = len(lines)
-for index in range(start, len(lines)):
-    line = lines[index]
-    if line.strip() and not line.lstrip().startswith("#") \
-            and len(line) - len(line.lstrip(" ")) <= 2:
-        end = index
-        break
-job = lines[start:end]
-
-steps = []
-index = 0
-while index < len(job):
-    line = job[index]
-    if line.strip().startswith("- "):
-        steps.append((line.strip()[2:], index))
-    index += 1
-if not steps:
-    fail("the shellcheck job has no steps")
-
-
-def step_end(at):
-    for offset in range(at + 1, len(job)):
-        if job[offset].strip().startswith("- "):
-            return offset
-    return len(job)
-
-
-named = [at for entry, at in steps if entry == f"name: {STEP}"]
-if len(named) != 1:
-    fail(f"expected exactly one step named {STEP!r}, found {len(named)}")
-at = named[0]
-body = job[at + 1:step_end(at)]
-runs = [line.strip() for line in body if line.strip().startswith("run:")]
-if runs != [f"run: {SCRIPT}"]:
-    fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
-if any(line.strip().startswith("uses:") for line in body):
-    fail("the step must be a run step, not a uses step")
-if any(line.strip().startswith("if:") for line in body):
-    fail("the step must stay unconditional: an `if:` here could skip the "
-         "check on the very pull requests it exists to gate")
-
-freshness = [at for entry, at in steps if entry == f"name: {FRESHNESS}"]
-lint = [at for entry, at in steps if entry == f"name: {LINT}"]
-checkout = [at for entry, at in steps if entry.startswith("uses: actions/checkout@")]
-if len(freshness) != 1 or len(lint) != 1 or len(checkout) != 1:
-    fail("expected exactly one checkout step, one freshness step and one "
-         "lint step in the shellcheck job")
-if not checkout[0] < freshness[0] < at < lint[0]:
-    fail("the commit-scope step must sit after the freshness step and before "
-         "the lint step: both compare the head against freshly fetched main, "
-         "and both must read the rebased head")
 PYWIRE
 }
 
@@ -3503,4 +3408,4 @@ action_contract readme_quoted_replies
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
   gate_freshness_step_is_wired gate_freshness_refuses_a_stale_head
   # Issue 90: a workflow's name is a scope only with the ci type.
-  commit_scope_step_is_wired commit_scope_refuses_a_workflow_scope release_model)
+  commit_scope_refuses_a_workflow_scope release_model)
