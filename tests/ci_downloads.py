@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Workflow downloads and pip installs go through retrying scripts."""
+"""Workflow and script downloads and pip installs go through retrying scripts."""
 
 from pathlib import Path
 import http.server
@@ -17,7 +17,12 @@ import zipfile
 root = Path(sys.argv[1])
 script = root / ".github/scripts/download.sh"
 
-for workflow in sorted((root / ".github/workflows").glob("*.yml")):
+# download.sh is the helper the rule names, so its own curl is exempt.
+candidates = [*(root / ".github/workflows").glob("*.yml"),
+              *(root / ".github/scripts").glob("*.sh")]
+for workflow in sorted(candidates):
+    if workflow.name == "download.sh":
+        continue
     for number, line in enumerate(workflow.read_text().splitlines(), 1):
         if not line.lstrip().startswith("#") and re.search(r"\b(curl|wget)\b", line):
             raise SystemExit(f"{workflow.name}:{number} downloads outside "
