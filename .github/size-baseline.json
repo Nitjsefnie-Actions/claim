@@ -4,7 +4,7 @@
   },
   "schema_version": 1,
   "baseline": {
-    "claim.py": 887,
+    "claim.py": 884,
     "tests/gate_base_freshness.py": 597,
     "tests/run.sh": 3506
   }
