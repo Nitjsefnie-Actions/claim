@@ -642,12 +642,17 @@ installation_token() {
   printf '1\n' > "$GH_CASE/identity.response.status"
 }
 
-# Each site's refusal: $1 is the events answer, then the expected run log.
-takeover_refused() {
+# alice holds the issue under a /claim with expiry on; $1 is the events answer.
+alice_holds() {
   body=/claim
   CLAIM_EXPIRE=7
   expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
   expect_gh "$1" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+}
+
+# Each site's refusal: $1 is the events answer, then the expected run log.
+takeover_refused() {
+  alice_holds "$1"
   # shellcheck disable=SC2016
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=This issue is already claimed by @alice. Comment `/unclaim` (or `/release`) if you are giving it up.' --silent
   run_claim 0 "${@:2}"
@@ -766,10 +771,7 @@ expire_takeover_boundary_day() { takeover_refused "$(expected_timeline claim-tok
 # An hour past the limit: the holder is deleted, the commenter assigned, the
 # re-read confirms, and the reply names holder, age and actor.
 expire_takeover_expired() {
-  body=/claim
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline "${1:-claim-token-account}" '800|alice|7:1')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  alice_holds "$(expected_timeline "${1:-claim-token-account}" '800|alice|7:1')"
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api repos/owner/project/issues/7
@@ -801,11 +803,8 @@ expire_takeover_multiple_expired() {
 # with the existing cap-0 reply after the role lookup, and nothing is
 # removed.
 expire_takeover_cap_zero() {
-  body=/claim
-  CLAIM_EXPIRE=7
   CLAIM_MAX_CLAIMS='read=0'
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  alice_holds "$(expected_timeline claim-token-account '800|alice|8')"
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant claiming is disabled for your role (read) in this repository. A maintainer can still assign you by hand.' --silent
   run_claim 0
@@ -814,11 +813,8 @@ expire_takeover_cap_zero() {
 # A reached finite cap refuses with the existing cap reply — searched, not
 # deleted.
 expire_takeover_cap_reached() {
-  body=/claim
-  CLAIM_EXPIRE=7
   CLAIM_MAX_CLAIMS='read=1'
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  alice_holds "$(expected_timeline claim-token-account '800|alice|8')"
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":1,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
   # shellcheck disable=SC2016
@@ -831,11 +827,8 @@ expire_takeover_cap_reached() {
 # against read's cap of 2 and the takeover proceeds through DELETE, POST,
 # re-read and the reply.
 expire_takeover_cap_under_proceeds() {
-  body=/claim
-  CLAIM_EXPIRE=7
   CLAIM_MAX_CLAIMS='read=2'
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  alice_holds "$(expected_timeline claim-token-account '800|alice|8')"
   expect_gh '{"permission":"read","role_name":"read"}' api repos/owner/project/collaborators/octo-claimant/permission
   expect_gh '{"total_count":1,"items":[]}' api -X GET search/issues -f 'q=repo:owner/project is:issue is:open assignee:octo-claimant'
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
@@ -874,14 +867,21 @@ expire_takeover_mixed_created_at() {
 # decline discriminator, so the run refuses and posts nothing about a
 # takeover that did not happen.
 expire_takeover_post_declined() {
-  body=/claim
-  CLAIM_EXPIRE=7
-  expect_gh '{"state":"open","assignees":[{"login":"alice"}]}' api repos/owner/project/issues/7
-  expect_gh "$(expected_timeline claim-token-account '800|alice|8')" api --paginate --slurp 'repos/owner/project/issues/7/events?per_page=100'
+  alice_holds "$(expected_timeline claim-token-account '800|alice|8')"
   expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
   expect_gh '{"state":"open","assignees":[{"login":"someone-else"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
   expect_gh '' api repos/owner/project/issues/7/comments --input - "body=GitHub would not accept @octo-claimant as an assignee here. GitHub assigns an issue to an account that has commented on that issue or has write access to the repository. Keep your comment on this issue and comment \`/claim\` again." --silent
   run_claim 1
+}
+
+# The POST accepted it; at the re-read a rival holds the issue: no decline.
+expire_takeover_removed_after_post() {
+  alice_holds "$(expected_timeline claim-token-account '800|alice|8')"
+  expect_gh '' api -X DELETE repos/owner/project/issues/7/assignees -f 'assignees[]=alice' --silent
+  expect_gh '{"state":"open","assignees":[{"login":"octo-claimant"}]}' api -X POST repos/owner/project/issues/7/assignees -f 'assignees[]=octo-claimant'
+  expect_gh '{"state":"open","assignees":[{"login":"river-helper"}]}' api repos/owner/project/issues/7
+  expect_gh '' api repos/owner/project/issues/7/comments --input - 'body=@octo-claimant you are not assigned to this issue any more.' --silent
+  run_claim 0
 }
 
 # Privileged release: anyone below write is refused with today's reply and
@@ -3484,7 +3484,7 @@ cases=(
   expire_takeover_cap_under_proceeds
   expire_takeover_proof_fails expire_takeover_age_unreadable expire_takeover_mixed_created_at
   expire_takeover_post_declined expire_takeover_other_app_refused expire_takeover_no_assigner_refused
-  expire_takeover_assigner_case_blind
+  expire_takeover_assigner_case_blind expire_takeover_removed_after_post
   expire_release_read_role_refused expire_release_triage_role_refused
   expire_release_write_role expire_release_maintain_role expire_release_admin_role
   expire_release_mixed_created_at

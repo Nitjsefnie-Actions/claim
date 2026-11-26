@@ -728,19 +728,19 @@ def main():
             # DELETE names exactly one login so every other assignee stays.
             gh("-X", "DELETE", f"{endpoint}/assignees",
                "-f", f"assignees[]={login}", "--silent")
-        # The POST's own response is the only place this run can learn
-        # whether ITS assignment was accepted — the same decline
-        # discriminator the fresh-claim path below relies on.
+        # Only the POST's response says whether ITS assignment was accepted;
+        # missing from the re-read alone, it was accepted and then removed.
         assigned = assignee_logins(json.loads(
-            gh("-X", "POST", f"{endpoint}/assignees", "-f",
-               f"assignees[]={actor}")))
-        if (actor not in assigned
-                or actor not in assignee_logins(snapshot(endpoint))):
+            gh("-X", "POST", f"{endpoint}/assignees", "-f", f"assignees[]={actor}")))
+        if actor not in assigned:
             say(f"GitHub would not accept @{actor} as an assignee here. "
                 "GitHub assigns an issue to an account that has commented on "
                 "that issue or has write access to the repository. Keep your "
                 "comment on this issue and comment `/claim` again.")
             return 1
+        if actor not in assignee_logins(snapshot(endpoint)):
+            say(f"@{actor} you are not assigned to this issue any more.")
+            return 0
         print("took over expired claim of " + holders_log(expired))
         say(takeover_reply(expired, actor))
         return 0
