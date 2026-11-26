@@ -18,6 +18,7 @@ tests/*
 !tests/gate_base_freshness.py
 !tests/gate_verdicts.py
 !tests/identity.response
+!tests/release_model.py
 !scripts/
 scripts/*
 !scripts/ci/
