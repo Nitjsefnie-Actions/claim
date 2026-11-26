@@ -232,7 +232,7 @@ job_if = " ".join(line.strip() for line in itertools.takewhile(
     lambda line: line.startswith("      "), lines[lines.index("    if: >-") + 1:]))
 for case, cuts in ((("push", "main", "success"), True), (("push", "x", "success"), False),
                    (("pull_request", "main", "success"), False),
-                   (("push", "main", "failure"), False)):
+                   (("push", "main", "failure"), False), (("push", "main", "cancelled"), False)):
     fields = {f"github.event.workflow_run.{key}": value
               for key, value in zip(("event", "head_branch", "conclusion"), case)}
     assert holds(job_if, {"github.event_name": "workflow_run", **fields}) is cuts, case
