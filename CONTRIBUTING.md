@@ -234,6 +234,34 @@ a `feat` commit bumps the minor version, and any other release bumps the patch
 version. The `!` marker is what decides it, so a breaking change never ships
 as a minor release.
 
+### Cutting a release
+
+`VERSION` at the repository root carries the next version. Between releases it
+keeps a `-dev` suffix (`3.1.0-dev`), and a release is that suffix being
+dropped: `.github/workflows/release.yml` waits for the contexts the branch
+rules require on the pushed commit, then tags `v<VERSION>` and publishes the
+release with generated notes. Consumers pin the action by commit SHA — the
+release's target commit — so the tag names what they already use.
+
+It never edits `VERSION` itself. Whether the next release is a patch, a minor
+or a major is a judgement about what changed, and a workflow that guessed it
+would be wrong exactly where it matters. To release, run
+`.github/workflows/release-dispatch.yml` with the version to cut: it refuses a
+version that is already tagged or already published, pushes that version to
+`main`, and the test run the push starts hands the commit to `release.yml`.
+When the release lands, the same workflow raises `VERSION` to the next
+development version (`3.1.0` → `3.1.1-dev`, the patch raised by one), so
+`main` never keeps naming a spent version. A minor or major release starts
+from a `VERSION` a human has already raised; the successor is only the safe
+default.
+
+Two refusals keep a wrong version from shipping. The `tests` workflow refuses
+a pull request whose `VERSION` names a tag that already exists, so a spent
+version reds where it is written. `release-dispatch.yml` refuses the same
+version at the point of release. Neither needs anything from a contributor
+who is not cutting a release: with the `-dev` suffix in place, merging cuts
+nothing.
+
 ## Issues
 
 Use the [issue form](.github/ISSUE_TEMPLATE/issue.md). Its section order is
