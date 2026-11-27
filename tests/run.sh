@@ -2453,7 +2453,7 @@ missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 # runs its check unconditionally, freshness then scope, between checkout and lint.
 gate_freshness_step_is_wired() {
   local rules  # curl, not gh: the gh on this suite's PATH is the stub.
-  rules=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 30 https://api.github.com/repos/Nitjsefnie-Actions/claim/rules/branches/main) || return 1
+  rules=$(curl -sS --fail-with-body --retry 3 --connect-timeout 10 --max-time 30 ${CLAIM_SUITE_TOKEN:+-H "Authorization: Bearer $CLAIM_SUITE_TOKEN"} https://api.github.com/repos/Nitjsefnie-Actions/claim/rules/branches/main) || { printf '%s\n' "$rules"; return 1; }
   python3 - "$ROOT" "$rules" <<'PYWIRE'
 from pathlib import Path
 import json
