@@ -102,10 +102,8 @@ checks = [
     check("comment-share", "completed", "success",
           "https://x/actions/runs/2/job/7", app="other-app"),
 ]
-rows, notes = gate.select(checks, runs, SHA, "4", "release",
-                          ".github/workflows/release.yml",
-                          {"shellcheck", "actionlint", "comment-share",
-                           "size-baseline"})
+rows, notes = gate.select(checks, runs, SHA, "4", "release", ".github/workflows/release.yml",
+                          {"shellcheck", "actionlint", "comment-share", "size-baseline"})
 names = [line.split("\t")[2] for line in rows]
 assert names == ["shellcheck", "actionlint", "comment-share",
                  "comment-share", "size-baseline"], names
@@ -315,15 +313,15 @@ assert "sha256sum -c -" in scan
 with tempfile.TemporaryDirectory() as scratch:
     box, env = Path(scratch), {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}
     env["PATH"] = f"{box / 'bin'}{os.pathsep}{env['PATH']}"
-    env.update(TAR_GIVES=str(box / "gitleaks"), SEEN=str(box / "seen"))
+    env.update(SEEN=str(box / "seen"), TMPDIR=str(box / "tmp"))
 
     def git(*args):
         subprocess.run(("git", "-c", "user.name=t", "-c", "user.email=t@example.com",
                         "-C", str(box / "tree")) + args, check=True, capture_output=True, env=env)
-    for folder in ("bin", "seen", "tree/.github/scripts"):
+    for folder in ("bin", "seen", "tmp", "tree/.github/scripts"):
         (box / folder).mkdir(parents=True)
     stand_ins = {"bin/sha256sum": "cat > /dev/null", "bin/tar": 'cp "$TAR_GIVES" "$4/gitleaks"',
-                 "tree/.github/scripts/download.sh": ': > "$2"',
+                 "tree/.github/scripts/download.sh": ': > "$2"', "failing": "exit 3",
                  "gitleaks": 'printf "%s\\n" "$@" > "$SEEN/argv"; cp "$6" "$SEEN/config"; '
                              'cp -r "$8" "$SEEN/ignore"; ls -A > "$SEEN/tree"; '
                              'cp "$(git rev-parse --git-path info/attributes)" "$SEEN/attributes"'}
@@ -344,9 +342,11 @@ with tempfile.TemporaryDirectory() as scratch:
         git("commit", "-qm", stage)
         if stage == "base":
             git("push", "-q", "origin", "main")
-    done = subprocess.run([".github/scripts/secrets-scan.sh"], cwd=box / "tree", env=env,
-                          capture_output=True, text=True, check=False)
-    assert done.returncode == 0, done.stderr
+    for gitleaks, code in (("failing", 3), ("gitleaks", 0)):
+        env["TAR_GIVES"] = str(box / gitleaks)
+        done = subprocess.run([".github/scripts/secrets-scan.sh"], cwd=box / "tree", env=env,
+                              capture_output=True, text=True, check=False)
+        assert done.returncode == code and not any((box / "tmp").iterdir()), done.stderr
     seen = {part: (box / "seen" / part).read_text()
             for part in ("argv", "config", "tree", "attributes")}
     assert seen["config"].endswith("# base\n") and seen["attributes"] == "* diff\n", seen
