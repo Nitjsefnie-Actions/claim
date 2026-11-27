@@ -353,7 +353,7 @@ with tempfile.TemporaryDirectory() as scratch:
     assert (box / "seen/ignore/.gitleaksignore").read_text() == "base-ignore\n"
     assert ".gitleaksignore" not in seen["tree"].split(), seen["tree"]
     for flag in ("--ignore-gitleaks-allow", "--redact",
-                 "--log-opts=--all --full-history --diff-filter=uxdb --diff-merges=remerge"):
+                 "--log-opts=--all --full-history --diff-filter=uxdb --diff-merges=first-parent"):
         assert flag in seen["argv"].splitlines(), (flag, seen["argv"])
 config = read(".gitleaks.toml")
 assert "useDefault = true" in config
