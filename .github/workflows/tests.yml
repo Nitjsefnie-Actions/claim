@@ -68,8 +68,8 @@ jobs:
       - name: Require this head to carry main's gate-defining commits
         # `main requires green checks` sets strict_required_status_checks_policy
         # to false, so a green head vouches only for the tree this run checked
-        # out; pr-gate's freshness action fails a head lacking a commit of main
-        # that touches a file a required check reads.
+        # out; the freshness action fails a pull request whose head lacks a
+        # commit of main that touches a file a required check reads.
         #
         # In a job that is ALREADY a required status context, because a new job
         # would be a new context — which means editing the ruleset — and a
@@ -77,9 +77,13 @@ jobs:
         # reporting at all and block every pull request instead (see the same
         # trap documented on actionlint.yml's pull_request trigger).
         #
+        # The `if:` skips only a workflow_dispatch run on a branch other than
+        # main; every pull request and every push to main still runs it.
+        #
         # Before the lint step: work done against a base main has already moved
         # on from is work whose verdict does not carry.
-        uses: Nitjsefnie-Actions/pr-gate/freshness@eb4991d7f92be7d2e55bb8b47aaaa24f09e98ca2 # v3.3.0
+        if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
+        uses: Nitjsefnie-Actions/freshness@5edc2a45ff894cf49c5cc8d293bbae0af33507d4 # v1.0.0
 
       - name: Refuse a commit whose scope names a workflow outside the ci type
         # CONTRIBUTING.md's scope table allows a workflow's name as a scope
