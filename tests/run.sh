@@ -2450,7 +2450,7 @@ missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 # The steps are what make the checks required status contexts rather than
 # scripts nobody runs. Deleting one has to red this suite: the check would still
 # be here, still correct, and would never once run. The pin holds that each step
-# runs its check unconditionally, freshness then scope, between checkout and lint.
+# runs on every pull request, freshness then scope, between checkout and lint.
 gate_freshness_step_is_wired() {
   local rules  # curl, not gh: the gh on this suite's PATH is the stub.
   rules=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 30 ${CLAIM_RULES_TOKEN:+-H "Authorization: Bearer $CLAIM_RULES_TOKEN"} https://api.github.com/repos/Nitjsefnie-Actions/claim/rules/branches/main) || return 1
@@ -2462,10 +2462,9 @@ import sys
 
 path = Path(sys.argv[1]) / ".github/workflows/tests.yml"
 lines = path.read_text().splitlines()
-# Each gate step: named once, running exactly its check (an action, not its pin),
-# unconditional, in this order.
-STEPS = (("Require this head to carry main's gate-defining commits",
-          r"uses: Nitjsefnie-Actions/pr-gate/freshness@.+"),
+# Each gate step: named once, running one thing (the scope step exactly its
+# check), never skipped on a pull request, in this order.
+STEPS = (("Require this head to carry main's gate-defining commits", None),
          ("Refuse a commit whose scope names a workflow outside the ci type",
           r"run: python3 tests/commit_scopes\.py"))
 
@@ -2498,10 +2497,11 @@ for STEP, SCRIPT in STEPS:
     at = named[0]
     body = job[at + 1:next((later for _, later in steps if later > at), len(job))]
     runs = [line.strip() for line in body if line.strip().startswith(("run:", "uses:"))]
-    if len(runs) != 1 or not re.fullmatch(SCRIPT, runs[0]):
-        fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
-    if any(line.strip().startswith("if:") for line in body):
-        fail(f"{STEP!r} must be an unconditional step: an `if:` could skip the "
+    if len(runs) != 1 or (SCRIPT and not re.fullmatch(SCRIPT, runs[0])):
+        fail(f"the step must run exactly `{SCRIPT or 'one action'}`, found {runs}")
+    # An `if:` that does not open with the pull_request arm could skip a pull request.
+    if any(re.match(r"if:(?! github\.event_name == 'pull_request' \|\| )", line.strip()) for line in body):
+        fail(f"{STEP!r} must run on every pull request: an `if:` could skip the "
              "check on the very pull requests it exists to gate")
     placed.append(at)
 
