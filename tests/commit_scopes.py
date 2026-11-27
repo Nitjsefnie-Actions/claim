@@ -53,10 +53,9 @@ WHAT IT CANNOT SEE, and says so rather than guessing:
     clause here.
 
 Runs on the standard library alone, and reads blobs with
-`git cat-file blob HEAD:<path>` for the same reason gate_base_freshness
-reads its workflows that way: in CI the working tree and HEAD are the same
-commit, and at review time the tree somebody is editing is not the tree any
-gate has agreed to judge.
+`git cat-file blob HEAD:<path>` because in CI the working tree and HEAD are
+the same commit, and at review time the tree somebody is editing is not the
+tree any gate has agreed to judge.
 
     tests/commit_scopes.py [--root DIR]
 

@@ -15,7 +15,6 @@ tests/*
 !tests/codeql_matrix.py
 !tests/action_contract.py
 !tests/ci_downloads.py
-!tests/gate_base_freshness.py
 !tests/gate_verdicts.py
 !tests/identity.response
 !tests/release_model.py

@@ -2450,20 +2450,24 @@ missing_login_confirm() { invalid_assignee_snapshot '[{}]' confirm; }
 # The steps are what make the checks required status contexts rather than
 # scripts nobody runs. Deleting one has to red this suite: the check would still
 # be here, still correct, and would never once run. The pin holds that each step
-# runs its script unconditionally, freshness then scope, between checkout and lint.
+# runs its check unconditionally, freshness then scope, between checkout and lint.
 gate_freshness_step_is_wired() {
-  python3 - "$ROOT" <<'PYWIRE'
+  local rules  # curl, not gh: the gh on this suite's PATH is the stub.
+  rules=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 30 https://api.github.com/repos/Nitjsefnie-Actions/claim/rules/branches/main) || return 1
+  python3 - "$ROOT" "$rules" <<'PYWIRE'
 from pathlib import Path
+import json
 import re
 import sys
 
 path = Path(sys.argv[1]) / ".github/workflows/tests.yml"
 lines = path.read_text().splitlines()
-# Each gate step: named once, running exactly its script, unconditional, in this order.
+# Each gate step: named once, running exactly its check (an action, not its pin),
+# unconditional, in this order.
 STEPS = (("Require this head to carry main's gate-defining commits",
-          "python3 tests/gate_base_freshness.py"),
+          r"uses: Nitjsefnie-Actions/pr-gate/freshness@.+"),
          ("Refuse a commit whose scope names a workflow outside the ci type",
-          "python3 tests/commit_scopes.py"))
+          r"run: python3 tests/commit_scopes\.py"))
 
 
 def fail(message):
@@ -2493,11 +2497,11 @@ for STEP, SCRIPT in STEPS:
         fail(f"expected exactly one step named {STEP!r}, found {len(named)}")
     at = named[0]
     body = job[at + 1:next((later for _, later in steps if later > at), len(job))]
-    runs = [line.strip() for line in body if line.strip().startswith("run:")]
-    if runs != [f"run: {SCRIPT}"]:
+    runs = [line.strip() for line in body if line.strip().startswith(("run:", "uses:"))]
+    if len(runs) != 1 or not re.fullmatch(SCRIPT, runs[0]):
         fail(f"the step must run exactly `{SCRIPT}`, found {runs}")
-    if any(line.strip().startswith(("uses:", "if:")) for line in body):
-        fail(f"{STEP!r} must be an unconditional run step: an `if:` could skip the "
+    if any(line.strip().startswith("if:") for line in body):
+        fail(f"{STEP!r} must be an unconditional step: an `if:` could skip the "
              "check on the very pull requests it exists to gate")
     placed.append(at)
 
@@ -2516,9 +2520,9 @@ if not checkout[0] < placed[0] < placed[1] < lint[0]:
 # about the file this step happens to live in — and because holding it with the
 # comment actionlint.yml carries for itself is holding a rule with prose.
 #
-# The workflows are DERIVED from the workflows: the same REQUIRED_JOBS the check
-# derives its paths from, read out of that module rather than listed here, so
-# this pin cannot drift from the set of jobs it is protecting. The `push:`
+# The workflows are DERIVED: the jobs main's ruleset requires, read from the
+# API with a matrix leg's `(axes)` dropped, rather than listed here, so this pin
+# cannot drift from the set of jobs it is protecting. The `push:`
 # trigger gets the opposite polarity because a filter there fails silently in
 # the other direction: a `paths:` allow-list stops the gate running on main
 # after any unrelated change, and no pull request ever blocks to say so, while
@@ -2530,21 +2534,18 @@ if not checkout[0] < placed[0] < placed[1] < lint[0]:
 # colon (`paths :`, `"paths" :`) is matched too -- YAML honours it -- and
 # the push arm's verdict reads the canonical key (`paths` / `paths-ignore`),
 # quoting and spacing normalised away.
-sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
-from gate_base_freshness import REQUIRED_JOBS
+REQUIRED_JOBS = {re.sub(r" \(.*\)$", "", check["context"]) for rule in json.loads(sys.argv[2])
+                 if rule["type"] == "required_status_checks"
+                 for check in rule["parameters"]["required_status_checks"]}
+bodies = {path: path.read_text().splitlines()
+          for path in sorted((Path(sys.argv[1]) / ".github/workflows").glob("*.yml"))}
+carrying = {path: {job for job in REQUIRED_JOBS if f"  {job}:" in map(str.rstrip, body)}
+            for path, body in bodies.items()}
+# A required job no workflow defines by id would leave its workflow unchecked.
+if not REQUIRED_JOBS or REQUIRED_JOBS - set().union(*carrying.values()):
+    fail(f"main's ruleset requires {sorted(REQUIRED_JOBS)}, not all defined by id here")
 
-workflows = sorted((Path(sys.argv[1]) / ".github/workflows").glob("*.yml"))
-carrying = []
-for workflow in workflows:
-    body = workflow.read_text().splitlines()
-    if any(line.rstrip() == f"  {job}:" for line in body for job in REQUIRED_JOBS):
-        carrying.append(workflow)
-if not carrying:
-    fail("no workflow under .github/workflows/ defines a required job, so this "
-         "pin protects nothing; REQUIRED_JOBS is empty or every job moved")
-
-for workflow in carrying:
-    body = workflow.read_text().splitlines()
+for workflow, body in ((path, body) for path, body in bodies.items() if carrying[path]):
     for trigger in ("pull_request:", "pull_request_target:", "push:"):
         starts = [index for index, line in enumerate(body)
                   if line.rstrip() == f"  {trigger}"]
@@ -2594,7 +2595,6 @@ if "  pull_request:" not in lines:
 PYWIRE
 }
 
-gate_freshness_refuses_a_stale_head() { python3 "$ROOT/tests/gate_verdicts.py" "$ROOT" freshness; }
 commit_scope_refuses_a_workflow_scope() { python3 "$ROOT/tests/gate_verdicts.py" "$ROOT" scopes; }
 
 prefixed_environment_only() {
@@ -3406,6 +3406,6 @@ action_contract readme_quoted_replies
   readme_install_block_matches_claim_yml codeql_matrix_covers_python
   ci_downloads
   # Issue 64: a green head must carry what main holds, or it vouches for nothing.
-  gate_freshness_step_is_wired gate_freshness_refuses_a_stale_head
+  gate_freshness_step_is_wired
   # Issue 90: a workflow's name is a scope only with the ci type.
   commit_scope_refuses_a_workflow_scope release_model)
