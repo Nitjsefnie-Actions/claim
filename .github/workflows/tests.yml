@@ -342,6 +342,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - uses: Nitjsefnie-Actions/test-ratchet/run@caf72ff77921794d9573c8b8aabe008946dcca45 # v2.5.0
+        # Lifts the suite's ruleset read off the runner IP's shared 60/hour limit.
+        env:
+          CLAIM_SUITE_TOKEN: ${{ github.token }}
         with:
           runner: pytest
           tests: tests/**/test_*.py
