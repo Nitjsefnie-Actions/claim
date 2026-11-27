@@ -28,8 +28,8 @@
     2863
   ],
   ".github/workflows/tests.yml": [
-    8464,
-    13589
+    8430,
+    13598
   ],
   "action.yml": [
     614,
@@ -44,8 +44,8 @@
     12565
   ],
   "tests/commit_scopes.py": [
-    7049,
-    12682
+    6996,
+    12629
   ],
   "tests/gh.sh": [
     4296,
