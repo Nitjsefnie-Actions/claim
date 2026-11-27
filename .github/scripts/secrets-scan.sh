@@ -22,6 +22,6 @@ fi
 git show "${base}:.gitleaksignore" > "$work/.gitleaksignore" 2>/dev/null || rm -f "$work/.gitleaksignore"
 rm -f -- .gitleaksignore
 printf '* diff\n' > "$(git rev-parse --git-path info/attributes)"
-exec "$work/gitleaks" detect --verbose --redact --ignore-gitleaks-allow \
+"$work/gitleaks" detect --verbose --redact --ignore-gitleaks-allow \
   --config "$work/gitleaks.toml" --gitleaks-ignore-path "$work" \
   --log-opts='--all --full-history --diff-filter=uxdb --diff-merges=first-parent'
