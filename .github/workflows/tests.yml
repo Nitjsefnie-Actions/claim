@@ -342,6 +342,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - uses: Nitjsefnie-Actions/test-ratchet/run@caf72ff77921794d9573c8b8aabe008946dcca45 # v2.5.0
+        env:
+          CLAIM_RULES_TOKEN: ${{ github.token }}
         with:
           runner: pytest
           tests: tests/**/test_*.py
