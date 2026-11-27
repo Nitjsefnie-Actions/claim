@@ -298,63 +298,11 @@ for line in ("scripts/ci/version_guard.py decide", 'core="${version%%-*}"',
              "could not verify the tag probe for v$core — failing closed"):
     exactly_one(tests, line, "tests.yml")
 
-# One scan definition, and no workflow carries a copy of it.
-for workflow_name in ("tests.yml", "secrets.yml"):
-    exactly_one(read(f".github/workflows/{workflow_name}"),
-                "run: .github/scripts/secrets-scan.sh", workflow_name)
+# No workflow runs gitleaks itself: the scan is the secret-scan action.
 for workflow in sorted((root / ".github/workflows").glob("*.yml")):
     assert "gitleaks detect" not in workflow.read_text(), (
         f"{workflow.name} runs gitleaks itself instead of the shared scan")
 
-scan = read(".github/scripts/secrets-scan.sh")
-assert "sha256sum -c -" in scan
-# Run the scan with a stand-in binary: what it is handed comes from the base
-# branch, whatever the judged tree carries.
-with tempfile.TemporaryDirectory() as scratch:
-    box, env = Path(scratch), {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}
-    env["PATH"] = f"{box / 'bin'}{os.pathsep}{env['PATH']}"
-    env.update(SEEN=str(box / "seen"), TMPDIR=str(box / "tmp"))
-
-    def git(*args):
-        subprocess.run(("git", "-c", "user.name=t", "-c", "user.email=t@example.com",
-                        "-C", str(box / "tree")) + args, check=True, capture_output=True, env=env)
-    for folder in ("bin", "seen", "tmp", "tree/.github/scripts"):
-        (box / folder).mkdir(parents=True)
-    stand_ins = {"bin/sha256sum": "cat > /dev/null", "bin/tar": 'cp "$TAR_GIVES" "$4/gitleaks"',
-                 "tree/.github/scripts/download.sh": ': > "$2"', "failing": "exit 3",
-                 "gitleaks": 'printf "%s\\n" "$@" > "$SEEN/argv"; cp "$6" "$SEEN/config"; '
-                             'cp -r "$8" "$SEEN/ignore"; ls -A > "$SEEN/tree"; '
-                             'cp "$(git rev-parse --git-path info/attributes)" "$SEEN/attributes"'}
-    for stand_in, body in stand_ins.items():
-        (box / stand_in).write_text(f"#!/bin/sh\n{body}\n")
-        (box / stand_in).chmod(0o755)
-    for helper in ("secrets-scan.sh", "retry.sh"):
-        shutil.copy(root / ".github/scripts" / helper, box / "tree/.github/scripts")
-    subprocess.run(("git", "init", "-q", "--bare", str(box / "origin.git")), check=True)
-    subprocess.run(("git", "init", "-q", "-b", "main", str(box / "tree")), check=True)
-    git("remote", "add", "origin", (box / "origin.git").as_uri())
-    for stage, extra, attributes in (("base", "# base\n", ""),
-                                     ("head", 'disabledRules = ["x"]\n', "* -diff\n")):
-        (box / "tree/.gitleaks.toml").write_text("[extend]\nuseDefault = true\n" + extra)
-        (box / "tree/.gitleaksignore").write_text(f"{stage}-ignore\n")
-        (box / "tree/.gitattributes").write_text(attributes)
-        git("add", "-A", "-f")
-        git("commit", "-qm", stage)
-        if stage == "base":
-            git("push", "-q", "origin", "main")
-    for gitleaks, code in (("failing", 3), ("gitleaks", 0)):
-        env["TAR_GIVES"] = str(box / gitleaks)
-        done = subprocess.run([".github/scripts/secrets-scan.sh"], cwd=box / "tree", env=env,
-                              capture_output=True, text=True, check=False)
-        assert done.returncode == code and not any((box / "tmp").iterdir()), done.stderr
-    seen = {part: (box / "seen" / part).read_text()
-            for part in ("argv", "config", "tree", "attributes")}
-    assert seen["config"].endswith("# base\n") and seen["attributes"] == "* diff\n", seen
-    assert (box / "seen/ignore/.gitleaksignore").read_text() == "base-ignore\n"
-    assert ".gitleaksignore" not in seen["tree"].split(), seen["tree"]
-    for flag in ("--ignore-gitleaks-allow", "--redact",
-                 "--log-opts=--all --full-history --diff-filter=uxdb --diff-merges=first-parent"):
-        assert flag in seen["argv"].splitlines(), (flag, seen["argv"])
 config = read(".gitleaks.toml")
 assert "useDefault = true" in config
 sections = [line for line in config.splitlines() if line.startswith("[")]

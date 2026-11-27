@@ -46,7 +46,6 @@ scripts/ci/*
 !.github/scripts/download.sh
 !.github/scripts/retry.sh
 !.github/scripts/pytest.sh
-!.github/scripts/secrets-scan.sh
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/actionlint.yml
