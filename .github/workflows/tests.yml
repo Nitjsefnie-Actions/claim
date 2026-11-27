@@ -69,10 +69,8 @@ jobs:
       - name: Require this head to carry main's gate-defining commits
         # `main requires green checks` sets strict_required_status_checks_policy
         # to false, so a green head vouches only for the tree this run checked
-        # out: a commit that lands on main touching a file a required check
-        # reads is never applied to a pull request before it merges, and the
-        # merge then publishes a tree no green run ever saw. This is the only
-        # check that compares the two.
+        # out; pr-gate's freshness action fails a head lacking a commit of main
+        # that touches a file a required check reads.
         #
         # In a job that is ALREADY a required status context, because a new job
         # would be a new context — which means editing the ruleset — and a
@@ -82,12 +80,13 @@ jobs:
         #
         # Before the lint step: work done against a base main has already moved
         # on from is work whose verdict does not carry.
-        run: python3 tests/gate_base_freshness.py
+        uses: Nitjsefnie-Actions/pr-gate/freshness@eb4991d7f92be7d2e55bb8b47aaaa24f09e98ca2 # v3.3.0
 
       - name: Refuse a commit whose scope names a workflow outside the ci type
         # CONTRIBUTING.md's scope table allows a workflow's name as a scope
-        # only with type `ci`, and prose no gate reads is a convention. In this
-        # job rather than a new one: a new job would be a new required status
+        # only with type `ci`, and prose no gate reads is a convention. Our
+        # copy, not pr-gate's commit-scopes: it exempts `claim`. In this job
+        # rather than a new one: a new job would be a new required status
         # context, which means editing the ruleset, and a job that is already
         # required is where the freshness step went for the same reason.
         # After the freshness step: both compare the head against freshly

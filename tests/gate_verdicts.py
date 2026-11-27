@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""The base-freshness and commit-scope gates, run over planted states.
+"""The commit-scope gate, run as the shellcheck job runs it over planted states.
 
-Each gate runs as the shellcheck job runs it, `python3 tests/<script>`, from a
-fixture repository holding this working tree's tracked files and a bare
-origin, under `GITHUB_EVENT_NAME=pull_request` whatever event runs the suite.
-Only the exit status is read. A gate that crashes exits non-zero too, so each
-refusal sits between greens on the same fixture: the state before it and the
-repair after it.
+The fixture holds this tree's tracked files and a bare origin. Only the exit
+status is read, and a crash exits non-zero too, so each refusal sits between
+greens on the same fixture.
 """
 import os
 import shutil
@@ -61,24 +58,6 @@ class Gate:
                   f"got {ran.returncode}\n{ran.stdout}{ran.stderr}")
 
 
-def freshness(tree):
-    gate = Gate(tree, "gate_base_freshness.py")
-    gate.expect("the head is main", refuses=False)
-    git(tree, "checkout", "--quiet", "-b", "head-branch")
-    commit(tree, "BRANCH.md", "work main does not hold")
-    for path, subject, refuses in (
-            ("NOTES.md", "a file no required check names", False),
-            ("tests/run.sh", "a file a required check names", True)):
-        git(tree, "checkout", "--quiet", "main")
-        commit(tree, path, subject)
-        git(tree, "push", "--quiet", "origin", "main")
-        git(tree, "checkout", "--quiet", "head-branch")
-        gate.expect(f"main gained {subject}", refuses)
-    git(tree, "rebase", "--quiet", "main")
-    gate.expect("the head rebased onto main", refuses=False)
-    return gate.failed
-
-
 def scopes(tree):
     gate = Gate(tree, "commit_scopes.py")
     gate.expect("an empty outgoing range", refuses=False)
@@ -97,7 +76,7 @@ def scopes(tree):
 
 
 def main(argv):
-    root, check = Path(argv[1]), {"freshness": freshness, "scopes": scopes}[argv[2]]
+    root, check = Path(argv[1]), {"scopes": scopes}[argv[2]]
     with tempfile.TemporaryDirectory() as where:
         return 1 if check(fixture(root, Path(where))) else 0
 

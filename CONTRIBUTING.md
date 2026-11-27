@@ -185,7 +185,7 @@ a workflow uses its subject, such as `ci(templates)` or `ci(repo)`.
 A change to `tests/` machinery with no workflow involved never takes scope
 `tests`: `tests` names the tests workflow, so a `fix(tests)` subject for such a
 change reads as a workflow change, and a contributor copying it repeats the
-mistake. Changes to `tests/gate_base_freshness.py` take scope `harness` — the
+mistake. Changes to `tests/commit_scopes.py` take scope `harness` — the
 subject is the test machinery — and only a change to the `tests` workflow
 itself is `ci(tests)`.
 
