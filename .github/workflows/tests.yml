@@ -54,10 +54,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history: the secrets scan at the bottom of this job reads
-          # `git log -p`, so a shallow clone would scan a suffix of history
-          # and call the rest clean. A git history read inherits the
-          # checkout's depth.
+          # Full history: the secret-scan action at the bottom of this job
+          # scans the whole tree and history, so it needs a full-history
+          # checkout.
           fetch-depth: 0
           # Nothing pushes; later steps must not inherit a stored token.
           persist-credentials: false
@@ -134,9 +133,10 @@ jobs:
         # Last in the job: the three checks above refuse in seconds, while
         # this downloads a binary and walks the full history, so a head that
         # is stale, mis-scoped or badly linted never pays for the scan.
-        # The pinned bytes, digest and flags live in
-        # .github/scripts/secrets-scan.sh, the one definition secrets.yml's
-        # daily run also executes.
+        # The secret-scan action runs gitleaks over the whole tree and
+        # history, with .gitleaks.toml and .gitleaksignore read from the
+        # pull request's base, the push's previous tip, otherwise main's tip;
+        # secrets.yml's daily run uses the same pinned action.
         # In this job rather than a new one: `shellcheck` is already a
         # required status context running on every pull request and every
         # push to main, both unfiltered, so the scan gates exactly the commits
@@ -145,7 +145,7 @@ jobs:
         # disqualified as the host because its push trigger is paths:-filtered
         # to workflow files, so a secret committed to claim.py on main would
         # never start the scan.
-        run: .github/scripts/secrets-scan.sh
+        uses: Nitjsefnie-Actions/secret-scan@74f89d79a41106c9a65c23f20895b23240665f26 # v1.0.0
 
   suites:
     strategy:
